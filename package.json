@@ -19,14 +19,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/mosiyash/opencode-work-context.git"
+    "url": "git+https://github.com/mosiyash/opencode-work-context.git"
   },
   "homepage": "https://github.com/mosiyash/opencode-work-context#readme",
   "bugs": {
     "url": "https://github.com/mosiyash/opencode-work-context/issues"
   },
   "bin": {
-    "opencode-work-context": "./bin/opencode-work-context.js"
+    "opencode-work-context": "bin/opencode-work-context.js"
   },
   "scripts": {
     "test": "node --test"
