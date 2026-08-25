@@ -86,7 +86,10 @@ export class WorkContext {
     id(workspace, 6);
     const dir = path.join(this.storage.workspaceDir(workspace), "stages");
     if (!fs.existsSync(dir)) fail(ERROR_CODES.NOT_FOUND, "Workspace not found");
-    const stages = fs.readdirSync(dir).filter((file) => /^\d{2}\.md$/.test(file)).map((file) => this.storage.readStage(workspace, file.slice(0, 2)).data);
+    const stages = fs.readdirSync(dir).filter((file) => /^\d{2}\.md$/.test(file)).map((file) => {
+      const stage = this.storage.readStage(workspace, file.slice(0, 2)).data;
+      return { ...stage, description: stage.goal };
+    });
     const ids = new Set(stages.map((item) => item.stage));
     const visiting = new Set();
     const visited = new Set();
@@ -102,6 +105,26 @@ export class WorkContext {
     };
     for (const stage of ids) visit(stage);
     return { ok: true, data: { workspace, stages, sessions: reduceSessions(this.storage.readEvents()).filter((session) => session.workspace === workspace) } };
+  }
+
+  finishWorkspace(workspace) {
+    id(workspace, 6);
+    return this.transact(`workspace-${workspace}`, () => {
+      const record = this.storage.readWorkspace(workspace);
+      const stages = this.listStages(workspace).data.stages;
+      if (record.data.status === "cancelled") fail(ERROR_CODES.INVALID_STATE, "Cancelled workspace cannot be finished", { workspace, status: record.data.status });
+      const incompleteStages = stages.filter((stage) => stage.status !== "completed");
+      if (incompleteStages.length) fail(ERROR_CODES.INVALID_STATE, "All workspace stages must be completed before finishing", {
+        workspace,
+        incompleteStages: incompleteStages.map(({ stage, title, description, status }) => ({ stage, title, description, status })),
+      });
+      if (record.data.status === "completed") return this.result({ workspace, status: "completed", stages }, []);
+      record.data.status = "completed";
+      record.data.updated_at = new Date().toISOString();
+      this.storage.writeMarkdown(this.storage.workspaceFile(workspace), record.data, record.body);
+      generateProjections(this.storage);
+      return this.result({ workspace, status: "completed", stages }, [workspace]);
+    });
   }
 
   sessionById(sessionId) {
@@ -295,7 +318,7 @@ export class WorkContext {
   }
 
   help(command = "") {
-    return this.result({ command, syntax: "/wc [create|list|resume|add-stage|link-issue|session rename|session close|handoff|finish|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "finish requires knowledgeReview=added|none; mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
+    return this.result({ command, syntax: "/wc [create|list|workspace list|workspace finish|resume|add-stage|link-issue|session rename|session close|handoff|finish|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace finish requires all stages to be completed; stage finish requires knowledgeReview=added|none; mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }
 
   result(data, changed) {

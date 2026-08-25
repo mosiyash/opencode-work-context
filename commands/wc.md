@@ -1,6 +1,5 @@
 ---
 description: Explicit work-context lifecycle commands backed by structured tools
-agent: build
 subtask: false
 ---
 
@@ -10,11 +9,16 @@ Markdown, JSONL, INDEX, or SESSIONS projections directly. For mutating operation
 report the structured result and stable error code. Use `work_context_help` when
 the syntax is missing or ambiguous.
 
+For `workspace list <workspace>` (or `<workspace> list`), report the workspace
+status and every stage as `stage - status - title - description`.
+
 Supported syntax:
 
 - `help [command]`
 - `create "title"`
 - `list` or `<workspace> list`
+- `workspace list <workspace>`
+- `workspace finish <workspace>`
 - `resume <workspace> <stage>`
 - `add-stage <workspace> "title"`
 - `<workspace> [<stage>] link-issue <URL>`

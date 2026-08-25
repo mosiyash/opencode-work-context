@@ -26,6 +26,57 @@ test("create writes canonical metadata, events and projections", () => {
   }
 });
 
+test("workspace list includes stage descriptions", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Described workspace", { workspace: "999990", sessionId: "session-1" });
+
+    const stage = context.listStages("999990").data.stages[0];
+    assert.equal(stage.description, stage.goal);
+    assert.equal(stage.description, "Уточнить цель и ограничения работы");
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("workspace finish requires all stages to be completed", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Incomplete workspace", { workspace: "999989", sessionId: "session-1" });
+
+    assert.throws(
+      () => context.finishWorkspace("999989"),
+      (error) => error instanceof WorkContextError
+        && error.code === ERROR_CODES.INVALID_STATE
+        && error.details.incompleteStages[0].stage === "01",
+    );
+    assert.equal(context.storage.readWorkspace("999989").data.status, "in_progress");
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("workspace finish marks a workspace completed after all stages", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Complete workspace", { workspace: "999988", sessionId: "session-1" });
+    context.finish("999988", "01", "session-1", { knowledgeReview: "none" });
+    context.addStage("999988", "Implementation", { goal: "Implement the change" });
+    context.startSession("999988", "02", { sessionId: "session-2" });
+    context.finish("999988", "02", "session-2", { knowledgeReview: "none" });
+
+    const result = context.finishWorkspace("999988");
+    assert.equal(result.data.status, "completed");
+    assert.equal(context.storage.readWorkspace("999988").data.status, "completed");
+    assert.match(fs.readFileSync(path.join(root, ".work-context", "INDEX.md"), "utf8"), /\| 999988 \| Complete workspace \| completed \|/);
+  } finally {
+    removeRoot(root);
+  }
+});
+
 test("only one active session is allowed and terminal stages cannot resume", () => {
   const root = makeRoot();
   try {

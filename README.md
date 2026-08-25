@@ -41,6 +41,9 @@ Generated files:
 Tools are registered by the installed plugin and are not copied into the project.
 Knowledge operations are explicit: list, add, update, and supersede. Finishing a
 stage requires declaring whether its knowledge review was `added` or `none`.
+Finish a workspace explicitly with `/wc workspace finish <workspace>`; it is
+accepted only after every stage is `completed`. Use `/wc workspace list <workspace>`
+to list stages with their descriptions.
 
 ## License
 
