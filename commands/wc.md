@@ -12,6 +12,16 @@ the syntax is missing or ambiguous.
 For `workspace list <workspace>` (or `<workspace> list`), report the workspace
 status and every stage as `stage - status - title - description`.
 
+Use these exact tool mappings; do not invent shortened tool names:
+
+- `create` -> `work_context_create_workspace`
+- `list` -> `work_context_list_workspaces`
+- `workspace list <workspace>` or `<workspace> list` -> `work_context_workspace_list`
+- `workspace finish <workspace>` -> `work_context_workspace_finish`
+- `resume <workspace> <stage>` -> `work_context_start_session`
+- `add-stage <workspace> ...` -> `work_context_add_stage`
+- `finish <workspace> <stage>` -> `work_context_finish_stage`
+
 Supported syntax:
 
 - `help [command]`
