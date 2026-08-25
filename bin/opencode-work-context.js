@@ -10,42 +10,23 @@ import { defaultConfig } from "../src/storage.js";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageManifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
 const projectRoot = process.cwd();
-const command = [
-  "---",
-  "description: Explicit work-context lifecycle commands backed by installed package tools",
-  "agent: build",
-  "subtask: false",
-  "---",
-  "",
-  "Interpret `/wc $ARGUMENTS` as an explicit work-context operation. Use the matching",
-  "`work_context_*` custom tool registered by `.opencode/plugins/work-context.js`.",
-  "Never edit work-context Markdown, JSONL, INDEX, or SESSIONS projections directly.",
-  "For mutating operations, report the structured result and stable error code. Use",
-  "`work_context_help` when the syntax is missing or ambiguous.",
-  "",
-  "Supported syntax:",
-  "",
-  "- `help [command]`",
-  "- `create \"title\"`",
-  "- `list` or `<workspace> list`",
-  "- `resume <workspace> <stage>`",
-  "- `add-stage <workspace> \"title\"`",
-  "- `<workspace> [<stage>] link-issue <URL>`",
-  "- `session rename \"summary\"`",
-  "- `session close`",
-  "- `handoff <workspace> <stage>`",
-  "- `finish <workspace> <stage>` (requires explicit knowledge review: `added` or `none`)",
-  "- `knowledge list|add|update|supersede <workspace> ...`",
-  "",
-  "Arguments: $ARGUMENTS",
-  "",
-].join("\n");
+const dependencyRoot = fs.existsSync(path.join(projectRoot, "package.json"))
+  ? projectRoot
+  : fs.existsSync(path.join(projectRoot, ".opencode", "package.json"))
+    ? path.join(projectRoot, ".opencode")
+    : projectRoot;
+const dependencyManifestFile = path.join(dependencyRoot, "package.json");
+let dependencyManifest = {};
+try { dependencyManifest = JSON.parse(fs.readFileSync(dependencyManifestFile, "utf8")); } catch {}
+const pluginLoader = dependencyManifest.type === "module"
+  ? `export { default } from "${packageManifest.name}/plugin";\n`
+  : `module.exports = async (...args) => (await import("${packageManifest.name}/plugin")).default(...args);\n`;
+const command = fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8");
 const generated = new Map([
   [path.join(".work-context", "config.yaml"), defaultConfig()],
   [path.join(".opencode", "commands", "wc.md"), command],
   [path.join(".opencode", "plugins", "work-context.js"), `// Thin project integration; tools remain in the installed npm package.
-export { default } from "${packageManifest.name}/plugin";
-`],
+${pluginLoader}`],
 ]);
 
 const fail = (message) => {
@@ -77,19 +58,20 @@ function parseArgs(args) {
 }
 
 function ensurePackageJson() {
-  const file = path.join(projectRoot, "package.json");
+  const file = path.join(dependencyRoot, "package.json");
   if (fs.existsSync(file)) return;
   const name = path.basename(projectRoot).toLowerCase().replace(/[^a-z0-9._-]+/g, "-") || "opencode-project";
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify({ name, version: "1.0.0", private: true }, null, 2)}\n`);
 }
 
 function checkConflicts(force) {
   const conflicts = ["package.json", "package-lock.json", "npm-shrinkwrap.json"].flatMap((relative) => {
-    const file = path.join(projectRoot, relative);
+    const file = path.join(dependencyRoot, relative);
     if (!exists(file)) return [];
-    if (hasSymlinkParent(file)) return [relative];
+    if (hasSymlinkParent(file)) return [path.relative(projectRoot, file)];
     const stat = fs.lstatSync(file);
-    return stat.isFile() && !stat.isSymbolicLink() ? [] : [relative];
+    return stat.isFile() && !stat.isSymbolicLink() ? [] : [path.relative(projectRoot, file)];
   });
   conflicts.push(...[...generated].flatMap(([relative, content]) => {
     const file = path.join(projectRoot, relative);
@@ -106,7 +88,7 @@ function checkConflicts(force) {
 }
 
 function checkPackageConflict(force) {
-  const file = path.join(projectRoot, "package.json");
+  const file = path.join(dependencyRoot, "package.json");
   if (!exists(file)) return true;
   let manifest;
   try { manifest = JSON.parse(fs.readFileSync(file, "utf8")); }
@@ -120,8 +102,11 @@ function checkPackageConflict(force) {
 }
 
 function snapshotFiles() {
-  return ["package.json", "package-lock.json", "npm-shrinkwrap.json", ...generated.keys(), ".gitignore"].map((relative) => {
-    const file = path.join(projectRoot, relative);
+  return [
+    ...["package.json", "package-lock.json", "npm-shrinkwrap.json"].map((relative) => path.join(dependencyRoot, relative)),
+    ...[...generated.keys()].map((relative) => path.join(projectRoot, relative)),
+    path.join(projectRoot, ".gitignore"),
+  ].map((file) => {
     return { file, exists: exists(file), content: exists(file) ? fs.readFileSync(file) : null };
   });
 }
@@ -166,9 +151,9 @@ function acquireInitLock() {
 }
 
 function prepareNodeModules(initLock) {
-  const target = path.join(projectRoot, "node_modules");
-  const backup = path.join(projectRoot, ".opencode-work-context-node_modules.backup");
-  const journal = path.join(projectRoot, ".opencode-work-context-node_modules.recovery.json");
+  const target = path.join(dependencyRoot, "node_modules");
+  const backup = path.join(dependencyRoot, ".opencode-work-context-node_modules.backup");
+  const journal = path.join(dependencyRoot, ".opencode-work-context-node_modules.recovery.json");
   const result = { target, backup, journal, lock: initLock.lock, token: initLock.token, hadNodeModules: false };
   if (recoverNodeModules(result) === false) return { ...result, failed: true };
   if (exists(backup)) { fail("previous node_modules recovery is incomplete"); return { ...result, failed: true }; }
@@ -187,18 +172,29 @@ function recoverNodeModules({ target, backup, journal }) {
   try { state = JSON.parse(fs.readFileSync(journal, "utf8")); } catch { fail("cannot read node_modules recovery journal"); return false; }
   if (!state || typeof state !== "object" || Object.keys(state).some((key) => !["target", "backup", "hadNodeModules", "phase"].includes(key)) || typeof state.target !== "string" || typeof state.backup !== "string" || !["prepared", "installed", "committed"].includes(state.phase) || state.target !== target || state.backup !== backup || typeof state.hadNodeModules !== "boolean") { fail("invalid node_modules recovery journal"); return false; }
   if (exists(backup) && fs.lstatSync(backup).isSymbolicLink()) { fail("invalid node_modules recovery backup"); return false; }
-  if (state.phase === "committed") {
-    if (!exists(target) && exists(backup)) fs.renameSync(backup, target);
-    else if (exists(backup)) fs.rmSync(backup, { recursive: true, force: true });
-  } else if (exists(backup)) {
-    if (exists(target)) fs.rmSync(target, { recursive: true, force: true });
-    fs.renameSync(backup, target);
-  } else if (!state.hadNodeModules && exists(target)) fs.rmSync(target, { recursive: true, force: true });
-  fs.rmSync(journal, { force: true });
+  if (state.phase !== "committed" && state.hadNodeModules && !exists(backup)) {
+    fail("node_modules recovery backup is missing; refusing to continue");
+    return false;
+  }
+  try {
+    if (state.phase === "committed") {
+      if (!exists(target) && exists(backup)) fs.renameSync(backup, target);
+      else if (!exists(target)) { fail("committed node_modules recovery has no target or backup"); return false; }
+      else if (exists(backup)) fs.rmSync(backup, { recursive: true, force: true });
+    } else if (exists(backup)) {
+      if (exists(target)) fs.rmSync(target, { recursive: true, force: true });
+      fs.renameSync(backup, target);
+    } else if (!state.hadNodeModules && exists(target)) fs.rmSync(target, { recursive: true, force: true });
+    fs.rmSync(journal, { force: true });
+  } catch (error) {
+    fail(`node_modules recovery failed: ${error.message}`);
+    return false;
+  }
   return true;
 }
 
 function restoreNodeModules(snapshot) {
+  if (snapshot.committed) { releaseInitLock(snapshot); return; }
   if (snapshot.failed) { releaseInitLock(snapshot); return; }
   fs.rmSync(snapshot.target, { recursive: true, force: true });
   if (snapshot.backup && exists(snapshot.backup)) fs.renameSync(snapshot.backup, snapshot.target);
@@ -208,8 +204,11 @@ function restoreNodeModules(snapshot) {
 
 function commitNodeModules(snapshot) {
   if (snapshot.journal) writeAtomic(snapshot.journal, JSON.stringify({ target: snapshot.target, backup: snapshot.backup, hadNodeModules: snapshot.hadNodeModules, phase: "committed" }) + "\n");
-  if (snapshot.backup) fs.rmSync(snapshot.backup, { recursive: true, force: true });
-  if (snapshot.journal) fs.rmSync(snapshot.journal, { force: true });
+  snapshot.committed = true;
+  try { if (snapshot.backup) fs.rmSync(snapshot.backup, { recursive: true, force: true }); }
+  catch (error) { console.error(`opencode-work-context: committed; backup cleanup deferred: ${error.message}`); }
+  try { if (snapshot.journal) fs.rmSync(snapshot.journal, { force: true }); }
+  catch (error) { console.error(`opencode-work-context: committed; recovery journal cleanup deferred: ${error.message}`); }
   releaseInitLock(snapshot);
 }
 
@@ -224,7 +223,7 @@ function markNodeModulesInstalled(snapshot) {
 
 function installPackage(snapshot) {
   const spec = `${packageManifest.name}@${packageManifest.version}`;
-  const result = spawnSync("npm", ["install", "--save-dev", "--save-exact", spec], { cwd: projectRoot, stdio: "inherit" });
+  const result = spawnSync("npm", ["install", "--save-dev", "--save-exact", spec], { cwd: dependencyRoot, stdio: "inherit" });
   if (result.error) { restoreFiles(snapshot); fail(`npm install failed: ${result.error.message}`); }
   else if (result.status !== 0) { restoreFiles(snapshot); fail(`npm install exited with status ${result.status}`); }
   return result.status === 0;

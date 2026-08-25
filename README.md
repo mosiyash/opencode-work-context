@@ -11,14 +11,23 @@ Run from the root of a standalone OpenCode project:
 npx opencode-work-context init
 ```
 
-`init` installs `opencode-work-context@0.1.0` as an exact devDependency using
-standard `npm`, preserving normal lifecycle behavior for the host project. It
-creates `package.json` when absent and writes the integration files below.
+`init` installs `opencode-work-context@0.1.1` as an exact devDependency using
+standard `npm`, preserving normal lifecycle behavior for the host project. The
+dependency root is the project root when it has `package.json`, otherwise
+`.opencode` when `.opencode/package.json` exists, and finally the project root
+with a new `package.json` when neither exists. Package files, lockfiles, and
+`node_modules` are changed only in that dependency root; integration files and
+`.gitignore` always belong to the project root.
+
+The generated plugin loader follows the dependency root package scope: it uses
+ESM export syntax for `"type": "module"` and a CommonJS-compatible dynamic
+import otherwise. This keeps the required `.js` integration path loadable in
+projects such as OpenCode projects with a package but no module type.
 It does not create a workspace. Start one explicitly with `/wc create "Title"`.
 
-Use `--force` to replace a conflicting package-owned generated file. Without it,
-existing files are never silently overwritten. Re-running with unchanged files is
-safe and idempotent.
+Use `--force` to replace a conflicting package-owned generated file or package
+version. Without it, existing files are never silently overwritten. Re-running
+with unchanged files is safe and idempotent.
 
 Generated files:
 
