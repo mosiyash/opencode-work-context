@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WorkContext } from "./core.js";
 import { renderTitle } from "./title.js";
+export { readStagesSnapshot } from "./stages-snapshot.js";
 
 export function contextFor(directory, sessionId, actor = "OpenCode") {
   return WorkContext.openExisting(directory, { sessionId, actor });

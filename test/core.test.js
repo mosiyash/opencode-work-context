@@ -102,6 +102,18 @@ test("only one active session is allowed and terminal stages cannot resume", () 
   }
 });
 
+test("session ordinal is scoped to the stage", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Ordinal workspace", { workspace: "999980", sessionId: "session-1" });
+    context.handoff("999980", "01", "session-1");
+    context.addStage("999980", "Second stage");
+    const result = context.startSession("999980", "02", { sessionId: "session-2" });
+    assert.equal(result.data.ordinal, "02/01");
+  } finally { removeRoot(root); }
+});
+
 test("knowledge is a canonical workspace ledger with structured operations", () => {
   const root = makeRoot();
   try {

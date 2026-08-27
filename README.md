@@ -38,6 +38,20 @@ Generated files:
 - `<workspace>/KNOWLEDGE.md` is the canonical durable knowledge ledger and is
   created on the first explicit knowledge operation.
 
+The optional read-only stages panel is a separate TUI plugin. Add a project-local
+loader at `.opencode/plugins/work-context-stages.js`:
+
+```js
+export { default } from "opencode-work-context/tui";
+```
+
+Enable that loader in the host's TUI plugin configuration. The package keeps the
+existing `opencode-work-context/plugin` server export unchanged and exposes the
+panel as `opencode-work-context/tui`. The panel only reads canonical storage via
+`WorkContext.openExisting`; it does not create `.work-context`, call lifecycle
+tools, or modify Markdown/JSONL projections. Hosts without the TUI plugin API
+continue to load the server plugin and its tools normally.
+
 Tools are registered by the installed plugin and are not copied into the project.
 Knowledge operations are explicit: list, add, update, and supersede. Finishing a
 stage requires declaring whether its knowledge review was `added` or `none`.

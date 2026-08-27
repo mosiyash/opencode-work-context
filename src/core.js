@@ -183,7 +183,7 @@ export class WorkContext {
       }
       this.writeEvents([event("session.started", workspace, stage, ordinal, sessionId, actor(this.options), { summary: options.summary || "продолжение работы", opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
       generateProjections(this.storage);
-      return this.result({ workspace, stage, session_id: sessionId, ordinal: `01/${String(ordinal).padStart(2, "0")}` }, [workspace, stage]);
+      return this.result({ workspace, stage, session_id: sessionId, ordinal: `${stage}/${String(ordinal).padStart(2, "0")}` }, [workspace, stage]);
     });
   }
 

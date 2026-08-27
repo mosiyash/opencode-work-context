@@ -41,12 +41,14 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@opencode-ai/plugin": "^1.14.50"
+    "@opencode-ai/plugin": "^1.14.50",
+    "@opentui/solid": "^0.4.5"
   },
   "exports": {
     ".": "./src/index.js",
     "./adapter": "./src/opencode-adapter.js",
     "./plugin": "./plugin/work-context.js",
+    "./tui": "./plugin/stages-tui.js",
     "./tools/*": "./tools/*.js"
   }
 }

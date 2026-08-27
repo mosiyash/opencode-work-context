@@ -35,7 +35,7 @@ const source = process.env.OPENCODE_WORK_CONTEXT_SOURCE;
 const pluginSource = process.env.OPENCODE_PLUGIN_SOURCE;
 const manifestFile = path.join(process.cwd(), "package.json");
 const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
-manifest.devDependencies = { ...(manifest.devDependencies || {}), "opencode-work-context": "=0.1.1" };
+ manifest.devDependencies = { ...(manifest.devDependencies || {}), "opencode-work-context": "=0.1.3" };
 fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + "\\n");
 fs.writeFileSync(path.join(process.cwd(), "package-lock.json"), JSON.stringify({ name: manifest.name, lockfileVersion: 3 }) + "\\n");
 const packageLink = path.join(process.cwd(), "node_modules", "opencode-work-context");
@@ -82,6 +82,8 @@ test("installer uses root package and preserves ESM plugin scope", async () => {
     assert.equal(fs.existsSync(path.join(root, ".opencode", "package.json")), false);
     const loaded = await import(path.join(root, ".opencode", "plugins", "work-context.js"));
     assert.equal(typeof loaded.default, "function");
+    const tui = await import("opencode-work-context/tui");
+    assert.equal(typeof tui.default.tui, "function");
   } finally { removeRoot(root); removeRoot(bin); }
 });
 
