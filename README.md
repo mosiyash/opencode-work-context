@@ -11,7 +11,7 @@ Run from the root of a standalone OpenCode project:
 npx opencode-work-context init
 ```
 
-`init` installs `opencode-work-context@0.1.1` as an exact devDependency using
+`init` installs `opencode-work-context@0.1.3` as an exact devDependency using
 standard `npm`, preserving normal lifecycle behavior for the host project. The
 dependency root is the project root when it has `package.json`, otherwise
 `.opencode` when `.opencode/package.json` exists, and finally the project root
@@ -19,10 +19,10 @@ with a new `package.json` when neither exists. Package files, lockfiles, and
 `node_modules` are changed only in that dependency root; integration files and
 `.gitignore` always belong to the project root.
 
-The generated plugin loader follows the dependency root package scope: it uses
-ESM export syntax for `"type": "module"` and a CommonJS-compatible dynamic
-import otherwise. This keeps the required `.js` integration path loadable in
-projects such as OpenCode projects with a package but no module type.
+The installer ensures that the dependency-root package uses `"type": "module"`
+and generates an ESM plugin loader. OpenCode loads local plugins as JavaScript
+modules; keeping the generated `.js` integration path ESM avoids a CommonJS
+interop failure before custom tools are registered.
 It does not create a workspace. Start one explicitly with `/wc create "Title"`.
 
 Use `--force` to replace a conflicting package-owned generated file or package
@@ -44,6 +44,10 @@ stage requires declaring whether its knowledge review was `added` or `none`.
 Finish a workspace explicitly with `/wc workspace finish <workspace>`; it is
 accepted only after every stage is `completed`. Use `/wc workspace list <workspace>`
 to list stages with their descriptions.
+
+If the host `opencode.json` restricts `experimental.primary_tools`, add the
+registered `work_context_*` tool names to that allowlist; the installer does not
+rewrite project-specific agent policy.
 
 ## License
 

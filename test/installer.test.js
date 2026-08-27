@@ -64,6 +64,7 @@ test("installer keeps standalone npm files at project root", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.existsSync(path.join(root, "package.json")), true);
     assert.equal(fs.existsSync(path.join(root, ".opencode", "package.json")), false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).type, "module");
     assertIntegration(root);
     assert.equal(
       fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"),
@@ -92,6 +93,7 @@ test("installer uses .opencode package without creating root npm infrastructure"
   try {
     assert.equal(runInit(root, { bin }).status, 0);
     assert.equal(fs.existsSync(path.join(root, "package.json")), false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, ".opencode", "package.json"), "utf8")).type, "module");
     assert.equal(fs.existsSync(path.join(root, "node_modules")), false);
     assert.equal(fs.existsSync(path.join(root, ".opencode", "node_modules")), true);
     const loaded = await import(path.join(root, ".opencode", "plugins", "work-context.js"));

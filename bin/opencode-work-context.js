@@ -18,9 +18,7 @@ const dependencyRoot = fs.existsSync(path.join(projectRoot, "package.json"))
 const dependencyManifestFile = path.join(dependencyRoot, "package.json");
 let dependencyManifest = {};
 try { dependencyManifest = JSON.parse(fs.readFileSync(dependencyManifestFile, "utf8")); } catch {}
-const pluginLoader = dependencyManifest.type === "module"
-  ? `export { default } from "${packageManifest.name}/plugin";\n`
-  : `module.exports = async (...args) => (await import("${packageManifest.name}/plugin")).default(...args);\n`;
+const pluginLoader = `export { default } from "${packageManifest.name}/plugin";\n`;
 const command = fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8");
 const generated = new Map([
   [path.join(".work-context", "config.yaml"), defaultConfig()],
@@ -62,7 +60,15 @@ function ensurePackageJson() {
   if (fs.existsSync(file)) return;
   const name = path.basename(projectRoot).toLowerCase().replace(/[^a-z0-9._-]+/g, "-") || "opencode-project";
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify({ name, version: "1.0.0", private: true }, null, 2)}\n`);
+  fs.writeFileSync(file, `${JSON.stringify({ name, version: "1.0.0", private: true, type: "module" }, null, 2)}\n`);
+}
+
+function ensureModuleScope() {
+  const file = path.join(dependencyRoot, "package.json");
+  const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (manifest.type === "module") return;
+  manifest.type = "module";
+  writeAtomic(file, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
 function checkConflicts(force) {
@@ -250,6 +256,7 @@ if (options) {
     if (nodeModules.failed) process.exitCode = 1;
     try {
       if (!nodeModules.failed) ensurePackageJson();
+      if (!nodeModules.failed) ensureModuleScope();
       if (!nodeModules.failed) {
         if (installPackage(snapshot)) {
           markNodeModulesInstalled(nodeModules);
