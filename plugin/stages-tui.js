@@ -1,8 +1,11 @@
 import { readStagesSnapshot } from "../src/stages-snapshot.js";
 import { renderStagesPanel } from "../src/stages-renderer.js";
 import { jsx } from "@opentui/solid/jsx-runtime";
+import { createSignal } from "solid-js";
 
 const DEBOUNCE_MS = 150;
+const PATH_TIMEOUT_MS = 5000;
+const PATH_POLL_MS = 25;
 const statusMarker = (status) => ({
   planned: "[ ]",
   in_progress: "[•]",
@@ -52,6 +55,7 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
   const snapshots = new Map();
   const generations = new Map();
   const timers = new Map();
+  const [version, setVersion] = createSignal(0);
   let disposed = false;
 
   const readSnapshot = async (sessionId) => {
@@ -60,6 +64,7 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
     generations.set(sessionId, currentGeneration);
     const entry = snapshots.get(sessionId) || { result: null, successful: null };
     snapshots.set(sessionId, entry);
+    setVersion((value) => value + 1);
     try {
       const result = await read({ projectRoot, sessionId });
       if (disposed || currentGeneration !== generations.get(sessionId)) return;
@@ -78,6 +83,7 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
         : { ok: false, error: { code: error.code || "STORAGE_ERROR", message: error.message } };
     }
     snapshots.set(sessionId, entry);
+    setVersion((value) => value + 1);
   };
 
   const scheduleRefresh = (sessionId) => {
@@ -91,6 +97,7 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
   };
 
   const resultFor = (sessionId) => {
+    version();
     const entry = snapshots.get(sessionId);
     if (!entry) {
       void readSnapshot(sessionId);
@@ -114,23 +121,52 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
   };
 };
 
-// Optional TUI entry point. It is deliberately not imported by the server plugin.
-export const tui = async (api) => {
-  // The same module can be loaded by the server plugin loader, where TUI APIs
-  // are unavailable. Return an empty hook set instead of undefined.
-  if (!api?.slots?.register || !api?.state?.path?.worktree) return {};
+const sleep = (milliseconds, signal) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, milliseconds);
+  const onAbort = () => { clearTimeout(timer); resolve(); };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal) setTimeout(() => signal.removeEventListener("abort", onAbort), milliseconds);
+});
 
-  const projectRoot = api.state.path.worktree;
+export const resolveProjectRoot = async (api, { timeoutMs = PATH_TIMEOUT_MS, pollMs = PATH_POLL_MS } = {}) => {
+  if (!api?.slots?.register) return null;
+  const signal = api.lifecycle?.signal;
+  const deadline = Date.now() + timeoutMs;
+  while (!signal?.aborted && Date.now() <= deadline) {
+    if (api.state?.path?.worktree) return api.state.path.worktree;
+    try {
+      const location = await api.client?.location?.get?.({});
+      const directory = location?.data?.directory || location?.data?.project?.directory;
+      if (directory) return directory;
+    } catch {}
+    await sleep(pollMs, signal);
+  }
+  return null;
+};
+
+const StagesPanel = ({ result, theme }) => renderStagesElement(result(), theme);
+const renderStagesSlot = (controller, theme, sessionId) => jsx("box", {
+  flexDirection: "column",
+  children: jsx(StagesPanel, { result: () => controller.resultFor(sessionId), theme }),
+});
+
+// Optional TUI entry point. It is deliberately not imported by the server plugin.
+export const tui = async (api, options = {}) => {
+  const projectRoot = await resolveProjectRoot(api, options);
+  if (!projectRoot) return;
+
   const initialSessionId = api.route?.current?.name === "session"
     ? api.route.current.params?.sessionID
     : undefined;
   const controller = createStagesTuiController({ projectRoot, read: api.stagesSnapshotProvider || readStagesSnapshot });
   await controller.load(initialSessionId);
 
+  let cleanup = () => {};
   const unregisterSlot = api.slots.register({
+    dispose: () => cleanup(),
     slots: {
       sidebar_content: (_context, { session_id: sessionId } = {}) => {
-        return renderStagesElement(controller.resultFor(sessionId), api.theme);
+        return renderStagesSlot(controller, api.theme, sessionId);
       },
     },
   });
@@ -139,7 +175,7 @@ export const tui = async (api) => {
   });
 
   let cleaned = false;
-  const cleanup = () => {
+  cleanup = () => {
     if (cleaned) return;
     cleaned = true;
     controller.dispose();
@@ -148,8 +184,6 @@ export const tui = async (api) => {
   };
   api.lifecycle?.onDispose?.(cleanup);
 
-  // Hosts without a lifecycle API can still explicitly release the adapter.
-  return { dispose: cleanup };
 };
 
 export default { id: "work-context-stages", tui };

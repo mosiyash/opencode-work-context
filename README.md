@@ -11,7 +11,7 @@ Run from the root of a standalone OpenCode project:
 npx opencode-work-context init
 ```
 
-`init` installs `opencode-work-context@0.1.3` as an exact devDependency using
+`init` installs the current package version as an exact devDependency using
 standard `npm`, preserving normal lifecycle behavior for the host project. The
 dependency root is the project root when it has `package.json`, otherwise
 `.opencode` when `.opencode/package.json` exists, and finally the project root
@@ -39,13 +39,19 @@ Generated files:
   created on the first explicit knowledge operation.
 
 The optional read-only stages panel is a separate TUI plugin. Add a project-local
-loader at `.opencode/plugins/work-context-stages.js`:
+loader outside OpenCode's server-plugin autoscan at `.opencode/tui-plugins/work-context-stages.js`:
 
 ```js
 export { default } from "opencode-work-context/tui";
 ```
 
-Enable that loader in the host's TUI plugin configuration. The package keeps the
+Enable that loader explicitly in `.opencode/tui.json`:
+
+```json
+{ "$schema": "https://opencode.ai/tui.json", "plugin": ["./tui-plugins/work-context-stages.js"] }
+```
+
+The package keeps the
 existing `opencode-work-context/plugin` server export unchanged and exposes the
 panel as `opencode-work-context/tui`. The panel only reads canonical storage via
 `WorkContext.openExisting`; it does not create `.work-context`, call lifecycle

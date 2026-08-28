@@ -1,7 +1,7 @@
 {
   "name": "opencode-work-context",
   "type": "module",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Filesystem work-context core and OpenCode adapter",
   "license": "MIT",
   "author": {
@@ -42,12 +42,14 @@
   ],
   "dependencies": {
     "@opencode-ai/plugin": "^1.14.50",
-    "@opentui/solid": "^0.4.5"
+    "@opentui/solid": "^0.4.5",
+    "solid-js": "1.9.12"
   },
   "exports": {
     ".": "./src/index.js",
     "./adapter": "./src/opencode-adapter.js",
     "./plugin": "./plugin/work-context.js",
+    "./server": "./plugin/server.js",
     "./tui": "./plugin/stages-tui.js",
     "./tools/*": "./tools/*.js"
   }

@@ -144,7 +144,7 @@ test("missing workspace and storage errors become safe panel states", () => {
 
 test("TUI module satisfies the available OpenCode plugin contract", async () => {
   assert.equal(typeof tuiModule.tui, "function");
-  assert.deepEqual(await tuiModule.tui({}), {});
+  assert.equal(await tuiModule.tui({}), undefined);
   let slot;
   let dispose;
   let unsubscribed = false;
@@ -192,17 +192,75 @@ test("TUI performs an initial load and refreshes after session.updated with debo
   } finally { removeRoot(api.state.path.worktree); }
 });
 
+test("TUI waits for a late worktree path and does not initialize storage before it exists", async () => {
+  const root = makeRoot();
+  let dispose;
+  let slot;
+  let worktree = "";
+  const api = {
+    state: { ready: false, path: { worktree } },
+    client: { location: { get: async () => ({ data: { directory: root } }) } },
+    lifecycle: { signal: new AbortController().signal, onDispose: (fn) => { dispose = fn; } },
+    slots: { register: (plugin) => { slot = plugin.slots.sidebar_content; return () => {}; } },
+    stagesSnapshotProvider: async () => ({ ok: true, data: { workspace: null, stages: [] } }),
+  };
+  try {
+    await tuiModule.tui(api, { timeoutMs: 100, pollMs: 1 });
+    assert.equal(typeof slot, "function");
+    assert.equal(dispose instanceof Function, true);
+  } finally { dispose?.(); removeRoot(root); }
+});
+
+test("sidebar content is mounted under a host-owned root", async () => {
+  const root = makeRoot();
+  let slot;
+  const api = {
+    state: { path: { worktree: root } },
+    slots: { register: (plugin) => { slot = plugin.slots.sidebar_content; return () => {}; } },
+    lifecycle: { onDispose: () => () => {} },
+    stagesSnapshotProvider: async () => ({ ok: true, data: { workspace: { id: "000001", status: "in_progress" }, stages: [], currentStage: null } }),
+  };
+  try {
+    await tuiModule.tui(api);
+    assert.match(slot.toString(), /renderStagesSlot/);
+  } finally { removeRoot(root); }
+});
+
+test("controller invalidates reactive slot reads after an asynchronous refresh", async () => {
+  let resolve;
+  const controller = createStagesTuiController({
+    projectRoot: "/tmp/project",
+    read: async () => new Promise((done) => { resolve = done; }),
+  });
+  const first = controller.load("oc-1");
+  assert.equal(controller.resultFor("oc-1").loading, true);
+  resolve({ ok: true, data: { workspace: { id: "000001" }, stages: [] } });
+  await first;
+  assert.equal(controller.resultFor("oc-1").data.workspace.id, "000001");
+  controller.dispose();
+});
+
 test("package exports preserve server and TUI plugin entry points", async () => {
   const server = await import("opencode-work-context/plugin");
+  const serverEntry = await import("opencode-work-context/server");
   const tui = await import("opencode-work-context/tui");
   const adapter = await import("opencode-work-context/adapter");
   assert.equal(typeof server.default, "function");
+  assert.equal(typeof serverEntry.default.server, "function");
   assert.equal(typeof tui.default.tui, "function");
   assert.equal(typeof adapter.contextFor, "function");
   assert.equal(typeof adapter.readStagesSnapshot, "function");
   assert.equal(packageManifest.exports["./plugin"], "./plugin/work-context.js");
+  assert.equal(packageManifest.exports["./server"], "./plugin/server.js");
   assert.equal(packageManifest.exports["./tui"], "./plugin/stages-tui.js");
   assert.equal(fs.readFileSync(new URL("../plugin/stages-tui.js", import.meta.url), "utf8").includes("work_context_"), false);
+});
+
+test("TUI loader is outside the server plugin autoscan path", () => {
+  const config = JSON.parse(fs.readFileSync(new URL("../.opencode/tui.json", import.meta.url), "utf8"));
+  assert.deepEqual(config.plugin, ["./tui-plugins/work-context-stages.js"]);
+  assert.equal(fs.existsSync(new URL("../.opencode/tui-plugins/work-context-stages.js", import.meta.url)), true);
+  assert.equal(fs.existsSync(new URL("../.opencode/plugins/work-context-stages.js", import.meta.url)), false);
 });
 
 test("server plugin remains usable without TUI APIs", async () => {
