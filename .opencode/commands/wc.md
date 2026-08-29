@@ -22,6 +22,8 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `stage add [<workspace>] ...` -> `work_context_add_stage`
 - `stage rename [<workspace>] <stage> "title"` -> `work_context_rename_stage`
 - `stage archive [<workspace>] <stage>` -> `work_context_archive_stage`
+- `stage handoff <workspace> <stage>` -> `work_context_handoff_stage`
+- `stage abandon <workspace> <stage>` -> `work_context_abandon_stage`
 - `stage finish <workspace> <stage>` -> `work_context_finish_stage`
 
 Supported syntax:
@@ -38,8 +40,8 @@ Supported syntax:
 - `stage finish <workspace> <stage>`
 - `<workspace> [<stage>] link-issue <URL>`
 - `session rename "summary"`
-- `session close`
-- `handoff <workspace> <stage>`
+- `stage handoff <workspace> <stage>`
+- `stage abandon <workspace> <stage>`
 - `stage finish <workspace> <stage>` automatically reviews the Knowledge Base (`auto` by default)
 - `knowledge list|add|update|supersede <workspace> ...`
 

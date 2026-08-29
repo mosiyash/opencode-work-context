@@ -325,6 +325,10 @@ export class WorkContext {
     });
   }
 
+  abandon(workspace, stage, sessionId, reason = "abandoned") {
+    return this.closeSession(workspace, stage, sessionId, reason, "abandoned");
+  }
+
   finish(workspace, stage, sessionId, options = {}) {
     stage = stageId(stage);
     return this.transact(`stage-${workspace}-${stage}`, () => {
@@ -351,7 +355,7 @@ export class WorkContext {
   }
 
   help(command = "") {
-     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace finish|resume|stage add|stage rename|stage archive|stage finish|link-issue|session rename|session close|handoff|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace is optional for stage add/rename/archive when the current session identifies one workspace; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
+     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace finish|resume|stage add|stage rename|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace is optional for stage add/rename/archive when the current session identifies one workspace; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }
 
   result(data, changed) {

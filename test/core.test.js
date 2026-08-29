@@ -118,6 +118,29 @@ test("only one active session is allowed and terminal stages cannot resume", () 
   }
 });
 
+test("abandoning a stage session preserves the stage as resumable", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Abandon workspace", { workspace: "999984", sessionId: "session-1" });
+
+    const result = context.abandon("999984", "01", "session-1");
+    assert.deepEqual(result.data, { session_id: "session-1", state: "abandoned" });
+    assert.equal(context.sessionById("session-1").state, "abandoned");
+    assert.equal(context.startSession("999984", "01", { sessionId: "session-2" }).data.ordinal, "01/02");
+  } finally { removeRoot(root); }
+});
+
+test("help exposes stage lifecycle commands without internal session or duplicate commands", () => {
+  const root = makeRoot();
+  try {
+    const syntax = WorkContext.open(root).help().data.syntax;
+    assert.match(syntax, /stage handoff/);
+    assert.match(syntax, /stage abandon/);
+    assert.doesNotMatch(syntax, /session close|handoff\|knowledge/);
+  } finally { removeRoot(root); }
+});
+
 test("archiving preserves the stage ID, hides it from the TUI snapshot and ignores it when finishing a workspace", () => {
   const root = makeRoot();
   try {
