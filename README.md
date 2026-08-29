@@ -59,6 +59,10 @@ tools, or modify Markdown/JSONL projections. Hosts without the TUI plugin API
 continue to load the server plugin and its tools normally.
 
 Tools are registered by the installed plugin and are not copied into the project.
+Tracker links support GitLab issues (`/-/issues/<number>`), GitHub issues
+(`/issues/<number>`), and Jira issues (`/browse/KEY-123`). They are URL-based
+references only; the plugin does not call provider APIs or synchronize issue
+metadata.
 Knowledge operations are explicit: list, add, update, and supersede. Finishing a
 stage automatically validates the Knowledge Base by default (`knowledgeReview=auto`);
 the legacy `added` and `none` modes remain accepted.

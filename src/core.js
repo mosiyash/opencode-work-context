@@ -20,9 +20,14 @@ const assertNoSymlinkPath = (file) => { let current = path.parse(file).root; for
 function parseIssue(url) {
   try {
     const parsed = new URL(url);
-    const match = parsed.pathname.match(/\/([^/]+)\/-\/issues\/(\d+)\/?$/);
-    if (!/^https?:$/.test(parsed.protocol) || !match) fail(ERROR_CODES.INVALID_ISSUE_URL, "Expected a GitLab issue URL");
-    return { url: parsed.toString(), provider: "gitlab", project: parsed.pathname.split("/-/issues/")[0].replace(/^\//, ""), iid: Number(match[2]) };
+    if (!/^https?:$/.test(parsed.protocol)) fail(ERROR_CODES.INVALID_ISSUE_URL, "Expected a supported tracker issue URL");
+    let match = parsed.pathname.match(/^\/(.+)\/-\/issues\/(\d+)\/?$/);
+    if (match) return { url: parsed.toString(), provider: "gitlab", project: match[1], iid: Number(match[2]) };
+    match = parsed.pathname.match(/^\/([^/]+\/[^/]+)\/issues\/(\d+)\/?$/);
+    if (match) return { url: parsed.toString(), provider: "github", project: match[1], iid: Number(match[2]) };
+    match = parsed.pathname.match(/^\/browse\/([A-Za-z][A-Za-z0-9]+-\d+)\/?$/);
+    if (match) return { url: parsed.toString(), provider: "jira", project: match[1].split("-")[0], key: match[1] };
+    fail(ERROR_CODES.INVALID_ISSUE_URL, "Expected a supported tracker issue URL");
   } catch (error) {
     if (error.code === ERROR_CODES.INVALID_ISSUE_URL) throw error;
     fail(ERROR_CODES.INVALID_ISSUE_URL, "Invalid issue URL");

@@ -13,13 +13,23 @@ const validTimestamp = (value) => {
 };
 const requiredString = (data, key) => typeof data[key] === "string" && data[key].trim().length > 0;
 const validTrackerLinks = (links) => links.every((link) => {
-  if (!link || typeof link !== "object" || Object.keys(link).some((key) => !["url", "provider", "project", "iid"].includes(key)) || typeof link.url !== "string" || typeof link.provider !== "string" || typeof link.project !== "string" || !Number.isInteger(link.iid)) return false;
+  if (!link || typeof link !== "object" || typeof link.url !== "string" || typeof link.provider !== "string" || typeof link.project !== "string") return false;
   try {
     const url = new URL(link.url);
-    const marker = url.pathname.lastIndexOf("/-/issues/");
-    const project = marker > 1 ? url.pathname.slice(1, marker) : "";
-    const iid = marker > 1 ? Number(url.pathname.slice(marker + "/-/issues/".length).replace(/\/$/, "")) : NaN;
-    return link.provider === "gitlab" && (url.protocol === "http:" || url.protocol === "https:") && project === link.project && iid === link.iid;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    if (link.provider === "gitlab" || link.provider === "github") {
+      const allowed = ["url", "provider", "project", "iid"];
+      const match = url.pathname.match(link.provider === "gitlab" ? /^\/(.+)\/-\/issues\/(\d+)\/?$/ : /^\/([^/]+\/[^/]+)\/issues\/(\d+)\/?$/);
+      return Object.keys(link).every((key) => allowed.includes(key)) && Object.keys(link).length === allowed.length && match && match[1] === link.project && Number(match[2]) === link.iid && Number.isInteger(link.iid) && link.iid > 0;
+    }
+    if (link.provider === "jira") {
+      return Object.keys(link).every((key) => ["url", "provider", "project", "key"].includes(key))
+        && typeof link.key === "string"
+        && /^[A-Za-z][A-Za-z0-9]+-\d+$/.test(link.key)
+        && url.pathname === `/browse/${link.key}`
+        && link.project === link.key.substring(0, link.key.lastIndexOf("-"));
+    }
+    return false;
   } catch { return false; }
 });
 const validEvents = new Set(["session.started", "session.renamed", "session.handed_off", "session.closed", "session.abandoned"]);
@@ -62,7 +72,7 @@ function validateMetadata(data, kind, workspace, stage = null) {
   const allowed = kind === "workspace" ? ["schema", "workspace", "title", "status", "created_at", "updated_at", "tracker_links"] : ["schema", "workspace", "stage", "title", "status", "goal", "depends_on", "owner", "created_at", "updated_at", "tracker_links"];
   if (Object.keys(data).some((key) => !allowed.includes(key)) || data.schema !== 1 || !requiredString(data, "workspace") || !/^\d{6}$/.test(data.workspace) || data.workspace !== workspace) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
   if (!requiredString(data, "title") || !validTimestamp(data.created_at) || !validTimestamp(data.updated_at) || Date.parse(data.updated_at) < Date.parse(data.created_at) || !Array.isArray(data.tracker_links)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
-  if (!validTrackerLinks(data.tracker_links) || data.tracker_links.some((link) => !link.provider.trim() || !link.project.trim() || !Number.isInteger(link.iid) || link.iid < 1)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} tracker links`);
+  if (!validTrackerLinks(data.tracker_links) || data.tracker_links.some((link) => !link.provider.trim() || !link.project.trim() || ((link.provider === "gitlab" || link.provider === "github") ? (!Number.isInteger(link.iid) || link.iid < 1) : !link.key?.trim()))) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} tracker links`);
   const statuses = kind === "workspace" ? ["in_progress", "completed", "cancelled"] : ["planned", "in_progress", "completed", "cancelled", "archived"];
   if (!statuses.includes(data.status)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} status`);
   if (kind === "stage" && (data.stage !== stage || !/^\d{2}$/.test(data.stage) || !requiredString(data, "goal") || !requiredString(data, "owner") || !Array.isArray(data.depends_on) || new Set(data.depends_on).size !== data.depends_on.length || data.depends_on.includes(data.stage) || data.depends_on.some((item) => typeof item !== "string" || !/^\d{2}$/.test(item)))) fail(ERROR_CODES.STORAGE_ERROR, "Invalid stage metadata");

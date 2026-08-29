@@ -260,3 +260,27 @@ test("title renderer applies tracker prefix and inactive suffix", () => {
     "GL#42 | 000005 02/03 (closed)\nWorkspace title",
   );
 });
+
+test("tracker links support GitLab, GitHub and Jira issue URLs", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Tracker workspace", { workspace: "999975", sessionId: "session-1" });
+    context.linkIssue("999975", "https://github.com/acme/project/issues/42");
+    context.linkIssue("999975", "https://jira.example.com/browse/PROJ-123", "01");
+
+    assert.deepEqual(context.storage.readWorkspace("999975").data.tracker_links[0], {
+      url: "https://github.com/acme/project/issues/42",
+      provider: "github",
+      project: "acme/project",
+      iid: 42,
+    });
+    assert.deepEqual(context.storage.readStage("999975", "01").data.tracker_links[0], {
+      url: "https://jira.example.com/browse/PROJ-123",
+      provider: "jira",
+      project: "PROJ",
+      key: "PROJ-123",
+    });
+    assert.throws(() => context.linkIssue("999975", "https://jira.example.com/browse/PROJ-abc"), (error) => error.code === ERROR_CODES.INVALID_ISSUE_URL);
+  } finally { removeRoot(root); }
+});
