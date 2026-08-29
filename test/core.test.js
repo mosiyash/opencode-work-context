@@ -33,6 +33,7 @@ test("workspace list includes stage descriptions", () => {
     context.createWorkspace("Described workspace", { workspace: "999990", sessionId: "session-1" });
 
     const stage = context.listStages("999990").data.stages[0];
+    assert.equal(stage.title, "Планирование");
     assert.equal(stage.description, stage.goal);
     assert.equal(stage.description, "Уточнить цель и ограничения работы");
   } finally {

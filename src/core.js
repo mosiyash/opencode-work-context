@@ -149,7 +149,7 @@ export class WorkContext {
       if (fs.existsSync(this.storage.workspaceDir(workspace))) fail(ERROR_CODES.CONFLICT, "Workspace already exists");
       fs.mkdirSync(path.join(this.storage.workspaceDir(workspace), "stages"), { recursive: true });
       this.storage.writeMarkdown(this.storage.workspaceFile(workspace), { schema: 1, workspace, title: title.trim(), status: "in_progress", created_at: now, updated_at: now, tracker_links: [] }, body(title));
-      this.storage.writeMarkdown(this.storage.stageFile(workspace, "01"), { schema: 1, workspace, stage: "01", title: `Планирование: ${title.trim()}`, status: "in_progress", goal: "Уточнить цель и ограничения работы", depends_on: [], owner: actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body(`Планирование: ${title.trim()}`, "Уточнить цель и ограничения работы"));
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, "01"), { schema: 1, workspace, stage: "01", title: "Планирование", status: "in_progress", goal: "Уточнить цель и ограничения работы", depends_on: [], owner: actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body("Планирование", "Уточнить цель и ограничения работы"));
       const sessionId = options.sessionId || randomUUID();
       if (this.storage.readEvents().some((item) => item.session_id === sessionId)) fail(ERROR_CODES.CONFLICT, "Session ID already exists");
       this.writeEvents([event("session.started", workspace, "01", 1, sessionId, actor(this.options), { summary: `планирование ${title.trim()}`, opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
