@@ -140,6 +140,13 @@ export class WorkContext {
     return reduceSessions(this.storage.readEvents()).find((session) => session.session_id === sessionId) || null;
   }
 
+  sessionByOpenCodeId(opencodeSessionId, workspace = null, stage = null) {
+    return reduceSessions(this.storage.readEvents()).filter((session) => session.opencode_session_id === opencodeSessionId
+      && (!workspace || session.workspace === workspace)
+      && (!stage || session.stage === stage)
+      && session.state === "active").at(-1) || null;
+  }
+
   assertDependenciesCompleted(workspace, stageRecord) {
     const stages = this.listStages(workspace).data.stages;
     for (const dependency of stageRecord.data.depends_on) {
@@ -195,7 +202,14 @@ export class WorkContext {
       const stageRecord = this.storage.readStage(workspace, stage);
       this.assertDependenciesCompleted(workspace, stageRecord);
       const events = this.storage.readEvents();
-      if (activeSession(events, workspace, stage)) fail(ERROR_CODES.ACTIVE_SESSION_EXISTS, "Stage already has an active session");
+      const current = activeSession(events, workspace, stage);
+      if (current) {
+        const canTakeOver = options.takeover
+          && current.session_id !== sessionId
+          && current.opencode_session_id !== options.opencodeSessionId;
+        if (!canTakeOver) fail(ERROR_CODES.ACTIVE_SESSION_EXISTS, "Stage already has an active session");
+        this.writeEvents([event("session.handed_off", workspace, stage, current.ordinal, current.session_id, actor(this.options), { reason: "resumed in a new OpenCode session" })]);
+      }
       if (["completed", "cancelled", "archived"].includes(stageRecord.data.status)) fail(ERROR_CODES.INVALID_STATE, "Cannot start a session for a terminal stage");
       if (reduceSessions(events).some((session) => session.session_id === sessionId)) fail(ERROR_CODES.CONFLICT, "Session ID already exists");
       const previous = reduceSessions(events).filter((session) => session.workspace === workspace && session.stage === stage);

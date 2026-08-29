@@ -26,6 +26,20 @@ test("create writes canonical metadata, events and projections", () => {
   }
 });
 
+test("multiple workspaces can share an OpenCode session ID", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("First workspace", { workspace: "999992", sessionId: "internal-1", opencodeSessionId: "oc-shared" });
+    context.createWorkspace("Second workspace", { workspace: "999993", sessionId: "internal-2", opencodeSessionId: "oc-shared" });
+
+    assert.equal(context.sessionByOpenCodeId("oc-shared", "999993", "01").session_id, "internal-2");
+    assert.equal(context.sessionByOpenCodeId("oc-shared").workspace, "999993");
+  } finally {
+    removeRoot(root);
+  }
+});
+
 test("workspace list includes stage descriptions", () => {
   const root = makeRoot();
   try {
@@ -126,6 +140,22 @@ test("only one active session is allowed and terminal stages cannot resume", () 
       () => context.startSession("999996", "01", { sessionId: "session-3" }),
       (error) => error instanceof WorkContextError && error.code === ERROR_CODES.INVALID_STATE,
     );
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("a new OpenCode session takes over an active stage session", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Takeover workspace", { workspace: "999995", sessionId: "internal-1", opencodeSessionId: "oc-old" });
+
+    const result = context.startSession("999995", "01", { sessionId: "internal-2", opencodeSessionId: "oc-new", takeover: true });
+
+    assert.equal(result.data.session_id, "internal-2");
+    assert.equal(context.sessionById("internal-1").state, "handed_off");
+    assert.equal(context.sessionById("internal-2").state, "active");
   } finally {
     removeRoot(root);
   }

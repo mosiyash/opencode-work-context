@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readStagesSnapshot, renderStagesPanel } from "../../src/index.js";
 import serverPlugin from "../../plugin/work-context.js";
+import tools from "../../src/tool-definitions.js";
 import { createFixture, createSessionHost } from "../helpers/integration.js";
 
 test("new OpenCode session resumes a stage and updates its session title", async () => {
@@ -24,6 +25,28 @@ test("new OpenCode session resumes a stage and updates its session title", async
     assert.equal(snapshot.data.workspace.id, "999900");
     assert.equal(snapshot.data.currentStage, "02");
     assert.match(renderStagesPanel(snapshot), /\[•\] 02\. Integration stage/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("create tool can create multiple workspaces in one OpenCode session", async () => {
+  const fixture = createFixture();
+  try {
+    const executeContext = {
+      directory: fixture.root,
+      worktree: fixture.root,
+      sessionID: "oc-shared",
+      metadata: async () => {},
+    };
+
+    const first = JSON.parse((await tools.work_context_create_workspace.execute({ title: "First" }, executeContext)).output);
+    const second = JSON.parse((await tools.work_context_create_workspace.execute({ title: "Second" }, executeContext)).output);
+
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    assert.notEqual(first.data.session_id, second.data.session_id);
+    assert.equal(fixture.context.sessionByOpenCodeId("oc-shared", second.data.workspace, "01").session_id, second.data.session_id);
   } finally {
     fixture.cleanup();
   }

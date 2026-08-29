@@ -1,7 +1,67 @@
-# opencode-work-context
+# OpenCode Work Context
 
-Filesystem work-context core and OpenCode adapter for standalone projects. The
-package is ESM and has no dependency on Mezzio or PHP.
+Keep the context of a task between OpenCode sessions.
+
+Create one workspace for one task, split it into stages, and return to the
+exact stage where you stopped. The optional sidebar shows the current task and
+its progress at a glance.
+
+![OpenCode Work Context stages sidebar](docs/assets/work-context-sidebar.png)
+
+> Example: one workspace for one task, linked to Jira issue `AN-142`, with
+> three completed stages and the current work highlighted at stage 04.
+>
+> The sidebar is an optional read-only TUI panel. The core workflow works
+> through `/wc` commands and OpenCode tools without it.
+
+## How It Works
+
+```text
+Workspace: Add CSV export to analytics report
+├── ✓ 01. Planning
+├── ✓ 02. Update the export endpoint
+├── ✓ 03. Add the download action
+├── • 04. Handle export edge cases   <- current stage
+└──   05. Verify the export flow
+```
+
+- **Workspace** is one concrete task, such as adding CSV export.
+- **Stage** is one step in that task.
+- **Planning** is normally the first stage.
+- **Resume** starts a new session at a selected stage.
+- **Handoff** preserves the context when moving work to another session.
+
+## Quick Start
+
+Run this from the root of a standalone OpenCode project:
+
+```sh
+npx opencode-work-context init
+```
+
+Then create a task and its first stage in OpenCode:
+
+```text
+/wc create "Add CSV export to analytics report"
+/wc stage rename 000001 01 "Planning"
+/wc stage add 000001 "Update the export endpoint"
+/wc resume 000001 02
+```
+
+When you return later, continue from the active stage:
+
+```text
+/wc resume 000001 02
+```
+
+Useful commands:
+
+```text
+/wc list
+/wc workspace list 000001
+/wc stage handoff 000001 02
+/wc stage finish 000001 02
+```
 
 ## Install
 
