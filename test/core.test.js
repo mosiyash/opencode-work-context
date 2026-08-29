@@ -257,6 +257,6 @@ test("title renderer applies tracker prefix and inactive suffix", () => {
       state: "closed",
       trackerLinks: [{ project: "group/project", iid: 42 }],
     }),
-    "GL#42 | 000005 02/03 (closed): Workspace title",
+    "GL#42 | 000005 02/03 (closed)\nWorkspace title",
   );
 });

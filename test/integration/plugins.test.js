@@ -18,7 +18,7 @@ test("new OpenCode session resumes a stage and updates its session title", async
     assert.equal(result.data.ordinal, "02/01");
 
     await hooks["tool.execute.after"]({ tool: "work_context_start_session", sessionID: "oc-resume" });
-    assert.equal(host.title, "999900 02/01: Integration workspace");
+    assert.equal(host.title, "999900 02/01\nIntegration workspace");
 
     const snapshot = readStagesSnapshot({ projectRoot: root, sessionId: "oc-resume" });
     assert.equal(snapshot.data.workspace.id, "999900");
@@ -43,7 +43,7 @@ test("stage tracker link is preferred over workspace tracker link in the session
     const host = createSessionHost(root, "oc-resume");
     const hooks = await serverPlugin(host);
     await hooks["tool.execute.after"]({ tool: "work_context_start_session", sessionID: "oc-resume" });
-    assert.equal(host.title, "GL#11 | 999901 02/01: Tracked workspace");
+    assert.equal(host.title, "GL#11 | 999901 02/01\nTracked workspace");
   } finally {
     fixture.cleanup();
   }
