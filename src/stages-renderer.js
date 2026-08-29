@@ -3,6 +3,7 @@ const statusMarker = (status) => ({
   in_progress: "[•]",
   completed: "[✓]",
   cancelled: "[!]",
+  archived: "[-]",
 }[status] || "[?]");
 
 export function renderStagesPanel(result) {

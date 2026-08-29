@@ -113,7 +113,7 @@ export class WorkContext {
       const record = this.storage.readWorkspace(workspace);
       const stages = this.listStages(workspace).data.stages;
       if (record.data.status === "cancelled") fail(ERROR_CODES.INVALID_STATE, "Cancelled workspace cannot be finished", { workspace, status: record.data.status });
-      const incompleteStages = stages.filter((stage) => stage.status !== "completed");
+       const incompleteStages = stages.filter((stage) => stage.status !== "completed" && stage.status !== "archived");
       if (incompleteStages.length) fail(ERROR_CODES.INVALID_STATE, "All workspace stages must be completed before finishing", {
         workspace,
         incompleteStages: incompleteStages.map(({ stage, title, description, status }) => ({ stage, title, description, status })),
@@ -152,7 +152,7 @@ export class WorkContext {
       this.storage.writeMarkdown(this.storage.stageFile(workspace, "01"), { schema: 1, workspace, stage: "01", title: `Планирование: ${title.trim()}`, status: "in_progress", goal: "Уточнить цель и ограничения работы", depends_on: [], owner: actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body(`Планирование: ${title.trim()}`, "Уточнить цель и ограничения работы"));
       const sessionId = options.sessionId || randomUUID();
       if (this.storage.readEvents().some((item) => item.session_id === sessionId)) fail(ERROR_CODES.CONFLICT, "Session ID already exists");
-      this.writeEvents([event("session.started", workspace, "01", 1, sessionId, actor(this.options), { summary: `планирование ${title.trim()}` })]);
+      this.writeEvents([event("session.started", workspace, "01", 1, sessionId, actor(this.options), { summary: `планирование ${title.trim()}`, opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
       generateProjections(this.storage);
       return this.result({ workspace, stage: "01", session_id: sessionId, ordinal: "01/01" }, [workspace, "01"]);
     });
@@ -172,7 +172,7 @@ export class WorkContext {
       this.assertDependenciesCompleted(workspace, stageRecord);
       const events = this.storage.readEvents();
       if (activeSession(events, workspace, stage)) fail(ERROR_CODES.ACTIVE_SESSION_EXISTS, "Stage already has an active session");
-      if (["completed", "cancelled"].includes(stageRecord.data.status)) fail(ERROR_CODES.INVALID_STATE, "Cannot start a session for a terminal stage");
+      if (["completed", "cancelled", "archived"].includes(stageRecord.data.status)) fail(ERROR_CODES.INVALID_STATE, "Cannot start a session for a terminal stage");
       if (reduceSessions(events).some((session) => session.session_id === sessionId)) fail(ERROR_CODES.CONFLICT, "Session ID already exists");
       const previous = reduceSessions(events).filter((session) => session.workspace === workspace && session.stage === stage);
       const ordinal = previous.length + 1;
@@ -202,6 +202,37 @@ export class WorkContext {
       this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), { schema: 1, workspace, stage, title: title.trim(), status: "planned", goal: options.goal || title.trim(), depends_on: dependsOn, owner: options.owner || actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body(title, options.goal || title));
       generateProjections(this.storage);
       return this.result({ workspace, stage }, [stage]);
+    });
+  }
+
+  renameStage(workspace, stage, title) {
+    id(workspace, 6);
+    stage = stageId(stage);
+    if (!title?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Title is required");
+    return this.transact(`stage-${workspace}-${stage}`, () => {
+      const record = this.storage.readStage(workspace, stage);
+      const nextTitle = title.trim();
+      if (record.data.title === nextTitle) return this.result({ workspace, stage, title: nextTitle }, []);
+      record.data.title = nextTitle;
+      record.data.updated_at = new Date().toISOString();
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, body(nextTitle, record.data.goal));
+      generateProjections(this.storage);
+      return this.result({ workspace, stage, title: nextTitle }, [workspace, stage]);
+    });
+  }
+
+  archiveStage(workspace, stage) {
+    id(workspace, 6);
+    stage = stageId(stage);
+    return this.transact(`stage-${workspace}-${stage}`, () => {
+      const record = this.storage.readStage(workspace, stage);
+      if (record.data.status === "archived") return this.result({ workspace, stage, status: "archived" }, []);
+      if (activeSession(this.storage.readEvents(), workspace, stage)) fail(ERROR_CODES.ACTIVE_SESSION_EXISTS, "Cannot archive a stage with an active session");
+      record.data.status = "archived";
+      record.data.updated_at = new Date().toISOString();
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, record.body);
+      generateProjections(this.storage);
+      return this.result({ workspace, stage, status: "archived" }, [workspace, stage]);
     });
   }
 
@@ -305,7 +336,9 @@ export class WorkContext {
         if (known?.state === "closed") return this.result({ session_id: sessionId, workspace, stage, state: "closed", status: "completed" }, []);
         fail(ERROR_CODES.SESSION_NOT_ACTIVE, "Session did not complete this stage");
       }
-      if (!['added', 'none'].includes(options.knowledgeReview)) fail(ERROR_CODES.INVALID_ARGUMENT, "Knowledge review must be 'added' or 'none'");
+      const knowledgeReview = options.knowledgeReview || "auto";
+      if (!['auto', 'added', 'none'].includes(knowledgeReview)) fail(ERROR_CODES.INVALID_ARGUMENT, "Knowledge review must be 'auto', 'added' or 'none'");
+      const knowledgeEntries = knowledgeReview === "auto" ? this.listKnowledge(workspace).data : null;
       const active = activeSession(events, workspace, stage);
       if (!active || active.session_id !== sessionId) fail(active ? ERROR_CODES.ACTIVE_SESSION_EXISTS : ERROR_CODES.SESSION_NOT_ACTIVE, active ? "Another active session owns this stage" : "Session is not active");
       this.writeEvents([event("session.closed", workspace, stage, active.ordinal, sessionId, actor(this.options), { reason: "stage_completed" })]);
@@ -313,12 +346,12 @@ export class WorkContext {
       current.data.updated_at = new Date().toISOString();
       this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), current.data, `${current.body}\n\n## Result\n\n${options.result || "Stage completed."}`);
       generateProjections(this.storage);
-      return this.result({ session_id: sessionId, workspace, stage, state: "closed", status: "completed" }, [workspace, stage]);
+      return this.result({ session_id: sessionId, workspace, stage, state: "closed", status: "completed", knowledge_review: knowledgeReview, ...(knowledgeEntries ? { knowledge_entries: knowledgeEntries.length } : {}) }, [workspace, stage]);
     });
   }
 
   help(command = "") {
-    return this.result({ command, syntax: "/wc [create|list|workspace list|workspace finish|resume|add-stage|link-issue|session rename|session close|handoff|finish|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace finish requires all stages to be completed; stage finish requires knowledgeReview=added|none; mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
+     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace finish|resume|stage add|stage rename|stage archive|stage finish|link-issue|session rename|session close|handoff|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace is optional for stage add/rename/archive when the current session identifies one workspace; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }
 
   result(data, changed) {

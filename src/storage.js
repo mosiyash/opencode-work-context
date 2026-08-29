@@ -63,7 +63,7 @@ function validateMetadata(data, kind, workspace, stage = null) {
   if (Object.keys(data).some((key) => !allowed.includes(key)) || data.schema !== 1 || !requiredString(data, "workspace") || !/^\d{6}$/.test(data.workspace) || data.workspace !== workspace) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
   if (!requiredString(data, "title") || !validTimestamp(data.created_at) || !validTimestamp(data.updated_at) || Date.parse(data.updated_at) < Date.parse(data.created_at) || !Array.isArray(data.tracker_links)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
   if (!validTrackerLinks(data.tracker_links) || data.tracker_links.some((link) => !link.provider.trim() || !link.project.trim() || !Number.isInteger(link.iid) || link.iid < 1)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} tracker links`);
-  const statuses = kind === "workspace" ? ["in_progress", "completed", "cancelled"] : ["planned", "in_progress", "completed", "cancelled"];
+  const statuses = kind === "workspace" ? ["in_progress", "completed", "cancelled"] : ["planned", "in_progress", "completed", "cancelled", "archived"];
   if (!statuses.includes(data.status)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} status`);
   if (kind === "stage" && (data.stage !== stage || !/^\d{2}$/.test(data.stage) || !requiredString(data, "goal") || !requiredString(data, "owner") || !Array.isArray(data.depends_on) || new Set(data.depends_on).size !== data.depends_on.length || data.depends_on.includes(data.stage) || data.depends_on.some((item) => typeof item !== "string" || !/^\d{2}$/.test(item)))) fail(ERROR_CODES.STORAGE_ERROR, "Invalid stage metadata");
 }

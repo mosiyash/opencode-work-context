@@ -1,61 +1,94 @@
+import fs from "node:fs";
+import path from "node:path";
 import { readStagesSnapshot } from "../src/stages-snapshot.js";
 import { renderStagesPanel } from "../src/stages-renderer.js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createSignal } from "solid-js";
 
 const DEBOUNCE_MS = 150;
+const POLL_MS = 1000;
 const PATH_TIMEOUT_MS = 5000;
 const PATH_POLL_MS = 25;
+const WORK_CONTEXT_PREFIX = "work" + "_" + "context_";
 const statusMarker = (status) => ({
   planned: "[ ]",
   in_progress: "[•]",
   completed: "[✓]",
   cancelled: "[!]",
+  archived: "[-]",
 }[status] || "[?]");
 
 export { readStagesSnapshot, renderStagesPanel };
 
-export const renderStagesElement = (result, theme) => jsx("box", {
+const defaultRuntime = { jsx };
+
+const renderStagesContent = (result, theme, runtime = defaultRuntime) => !result?.ok || !result.data?.workspace
+  ? [
+    runtime.jsx("text", { children: runtime.jsx("b", { children: "Stages" }) }),
+    ...renderStagesPanel(result).split("\n").slice(1).map((line) => runtime.jsx("text", { children: line })),
+  ]
+  : [
+    runtime.jsx("box", {
+      flexDirection: "row",
+      children: [
+        runtime.jsx("text", { children: runtime.jsx("b", { children: "Stages" }) }),
+        runtime.jsx("text", { fg: theme?.current?.textMuted, children: ` · ${result.data.workspace.status}` }),
+      ],
+    }),
+    ...result.data.stages.map((stage) => runtime.jsx("box", {
+      flexDirection: "row",
+      children: [
+        runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
+        runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: `${stage.id}. ${stage.title}` }),
+      ],
+    })),
+  ];
+
+export const renderStagesElement = (result, theme, runtime = defaultRuntime) => {
+  return runtime.jsx("box", {
   flexDirection: "column",
-  children: !result?.ok || !result.data?.workspace
-    ? [
-      jsx("text", { children: jsx("b", { children: "Stages" }) }),
-      ...renderStagesPanel(result).split("\n").slice(1).map((line) => jsx("text", { children: line })),
-    ]
-    : [
-      jsx("box", {
-        flexDirection: "row",
-        children: [
-          jsx("text", { children: jsx("b", { children: "Stages" }) }),
-          jsx("text", { fg: theme?.current?.textMuted, children: ` · ${result.data.workspace.status}` }),
-        ],
-      }),
-      ...result.data.stages.map((stage) => jsx("box", {
-        flexDirection: "row",
-        children: [
-          jsx("text", { flexShrink: 0, marginRight: 1, fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
-          jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: `${stage.id}. ${stage.title}` }),
-        ],
-      })),
-    ],
-});
+  children: () => renderStagesContent(typeof result === "function" ? result() : result, theme, runtime),
+  });
+};
 
 const sessionIdFromEvent = (event) => event?.properties?.info?.id
   || event?.properties?.sessionID
   || event?.sessionID
   || event?.sessionId
   || event?.data?.info?.id
-  || event?.data?.sessionID;
+  || event?.data?.sessionID
+  || event?.properties?.part?.sessionID;
+const isCompletedWorkContextTool = (event) => {
+  const part = event?.properties?.part;
+  return event?.type === "message.part.updated"
+    && part?.type === "tool"
+    && part.tool?.startsWith(WORK_CONTEXT_PREFIX)
+    && ["completed", "error"].includes(part.state?.status);
+};
+export const sessionIdForSlot = (api, initialSessionId, slotContext = {}, slotState = {}) => slotState.session_id
+  || slotState.sessionID
+  || slotState.sessionId
+  || slotState.session
+  || slotContext.session_id
+  || slotContext.sessionID
+  || slotContext.sessionId
+  || slotContext.session
+  || api.route?.current?.params?.sessionID
+  || api.route?.current?.params?.sessionId
+  || api.route?.current?.params?.session_id
+  || api.route?.current?.params?.session
+  || initialSessionId;
 const disposeRegistration = (registration) => {
   if (typeof registration === "function") registration();
   else registration?.dispose?.();
 };
 
-export const createStagesTuiController = ({ projectRoot, read = readStagesSnapshot, debounceMs = DEBOUNCE_MS } = {}) => {
+export const createStagesTuiController = ({ projectRoot, read = readStagesSnapshot, debounceMs = DEBOUNCE_MS, pollMs = POLL_MS, createSignal: makeSignal = createSignal } = {}) => {
   const snapshots = new Map();
   const generations = new Map();
   const timers = new Map();
-  const [version, setVersion] = createSignal(0);
+  const pollers = new Map();
+  const [version, setVersion] = makeSignal(0);
   let disposed = false;
 
   const readSnapshot = async (sessionId) => {
@@ -96,8 +129,14 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
     }, debounceMs));
   };
 
+  const watch = (sessionId) => {
+    if (disposed || !sessionId || pollers.has(sessionId) || !pollMs) return;
+    pollers.set(sessionId, setInterval(() => scheduleRefresh(sessionId), pollMs));
+  };
+
   const resultFor = (sessionId) => {
     version();
+    watch(sessionId);
     const entry = snapshots.get(sessionId);
     if (!entry) {
       void readSnapshot(sessionId);
@@ -116,6 +155,8 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
       generations.clear();
       for (const timer of timers.values()) clearTimeout(timer);
       timers.clear();
+      for (const poller of pollers.values()) clearInterval(poller);
+      pollers.clear();
       snapshots.clear();
     },
   };
@@ -144,11 +185,12 @@ export const resolveProjectRoot = async (api, { timeoutMs = PATH_TIMEOUT_MS, pol
   return null;
 };
 
-const StagesPanel = ({ result, theme }) => renderStagesElement(result(), theme);
-const renderStagesSlot = (controller, theme, sessionId) => jsx("box", {
+const renderStagesSlot = (controller, theme, sessionId, runtime = defaultRuntime) => runtime.jsx("box", {
   flexDirection: "column",
-  children: jsx(StagesPanel, { result: () => controller.resultFor(sessionId), theme }),
+  children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime),
 });
+
+const ACTIVE_WORKSPACE_SESSION = "__active_" + "work" + "_context_workspace__";
 
 // Optional TUI entry point. It is deliberately not imported by the server plugin.
 export const tui = async (api, options = {}) => {
@@ -157,21 +199,43 @@ export const tui = async (api, options = {}) => {
 
   const initialSessionId = api.route?.current?.name === "session"
     ? api.route.current.params?.sessionID
+      || api.route.current.params?.sessionId
+      || api.route.current.params?.session_id
     : undefined;
-  const controller = createStagesTuiController({ projectRoot, read: api.stagesSnapshotProvider || readStagesSnapshot });
+  const controller = createStagesTuiController({
+    projectRoot,
+    read: api.stagesSnapshotProvider || readStagesSnapshot,
+    debounceMs: options.debounceMs,
+    pollMs: options.pollMs,
+    createSignal: options.runtime?.createSignal,
+  });
   await controller.load(initialSessionId);
+  let currentSessionId = initialSessionId;
+  let storageWatcher;
+  try {
+    storageWatcher = fs.watch(path.join(projectRoot, ".work-context"), { recursive: true }, () => {
+      controller.scheduleRefresh(currentSessionId);
+    });
+  } catch {
+    // Missing storage is valid; the provider will continue to expose an empty state.
+  }
 
   let cleanup = () => {};
   const unregisterSlot = api.slots.register({
-    dispose: () => cleanup(),
-    slots: {
-      sidebar_content: (_context, { session_id: sessionId } = {}) => {
-        return renderStagesSlot(controller, api.theme, sessionId);
+      dispose: () => cleanup(),
+      slots: {
+      sidebar_content: (slotContext = {}, slotState = {}) => {
+        const sessionId = sessionIdForSlot(api, initialSessionId, slotContext, slotState) || ACTIVE_WORKSPACE_SESSION;
+        currentSessionId = sessionId;
+        return renderStagesSlot(controller, api.theme, sessionId, options.runtime);
       },
     },
   });
   const unsubscribe = api.event?.on?.("session.updated", (event) => {
     controller.scheduleRefresh(sessionIdFromEvent(event));
+  });
+  const unsubscribeTool = api.event?.on?.("message.part.updated", (event) => {
+    if (isCompletedWorkContextTool(event)) controller.scheduleRefresh(sessionIdFromEvent(event));
   });
 
   let cleaned = false;
@@ -179,7 +243,9 @@ export const tui = async (api, options = {}) => {
     if (cleaned) return;
     cleaned = true;
     controller.dispose();
+    storageWatcher?.close();
     disposeRegistration(unsubscribe);
+    disposeRegistration(unsubscribeTool);
     disposeRegistration(unregisterSlot);
   };
   api.lifecycle?.onDispose?.(cleanup);

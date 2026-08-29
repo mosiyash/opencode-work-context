@@ -19,8 +19,10 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `workspace list <workspace>` or `<workspace> list` -> `work_context_workspace_list`
 - `workspace finish <workspace>` -> `work_context_workspace_finish`
 - `resume <workspace> <stage>` -> `work_context_start_session`
-- `add-stage <workspace> ...` -> `work_context_add_stage`
-- `finish <workspace> <stage>` -> `work_context_finish_stage`
+- `stage add [<workspace>] ...` -> `work_context_add_stage`
+- `stage rename [<workspace>] <stage> "title"` -> `work_context_rename_stage`
+- `stage archive [<workspace>] <stage>` -> `work_context_archive_stage`
+- `stage finish <workspace> <stage>` -> `work_context_finish_stage`
 
 Supported syntax:
 
@@ -30,12 +32,15 @@ Supported syntax:
 - `workspace list <workspace>`
 - `workspace finish <workspace>`
 - `resume <workspace> <stage>`
-- `add-stage <workspace> "title"`
+- `stage add [<workspace>] "title"`
+- `stage rename [<workspace>] <stage> "title"`
+- `stage archive [<workspace>] <stage>`
+- `stage finish <workspace> <stage>`
 - `<workspace> [<stage>] link-issue <URL>`
 - `session rename "summary"`
 - `session close`
 - `handoff <workspace> <stage>`
-- `finish <workspace> <stage>` requires an explicit knowledge review: `added` or `none`
+- `stage finish <workspace> <stage>` automatically reviews the Knowledge Base (`auto` by default)
 - `knowledge list|add|update|supersede <workspace> ...`
 
 Arguments: $ARGUMENTS

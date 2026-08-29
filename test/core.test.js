@@ -77,6 +77,21 @@ test("workspace finish marks a workspace completed after all stages", () => {
   }
 });
 
+test("stage finish automatically reviews the knowledge ledger by default", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Automatic review workspace", { workspace: "999987", sessionId: "session-1" });
+
+    const result = context.finish("999987", "01", "session-1");
+    assert.equal(result.data.knowledge_review, "auto");
+    assert.equal(result.data.knowledge_entries, 0);
+    assert.equal(context.storage.readStage("999987", "01").data.status, "completed");
+  } finally {
+    removeRoot(root);
+  }
+});
+
 test("only one active session is allowed and terminal stages cannot resume", () => {
   const root = makeRoot();
   try {
@@ -100,6 +115,46 @@ test("only one active session is allowed and terminal stages cannot resume", () 
   } finally {
     removeRoot(root);
   }
+});
+
+test("archiving preserves the stage ID, hides it from the TUI snapshot and ignores it when finishing a workspace", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Archive workspace", { workspace: "999979", sessionId: "session-1" });
+    context.handoff("999979", "01", "session-1");
+    context.addStage("999979", "Keep this stage");
+    context.addStage("999979", "Archive this stage");
+
+    const result = context.archiveStage("999979", "03");
+    assert.deepEqual(result.data, { workspace: "999979", stage: "03", status: "archived" });
+    assert.equal(context.storage.readStage("999979", "03").data.status, "archived");
+    assert.deepEqual(context.listStages("999979").data.stages.map((stage) => stage.stage), ["01", "02", "03"]);
+    assert.throws(() => context.startSession("999979", "03", { sessionId: "session-3" }), (error) => error.code === ERROR_CODES.INVALID_STATE);
+  } finally { removeRoot(root); }
+});
+
+test("an active stage cannot be archived", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Active archive workspace", { workspace: "999978", sessionId: "session-1" });
+    assert.throws(() => context.archiveStage("999978", "01"), (error) => error.code === ERROR_CODES.ACTIVE_SESSION_EXISTS);
+  } finally { removeRoot(root); }
+});
+
+test("renaming a stage preserves its ID and goal", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Rename workspace", { workspace: "999976", sessionId: "session-1" });
+    const result = context.renameStage("999976", "01", "Renamed stage");
+    assert.deepEqual(result.data, { workspace: "999976", stage: "01", title: "Renamed stage" });
+    const stage = context.storage.readStage("999976", "01").data;
+    assert.equal(stage.stage, "01");
+    assert.equal(stage.title, "Renamed stage");
+    assert.equal(stage.goal, "Уточнить цель и ограничения работы");
+  } finally { removeRoot(root); }
 });
 
 test("session ordinal is scoped to the stage", () => {
@@ -172,12 +227,12 @@ test("title renderer applies tracker prefix and inactive suffix", () => {
   assert.equal(
     renderTitle({
       workspace: "000005",
+      workspaceTitle: "Workspace title",
       stage: "02",
       ordinal: 3,
-      summary: "handoff",
       state: "closed",
       trackerLinks: [{ project: "group/project", iid: 42 }],
     }),
-    "GL#42 | 000005 02/03 (closed): handoff",
+    "GL#42 | 000005 02/03 (closed): Workspace title",
   );
 });

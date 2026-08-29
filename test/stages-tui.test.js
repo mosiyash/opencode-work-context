@@ -3,12 +3,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { testRender } from "@opentui/solid";
+import { createSignal } from "solid-js";
 import { WorkContext, readStagesSnapshot, renderStagesPanel } from "../src/index.js";
-import tuiModule, { createStagesTuiController } from "../plugin/stages-tui.js";
+import tuiModule, { createStagesTuiController, renderStagesElement, sessionIdForSlot } from "../plugin/stages-tui.js";
+import realTuiLoader from "../.opencode/tui-plugins/work-context-stages.js";
 
 const makeRoot = () => fs.mkdtempSync(path.join("/tmp/opencode", "stages-tui-test-"));
 const removeRoot = (root) => fs.rmSync(root, { recursive: true, force: true });
 const packageManifest = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const tuiSmokeEnabled = process.env.OPENCODE_TUI_SMOKE === "1";
 
 test("snapshot is read-only when storage is absent", () => {
   const root = makeRoot();
@@ -72,6 +76,21 @@ test("snapshot resolves a session stored with its OpenCode session ID", () => {
   } finally { removeRoot(root); }
 });
 
+test("snapshot hides archived stages without renumbering the remaining stages", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Archived panel workspace", { workspace: "999977", sessionId: "oc-archive" });
+    context.handoff("999977", "01", "oc-archive");
+    context.addStage("999977", "Visible stage");
+    context.addStage("999977", "Archived stage");
+    context.archiveStage("999977", "03");
+    const result = readStagesSnapshot({ projectRoot: root, sessionId: "oc-archive" });
+    assert.deepEqual(result.data.stages.map((stage) => stage.id), ["01", "02"]);
+    assert.equal(result.data.stages.some((stage) => stage.status === "archived"), false);
+  } finally { removeRoot(root); }
+});
+
 test("snapshot switches workspace data by the active OpenCode session mapping", () => {
   const root = makeRoot();
   try {
@@ -106,12 +125,70 @@ test("renderer uses todo-style markers for stage statuses", () => {
       { id: "02", title: "Active", status: "in_progress", current: true },
       { id: "03", title: "Completed", status: "completed", current: false },
       { id: "04", title: "Cancelled", status: "cancelled", current: false },
+      { id: "05", title: "Archived", status: "archived", current: false },
     ],
   } });
   assert.match(output, /\[ \] 01\. Planned/);
   assert.match(output, /\[•\] 02\. Active/);
   assert.match(output, /\[✓\] 03\. Completed/);
   assert.match(output, /\[!] 04\. Cancelled/);
+  assert.match(output, /\[-\] 05\. Archived/);
+});
+
+test("mounted stages panel updates without remount", { skip: !tuiSmokeEnabled }, async () => {
+  const stages = (last) => Array.from({ length: last }, (_, index) => ({
+    id: String(index + 1).padStart(2, "0"),
+    title: `Test stages ${index + 1}`,
+    status: "planned",
+    current: false,
+  }));
+  const [result, setResult] = createSignal({
+    ok: true,
+    data: { workspace: { id: "000001", status: "in_progress" }, stages: stages(13), currentStage: null },
+  });
+  const setup = await testRender(
+    () => renderStagesElement(result, {}),
+    { width: 60, height: 24 },
+  );
+  try {
+    await setup.waitForFrame((frame) => frame.includes("13. Test stages 13"));
+    assert.doesNotMatch(setup.captureCharFrame(), /14\. Test stages 14/);
+    setResult({
+      ok: true,
+      data: { ...result().data, stages: stages(14) },
+    });
+    await setup.waitForFrame((frame) => frame.includes("14. Test stages 14"));
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("real TUI loader mounts a live storage update without remount", { skip: !tuiSmokeEnabled }, async () => {
+  const root = makeRoot();
+  const context = WorkContext.open(root, { actor: "tui-smoke" });
+  context.createWorkspace("Live workspace", { workspace: "999978", sessionId: "oc-live" });
+  context.addStage("999978", "Initial stage");
+  let slot;
+  let dispose;
+  const api = {
+    state: { path: { worktree: root } },
+    route: { current: { name: "session", params: { sessionID: "oc-live" } } },
+     slots: { register: (plugin) => { slot = plugin.slots.sidebar_content; return () => {}; } },
+    event: { on: () => () => {} },
+    lifecycle: { onDispose: (callback) => { dispose = callback; return () => {}; } },
+  };
+  try {
+    await realTuiLoader.tui(api, { pollMs: 10, debounceMs: 1 });
+    const setup = await testRender(() => slot({}, { session_id: "oc-live" }), { width: 60, height: 12 });
+    try {
+      await setup.waitForFrame((frame) => frame.includes("02. Initial stage"));
+      context.addStage("999978", "Added after mount");
+      await setup.waitForFrame((frame) => frame.includes("03. Added after mount"));
+    } finally { setup.renderer.destroy(); }
+  } finally {
+    dispose?.();
+    removeRoot(root);
+  }
 });
 
 test("renderer keeps long stage text for the TUI to wrap without duplicating workspace title", () => {
@@ -151,13 +228,14 @@ test("TUI module satisfies the available OpenCode plugin contract", async () => 
   let unregistered = false;
   const api = {
     state: { path: { worktree: makeRoot() } },
-    slots: { register: (value) => { slot = value.slots.sidebar_content; return () => { unregistered = true; }; } },
+     slots: { register: (value) => { slot = value.slots.sidebar_content; return () => { unregistered = true; }; } },
     event: { on: () => () => { unsubscribed = true; } },
     lifecycle: { onDispose: (fn) => { dispose = fn; return () => {}; } },
   };
    try {
      await tuiModule.tui(api);
      assert.equal(typeof slot, "function");
+     assert.equal(typeof api.slots.register, "function");
      assert.equal(typeof dispose, "function");
    } finally {
      dispose?.();
@@ -167,14 +245,37 @@ test("TUI module satisfies the available OpenCode plugin contract", async () => 
    }
 });
 
+test("stages use the native sidebar content slot", async () => {
+  let registered;
+  const root = makeRoot();
+  const api = {
+    state: { path: { worktree: root } },
+    slots: { register: (plugin) => { registered = plugin; return () => {}; } },
+    lifecycle: { onDispose: () => () => {} },
+  };
+  try {
+    await tuiModule.tui(api);
+    assert.equal(typeof registered.slots.sidebar_content, "function");
+  } finally { removeRoot(root); }
+});
+
+test("stages panel does not claim the whole sidebar height", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const element = renderStagesElement({ ok: true, data: { workspace: { id: "000001", status: "in_progress" }, stages: [] } }, {}, runtime);
+  assert.equal(element.type, "box");
+  assert.equal(element.props.flexGrow, undefined);
+  assert.equal(element.props.minHeight, undefined);
+  assert.equal(element.props.maxHeight, undefined);
+});
+
 test("TUI performs an initial load and refreshes after session.updated with debounce", async () => {
   const calls = [];
-  let handler;
+  const handlers = new Map();
   const api = {
     state: { path: { worktree: makeRoot() } },
     route: { current: { name: "session", params: { sessionID: "oc-1" } } },
     slots: { register: () => () => {} },
-    event: { on: (_name, callback) => { handler = callback; return () => {}; } },
+    event: { on: (name, callback) => { handlers.set(name, callback); return () => {}; } },
     lifecycle: { onDispose: () => () => {} },
     stagesSnapshotProvider: async ({ sessionId }) => {
       calls.push(sessionId);
@@ -184,12 +285,100 @@ test("TUI performs an initial load and refreshes after session.updated with debo
   try {
     await tuiModule.tui(api);
     assert.deepEqual(calls, ["oc-1"]);
-    handler({ sessionID: "oc-1" });
-    handler({ properties: { info: { id: "oc-1" } } });
-    handler({ type: "session.updated", data: { sessionID: "oc-1" } });
+    handlers.get("session.updated")({ sessionID: "oc-1" });
+    handlers.get("session.updated")({ properties: { info: { id: "oc-1" } } });
+    handlers.get("session.updated")({ type: "session.updated", data: { sessionID: "oc-1" } });
     await new Promise((resolve) => setTimeout(resolve, 180));
     assert.deepEqual(calls, ["oc-1", "oc-1"]);
   } finally { removeRoot(api.state.path.worktree); }
+});
+
+test("TUI refreshes immediately after a work-context tool completes", async () => {
+  const calls = [];
+  const handlers = new Map();
+  const api = {
+    state: { path: { worktree: makeRoot() } },
+    route: { current: { name: "session", params: { sessionID: "oc-1" } } },
+    slots: { register: () => () => {} },
+    event: { on: (name, callback) => { handlers.set(name, callback); return () => {}; } },
+    lifecycle: { onDispose: () => () => {} },
+    stagesSnapshotProvider: async ({ sessionId }) => {
+      calls.push(sessionId);
+      return { ok: true, data: { workspace: { id: "000001" }, stages: [], currentStage: null } };
+    },
+  };
+  try {
+    await tuiModule.tui(api, { pollMs: 0 });
+    handlers.get("message.part.updated")({ type: "message.part.updated", properties: { part: {
+      type: "tool", tool: "work_context_add_stage", sessionID: "oc-1", state: { status: "completed" },
+    } } });
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    assert.deepEqual(calls, ["oc-1", "oc-1"]);
+  } finally { removeRoot(api.state.path.worktree); }
+});
+
+test("TUI live update reads a newly added stage from the real tool event shape", async () => {
+  const root = makeRoot();
+  const context = WorkContext.open(root, { actor: "test" });
+  context.createWorkspace("Event workspace", { workspace: "999977", sessionId: "oc-1" });
+  const handlers = new Map();
+  const snapshots = [];
+  const api = {
+    state: { path: { worktree: root } },
+    route: { current: { name: "session", params: { sessionID: "oc-1" } } },
+    slots: { register: () => "work-context-stages" },
+    event: { on: (name, callback) => { handlers.set(name, callback); return () => {}; } },
+    lifecycle: { onDispose: () => () => {} },
+    stagesSnapshotProvider: async (input) => {
+      const result = readStagesSnapshot(input);
+      snapshots.push(result);
+      return result;
+    },
+  };
+  try {
+    await tuiModule.tui(api, { pollMs: 0, debounceMs: 1 });
+    context.addStage("999977", "Added by tool");
+    handlers.get("message.part.updated")({
+      type: "message.part.updated",
+      properties: {
+        sessionID: "oc-1",
+        part: { type: "tool", tool: "work_context_add_stage", state: { status: "completed" } },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(snapshots.at(-1).data.stages.at(-1).title, "Added by tool");
+  } finally { removeRoot(root); }
+});
+
+test("TUI refreshes when canonical work-context storage changes", async () => {
+  const root = makeRoot();
+  const context = WorkContext.open(root, { actor: "test" });
+  context.createWorkspace("Watched workspace", { workspace: "999979", sessionId: "oc-1" });
+  let reads = 0;
+  const api = {
+    state: { path: { worktree: root } },
+    route: { current: { name: "session", params: { sessionID: "oc-1" } } },
+    slots: { register: () => () => {} },
+    event: { on: () => () => {} },
+    lifecycle: { onDispose: () => () => {} },
+    stagesSnapshotProvider: async () => {
+      reads += 1;
+      return { ok: true, data: { workspace: { id: "999979" }, stages: [], currentStage: null } };
+    },
+  };
+  try {
+    await tuiModule.tui(api, { pollMs: 0 });
+    context.addStage("999979", "Watched stage");
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    assert.equal(reads >= 2, true);
+  } finally { removeRoot(root); }
+});
+
+test("sidebar content resolves the session ID from host slot props or route", () => {
+  const api = { route: { current: { params: { sessionID: "oc-route" } } } };
+  assert.equal(sessionIdForSlot(api, "oc-initial", {}, { session_id: "oc-slot" }), "oc-slot");
+  assert.equal(sessionIdForSlot(api, "oc-initial", { sessionID: "oc-context" }), "oc-context");
+  assert.equal(sessionIdForSlot(api, "oc-initial"), "oc-route");
 });
 
 test("TUI waits for a late worktree path and does not initialize storage before it exists", async () => {
@@ -201,7 +390,7 @@ test("TUI waits for a late worktree path and does not initialize storage before 
     state: { ready: false, path: { worktree } },
     client: { location: { get: async () => ({ data: { directory: root } }) } },
     lifecycle: { signal: new AbortController().signal, onDispose: (fn) => { dispose = fn; } },
-    slots: { register: (plugin) => { slot = plugin.slots.sidebar_content; return () => {}; } },
+     slots: { register: (plugin) => { slot = plugin.slots.sidebar_content; return () => {}; } },
     stagesSnapshotProvider: async () => ({ ok: true, data: { workspace: null, stages: [] } }),
   };
   try {
@@ -216,7 +405,7 @@ test("sidebar content is mounted under a host-owned root", async () => {
   let slot;
   const api = {
     state: { path: { worktree: root } },
-    slots: { register: (plugin) => { slot = plugin.slots.sidebar_content; return () => {}; } },
+     slots: { register: (plugin) => { slot = plugin.slots.sidebar_content; return () => {}; } },
     lifecycle: { onDispose: () => () => {} },
     stagesSnapshotProvider: async () => ({ ok: true, data: { workspace: { id: "000001", status: "in_progress" }, stages: [], currentStage: null } }),
   };
@@ -331,6 +520,23 @@ test("controller exposes stale marker after a failed refresh and disposes timers
   assert.equal(reads, 2);
 });
 
+test("controller polls stage storage when a lifecycle mutation emits no session event", async () => {
+  let snapshot = { ok: true, data: { workspace: { id: "000001" }, stages: [{ id: "08" }], currentStage: "08" } };
+  const controller = createStagesTuiController({
+    projectRoot: "/tmp/project",
+    pollMs: 10,
+    debounceMs: 1,
+    read: async () => snapshot,
+  });
+  try {
+    await controller.load("oc-1");
+    assert.equal(controller.resultFor("oc-1").data.stages.length, 1);
+    snapshot = { ...snapshot, data: { ...snapshot.data, stages: [{ id: "08" }, { id: "09" }] } };
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(controller.resultFor("oc-1").data.stages.length, 2);
+  } finally { controller.dispose(); }
+});
+
 test("TUI cleanup releases subscriptions and slot registration once", async () => {
   let dispose;
   let unsubscribed = 0;
@@ -346,7 +552,7 @@ test("TUI cleanup releases subscriptions and slot registration once", async () =
     await tuiModule.tui(api);
     dispose();
     dispose();
-    assert.equal(unsubscribed, 1);
+    assert.equal(unsubscribed, 2);
     assert.equal(unregistered, 1);
   } finally { removeRoot(api.state.path.worktree); }
 });

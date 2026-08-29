@@ -35,6 +35,7 @@ export function readStagesSnapshot({ projectRoot, sessionId }) {
 
     const workspace = context.storage.readWorkspace(session.workspace).data;
     const stages = context.listStages(session.workspace).data.stages
+      .filter((stage) => stage.status !== "archived")
       .sort((left, right) => Number(left.stage) - Number(right.stage))
       .map((stage) => ({
         id: stage.stage,
