@@ -1,0 +1,9 @@
+schema: 1
+storage:
+  mode: hybrid
+  root: .work-context
+  personal_root: .work-context/local
+title:
+  issue_prefix: short
+tracker:
+  provider: null

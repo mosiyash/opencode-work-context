@@ -59,7 +59,7 @@ panel. No error path writes to storage.
 1. On plugin initialization, resolve the worktree and perform one snapshot
    read. Do not create directories or register a mutating command.
 2. Register the panel in the supported `sidebar_content` slot. The panel is
-   compact and grouped under the workspace title.
+   compact and grouped before OpenCode's built-in sidebar blocks.
 3. Subscribe to OpenCode events available to the host. Re-read the snapshot on
    `session.updated`; a filesystem watcher or bridge event may be added when
    the host exposes one. There is no assumed `work-context.updated` event.

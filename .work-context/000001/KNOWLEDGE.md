@@ -29,3 +29,13 @@ OpenCode 1.18.23 загружает project-local plugin; TUI API предост
 - Sources: ["user-report: TUI screenshot and /wc resume 000001 02"]
 
 При `/wc resume 000001 02` новая сессия получает summary по умолчанию `продолжение работы`, поэтому заголовок в TUI выглядит как `000001 02/01 (closed): продолжение работы`. Это теряет смысл заранее спланированного этапа и остаётся таким после завершения. Нужно решить, как инициализировать summary: выводить из названия/цели stage, запрашивать осмысленное название у пользователя при resume или использовать другой явный fallback. Решение должно сохранить явный lifecycle flow и обновлять session title через существующий adapter.
+
+## KC-0004: OpenCode 1.18.25 TUI Solid runtime compatibility
+
+- Kind: decision
+- Status: active
+- Created: 2026-08-29T02:36:24.688Z
+- Updated: 2026-08-29T02:36:24.688Z
+- Sources: ["https://github.com/anomalyco/opencode/tree/v1.18.25/packages/opencode/src/plugin/tui","https://github.com/anomalyco/opencode/tree/v1.18.25/packages/tui"]
+
+OpenCode 1.18.25 uses Bun and Solid from the solid-js entrypoint. Importing solid-js/dist/solid.js creates a separate reactive graph, so slot UI may not rerender after asynchronous data updates. TUI plugins must use the same solid-js entrypoint as the host runtime.

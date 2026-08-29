@@ -60,7 +60,8 @@ continue to load the server plugin and its tools normally.
 
 Tools are registered by the installed plugin and are not copied into the project.
 Knowledge operations are explicit: list, add, update, and supersede. Finishing a
-stage requires declaring whether its knowledge review was `added` or `none`.
+stage automatically validates the Knowledge Base by default (`knowledgeReview=auto`);
+the legacy `added` and `none` modes remain accepted.
 Finish a workspace explicitly with `/wc workspace finish <workspace>`; it is
 accepted only after every stage is `completed`. Use `/wc workspace list <workspace>`
 to list stages with their descriptions.
@@ -92,3 +93,8 @@ The package layout is intentionally small:
 - `test/` contains core contract tests.
 
 Run `npm test` when explicitly verifying a checkout.
+
+Run `npm run test:integration` for the reusable plugin-boundary scenarios. These
+tests create isolated fixture projects, use a small fake OpenCode host, and
+exercise a new session resume through the server title hook and read-only TUI
+snapshot without requiring an interactive OpenCode process.

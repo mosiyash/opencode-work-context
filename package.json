@@ -29,7 +29,9 @@
     "opencode-work-context": "bin/opencode-work-context.js"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "test:integration": "node --test test/integration/*.test.js",
+    "test:tui": "OPENCODE_TUI_SMOKE=1 bun --conditions=browser test test/stages-tui.test.js"
   },
   "files": [
     "bin",
