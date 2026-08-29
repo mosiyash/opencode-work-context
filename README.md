@@ -6,7 +6,7 @@ Create one workspace for one task, split it into stages, and return to the
 exact stage where you stopped. The optional sidebar shows the current task and
 its progress at a glance.
 
-![OpenCode Work Context stages sidebar](docs/assets/work-context-sidebar.png)
+![OpenCode Work Context stages sidebar](docs/assets/work-context-sidebar.svg)
 
 > Example: one workspace for one task, linked to Jira issue `AN-142`, with
 > three completed stages and the current work highlighted at stage 04.
