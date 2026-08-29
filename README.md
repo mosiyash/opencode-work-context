@@ -68,7 +68,9 @@ stage automatically validates the Knowledge Base by default (`knowledgeReview=au
 the legacy `added` and `none` modes remain accepted.
 Finish a workspace explicitly with `/wc workspace finish <workspace>`; it is
 accepted only after every stage is `completed`. Use `/wc workspace list <workspace>`
-to list stages with their descriptions.
+to list stages with their descriptions. Workspace titles can be changed with
+`/wc workspace rename <workspace> "title"`, and existing stage descriptions can
+be changed with `/wc stage update <workspace> <stage> "description"`.
 
 If the host `opencode.json` restricts `experimental.primary_tools`, add the
 registered `work_context_*` tool names to that allowlist; the installer does not

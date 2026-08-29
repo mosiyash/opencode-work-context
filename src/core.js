@@ -15,6 +15,10 @@ const id = (value, digits) => {
 const stageId = (value) => id(String(value).padStart(2, "0"), 2);
 const actor = (options) => options.actor || "OpenCode";
 const body = (title, goal = "") => `# ${title}\n\n${goal ? `## Goal\n\n${goal}\n` : ""}`;
+const stageBody = (record, title, goal) => {
+  const result = record.body.match(/\n## Result[\s\S]*$/)?.[0] || "";
+  return `${body(title, goal).trimEnd()}${result}`;
+};
 const assertNoSymlinkPath = (file) => { let current = path.parse(file).root; for (const part of file.slice(current.length).split(path.sep).filter(Boolean)) { current = path.join(current, part); try { if (fs.lstatSync(current).isSymbolicLink()) fail(ERROR_CODES.STORAGE_ERROR, `Symlink path component is not supported: ${current}`); } catch (error) { if (error.code !== "ENOENT") throw error; break; } } };
 
 function parseIssue(url) {
@@ -163,6 +167,21 @@ export class WorkContext {
     });
   }
 
+  renameWorkspace(workspace, title) {
+    id(workspace, 6);
+    if (!title?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Title is required");
+    return this.transact(`workspace-${workspace}`, () => {
+      const record = this.storage.readWorkspace(workspace);
+      const nextTitle = title.trim();
+      if (record.data.title === nextTitle) return this.result({ workspace, title: nextTitle }, []);
+      record.data.title = nextTitle;
+      record.data.updated_at = new Date().toISOString();
+      this.storage.writeMarkdown(this.storage.workspaceFile(workspace), record.data, body(nextTitle));
+      generateProjections(this.storage);
+      return this.result({ workspace, title: nextTitle }, [workspace]);
+    });
+  }
+
   nextWorkspace() {
     const ids = this.listWorkspaces().data.map((workspace) => Number(workspace.workspace));
     return String(Math.max(0, ...ids) + 1).padStart(6, "0");
@@ -220,9 +239,25 @@ export class WorkContext {
       if (record.data.title === nextTitle) return this.result({ workspace, stage, title: nextTitle }, []);
       record.data.title = nextTitle;
       record.data.updated_at = new Date().toISOString();
-      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, body(nextTitle, record.data.goal));
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, stageBody(record, nextTitle, record.data.goal));
       generateProjections(this.storage);
       return this.result({ workspace, stage, title: nextTitle }, [workspace, stage]);
+    });
+  }
+
+  updateStage(workspace, stage, description) {
+    id(workspace, 6);
+    stage = stageId(stage);
+    if (!description?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Description is required");
+    return this.transact(`stage-${workspace}-${stage}`, () => {
+      const record = this.storage.readStage(workspace, stage);
+      const nextDescription = description.trim();
+      if (record.data.goal === nextDescription) return this.result({ workspace, stage, description: nextDescription }, []);
+      record.data.goal = nextDescription;
+      record.data.updated_at = new Date().toISOString();
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, stageBody(record, record.data.title, nextDescription));
+      generateProjections(this.storage);
+      return this.result({ workspace, stage, description: nextDescription }, [workspace, stage]);
     });
   }
 
@@ -360,7 +395,7 @@ export class WorkContext {
   }
 
   help(command = "") {
-     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace finish|resume|stage add|stage rename|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace is optional for stage add/rename/archive when the current session identifies one workspace; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
+     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace is optional for stage add/rename/update/archive when the current session identifies one workspace; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }
 
   result(data, changed) {

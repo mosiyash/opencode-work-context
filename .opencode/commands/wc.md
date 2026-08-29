@@ -17,10 +17,12 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `create` -> `work_context_create_workspace`
 - `list` -> `work_context_list_workspaces`
 - `workspace list <workspace>` or `<workspace> list` -> `work_context_workspace_list`
+- `workspace rename <workspace> "title"` -> `work_context_rename_workspace`
 - `workspace finish <workspace>` -> `work_context_workspace_finish`
 - `resume <workspace> <stage>` -> `work_context_start_session`
 - `stage add [<workspace>] ...` -> `work_context_add_stage`
 - `stage rename [<workspace>] <stage> "title"` -> `work_context_rename_stage`
+- `stage update [<workspace>] <stage> "description"` -> `work_context_update_stage`
 - `stage archive [<workspace>] <stage>` -> `work_context_archive_stage`
 - `stage handoff <workspace> <stage>` -> `work_context_handoff_stage`
 - `stage abandon <workspace> <stage>` -> `work_context_abandon_stage`
@@ -32,10 +34,12 @@ Supported syntax:
 - `create "title"`
 - `list` or `<workspace> list`
 - `workspace list <workspace>`
+- `workspace rename <workspace> "title"`
 - `workspace finish <workspace>`
 - `resume <workspace> <stage>`
 - `stage add [<workspace>] "title"`
 - `stage rename [<workspace>] <stage> "title"`
+- `stage update [<workspace>] <stage> "description"`
 - `stage archive [<workspace>] <stage>`
 - `stage finish <workspace> <stage>`
 - `<workspace> [<stage>] link-issue <URL>`

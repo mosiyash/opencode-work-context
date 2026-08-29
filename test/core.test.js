@@ -59,6 +59,19 @@ test("workspace finish requires all stages to be completed", () => {
   }
 });
 
+test("workspace rename updates the canonical title and index", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Old workspace", { workspace: "999983", sessionId: "session-1" });
+
+    const result = context.renameWorkspace("999983", "English workspace");
+    assert.deepEqual(result.data, { workspace: "999983", title: "English workspace" });
+    assert.equal(context.storage.readWorkspace("999983").data.title, "English workspace");
+    assert.match(fs.readFileSync(path.join(root, ".work-context", "INDEX.md"), "utf8"), /\| 999983 \| English workspace \|/);
+  } finally { removeRoot(root); }
+});
+
 test("workspace finish marks a workspace completed after all stages", () => {
   const root = makeRoot();
   try {
@@ -137,6 +150,8 @@ test("help exposes stage lifecycle commands without internal session or duplicat
     const syntax = WorkContext.open(root).help().data.syntax;
     assert.match(syntax, /stage handoff/);
     assert.match(syntax, /stage abandon/);
+    assert.match(syntax, /workspace rename/);
+    assert.match(syntax, /stage update/);
     assert.doesNotMatch(syntax, /session close|handoff\|knowledge/);
   } finally { removeRoot(root); }
 });
@@ -178,6 +193,35 @@ test("renaming a stage preserves its ID and goal", () => {
     assert.equal(stage.stage, "01");
     assert.equal(stage.title, "Renamed stage");
     assert.equal(stage.goal, "Уточнить цель и ограничения работы");
+  } finally { removeRoot(root); }
+});
+
+test("stage description can be updated without changing its ID or title", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Stage update workspace", { workspace: "999975", sessionId: "session-1" });
+
+    const result = context.updateStage("999975", "01", "Clarify the project goal and constraints");
+    assert.deepEqual(result.data, { workspace: "999975", stage: "01", description: "Clarify the project goal and constraints" });
+    const stage = context.listStages("999975").data.stages[0];
+    assert.equal(stage.stage, "01");
+    assert.equal(stage.title, "Планирование");
+    assert.equal(stage.goal, "Clarify the project goal and constraints");
+    assert.equal(stage.description, "Clarify the project goal and constraints");
+  } finally { removeRoot(root); }
+});
+
+test("stage updates preserve the result section", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Result workspace", { workspace: "999974", sessionId: "session-1" });
+    context.finish("999974", "01", "session-1", { result: "The stage result", knowledgeReview: "none" });
+
+    context.renameStage("999974", "01", "Renamed planning");
+    context.updateStage("999974", "01", "Clarify the project goal");
+    assert.match(context.storage.readStage("999974", "01").body, /## Result\n\nThe stage result/);
   } finally { removeRoot(root); }
 });
 
