@@ -30,6 +30,29 @@ test("new OpenCode session resumes a stage and updates its session title", async
   }
 });
 
+test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Prompt integration workspace", { workspace: "999902", sessionId: "oc-create" });
+    context.handoff("999902", "01", "oc-create");
+    context.addStage("999902", "Prompted stage", { prompt: "Start by inspecting the existing tests, then implement the change." });
+
+    const executeContext = {
+      directory: fixture.root,
+      worktree: fixture.root,
+      sessionID: "oc-resume",
+      metadata: async () => {},
+    };
+    const result = JSON.parse((await tools.work_context_start_session.execute({ workspace: "999902", stage: "02" }, executeContext)).output);
+    assert.equal(result.ok, true);
+    assert.equal(result.data.prompt, "Start by inspecting the existing tests, then implement the change.");
+    assert.equal(result.data.resume.first, true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("create tool can create multiple workspaces in one OpenCode session", async () => {
   const fixture = createFixture();
   try {

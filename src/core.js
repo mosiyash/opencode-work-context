@@ -14,10 +14,10 @@ const id = (value, digits) => {
 };
 const stageId = (value) => id(String(value).padStart(2, "0"), 2);
 const actor = (options) => options.actor || "OpenCode";
-const body = (title, goal = "") => `# ${title}\n\n${goal ? `## Goal\n\n${goal}\n` : ""}`;
-const stageBody = (record, title, goal) => {
+const body = (title, goal = "", prompt = "") => `# ${title}\n\n${goal ? `## Goal\n\n${goal}\n` : ""}${prompt ? `\n## Prompt\n\n${prompt}\n` : ""}`;
+const stageBody = (record, title, goal, prompt = record.data.prompt || "") => {
   const result = record.body.match(/\n## Result[\s\S]*$/)?.[0] || "";
-  return `${body(title, goal).trimEnd()}${result}`;
+  return `${body(title, goal, prompt).trimEnd()}${result}`;
 };
 const assertNoSymlinkPath = (file) => { let current = path.parse(file).root; for (const part of file.slice(current.length).split(path.sep).filter(Boolean)) { current = path.join(current, part); try { if (fs.lstatSync(current).isSymbolicLink()) fail(ERROR_CODES.STORAGE_ERROR, `Symlink path component is not supported: ${current}`); } catch (error) { if (error.code !== "ENOENT") throw error; break; } } };
 
@@ -165,7 +165,9 @@ export class WorkContext {
       if (fs.existsSync(this.storage.workspaceDir(workspace))) fail(ERROR_CODES.CONFLICT, "Workspace already exists");
       fs.mkdirSync(path.join(this.storage.workspaceDir(workspace), "stages"), { recursive: true });
       this.storage.writeMarkdown(this.storage.workspaceFile(workspace), { schema: 1, workspace, title: title.trim(), status: "in_progress", created_at: now, updated_at: now, tracker_links: [] }, body(title));
-      this.storage.writeMarkdown(this.storage.stageFile(workspace, "01"), { schema: 1, workspace, stage: "01", title: "Планирование", status: "in_progress", goal: "Уточнить цель и ограничения работы", depends_on: [], owner: actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body("Планирование", "Уточнить цель и ограничения работы"));
+      const planningGoal = "Уточнить цель и ограничения работы";
+      const planningPrompt = "Диагностируй и планируй задачу без функциональных изменений. Обсуди возможные решения, зафиксируй ограничения и декомпозируй работу на следующие stages. Для каждого нового рабочего stage запиши отдельный подробный prompt с контекстом, конкретными действиями, ограничениями, критериями готовности и ожидаемым результатом. Уточняющие вопросы задавай только при реальном блокере.";
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, "01"), { schema: 1, workspace, stage: "01", title: "Планирование", status: "in_progress", goal: planningGoal, prompt: planningPrompt, depends_on: [], owner: actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body("Планирование", planningGoal, planningPrompt));
       const sessionId = options.sessionId || randomUUID();
       if (this.storage.readEvents().some((item) => item.session_id === sessionId)) fail(ERROR_CODES.CONFLICT, "Session ID already exists");
       this.writeEvents([event("session.started", workspace, "01", 1, sessionId, actor(this.options), { summary: `планирование ${title.trim()}`, opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
@@ -221,7 +223,24 @@ export class WorkContext {
       }
       this.writeEvents([event("session.started", workspace, stage, ordinal, sessionId, actor(this.options), { summary: options.summary || "продолжение работы", opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
       generateProjections(this.storage);
-      return this.result({ workspace, stage, session_id: sessionId, ordinal: `${stage}/${String(ordinal).padStart(2, "0")}` }, [workspace, stage]);
+      const previousSession = previous.at(-1) || null;
+      const firstResume = previous.length === 0;
+      return this.result({
+        workspace,
+        stage,
+        session_id: sessionId,
+        ordinal: `${stage}/${String(ordinal).padStart(2, "0")}`,
+        title: stageRecord.data.title,
+        description: stageRecord.data.goal,
+        prompt: stageRecord.data.prompt || null,
+        resume: {
+          first: firstResume,
+          summary: firstResume
+            ? `Начинаем работу над stage ${stage}: ${stageRecord.data.title}.`
+            : `Продолжаем stage ${stage}: ${stageRecord.data.title}. Последняя зафиксированная суть: ${previousSession?.summary || "нет сохранённого отчёта"}.`,
+          last_session_summary: previousSession?.summary || null,
+        },
+      }, [workspace, stage]);
     });
   }
 
@@ -237,7 +256,9 @@ export class WorkContext {
       if (dependsOn.includes(stage)) fail(ERROR_CODES.INVALID_ARGUMENT, "A stage cannot depend on itself");
       if (dependsOn.some((dependency) => !stages.some((item) => item.stage === dependency))) fail(ERROR_CODES.INVALID_ARGUMENT, "dependsOn must reference existing stages");
       const now = new Date().toISOString();
-      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), { schema: 1, workspace, stage, title: title.trim(), status: "planned", goal: options.goal || title.trim(), depends_on: dependsOn, owner: options.owner || actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body(title, options.goal || title));
+      const prompt = options.prompt?.trim() || undefined;
+      const metadata = { schema: 1, workspace, stage, title: title.trim(), status: "planned", goal: options.goal || title.trim(), ...(prompt ? { prompt } : {}), depends_on: dependsOn, owner: options.owner || actor(this.options), created_at: now, updated_at: now, tracker_links: [] };
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), metadata, body(title, options.goal || title, prompt));
       generateProjections(this.storage);
       return this.result({ workspace, stage }, [stage]);
     });
@@ -417,7 +438,7 @@ export class WorkContext {
   }
 
   help(command = "") {
-     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace is optional for stage add/rename/update/archive when the current session identifies one workspace; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
+     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace is optional for stage add/rename/update/archive when the current session identifies one workspace; stage add accepts an optional prompt, which should contain the complete implementation context when the stage is created from stage 01 planning; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }
 
   result(data, changed, next = null) {

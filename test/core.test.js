@@ -50,6 +50,7 @@ test("workspace list includes stage descriptions", () => {
     assert.equal(stage.title, "Планирование");
     assert.equal(stage.description, stage.goal);
     assert.equal(stage.description, "Уточнить цель и ограничения работы");
+    assert.match(stage.prompt, /декомпозируй работу на следующие stages/);
   } finally {
     removeRoot(root);
   }
@@ -68,6 +69,54 @@ test("workspace finish requires all stages to be completed", () => {
         && error.details.incompleteStages[0].stage === "01",
     );
     assert.equal(context.storage.readWorkspace("999989").data.status, "in_progress");
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("stage prompt is optional but preserved separately from its description", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Prompt workspace", { workspace: "999986", sessionId: "session-1" });
+    context.handoff("999986", "01", "session-1");
+
+    context.addStage("999986", "Without prompt");
+    context.addStage("999986", "With prompt", {
+      goal: "Short stage description",
+      prompt: "Inspect the existing implementation, implement the agreed change, and verify it with regression tests.",
+    });
+
+    const stages = context.listStages("999986").data.stages;
+    assert.equal(stages[1].prompt, undefined);
+    assert.equal(stages[2].description, "Short stage description");
+    assert.match(stages[2].prompt, /Inspect the existing implementation/);
+    assert.match(context.storage.readStage("999986", "03").body, /## Prompt/);
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("resume returns the saved prompt and a continuation summary", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Resume workspace", { workspace: "999985", sessionId: "session-1" });
+    context.handoff("999985", "01", "session-1");
+    context.addStage("999985", "Implementation", {
+      prompt: "Implement the feature and add regression coverage.",
+    });
+
+    const first = context.startSession("999985", "02", { sessionId: "session-2" });
+    assert.equal(first.data.resume.first, true);
+    assert.equal(first.data.prompt, "Implement the feature and add regression coverage.");
+
+    context.renameSession("999985", "02", "session-2", "Реализовали основную логику, осталось добавить проверки.");
+    context.handoff("999985", "02", "session-2");
+    const second = context.startSession("999985", "02", { sessionId: "session-3" });
+    assert.equal(second.data.resume.first, false);
+    assert.match(second.data.resume.summary, /осталось добавить проверки/);
+    assert.equal(second.data.resume.last_session_summary, "Реализовали основную логику, осталось добавить проверки.");
   } finally {
     removeRoot(root);
   }
