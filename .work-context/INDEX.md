@@ -2,5 +2,5 @@
 
 | Workspace | Title | Status | Updated |
 |---|---|---|---|
-| 000001 | Research persistent TUI stages panel | in_progress | 2026-08-29T04:13:49.068Z |
-| 000002 | Add CSV export to analytics report | in_progress | 2026-08-29T04:28:24.596Z |
+| 000001 | Research persistent TUI stages panel | completed | 2026-08-30T04:39:36.617Z |
+| 000002 | Add CSV export to analytics report | completed | 2026-08-30T04:28:38.240Z |

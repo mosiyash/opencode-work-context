@@ -114,6 +114,12 @@ test("stage finish automatically reviews the knowledge ledger by default", () =>
     const result = context.finish("999987", "01", "session-1");
     assert.equal(result.data.knowledge_review, "auto");
     assert.equal(result.data.knowledge_entries, 0);
+    assert.deepEqual(result.next, {
+      action: "workspace_finish",
+      workspace: "999987",
+      command: "/wc workspace finish 999987",
+      reason: "All workspace stages are completed",
+    });
     assert.equal(context.storage.readStage("999987", "01").data.status, "completed");
   } finally {
     removeRoot(root);

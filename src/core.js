@@ -140,11 +140,11 @@ export class WorkContext {
     return reduceSessions(this.storage.readEvents()).find((session) => session.session_id === sessionId) || null;
   }
 
-  sessionByOpenCodeId(opencodeSessionId, workspace = null, stage = null) {
+  sessionByOpenCodeId(opencodeSessionId, workspace = null, stage = null, state = "active") {
     return reduceSessions(this.storage.readEvents()).filter((session) => session.opencode_session_id === opencodeSessionId
       && (!workspace || session.workspace === workspace)
       && (!stage || session.stage === stage)
-      && session.state === "active").at(-1) || null;
+      && (!state || session.state === state)).at(-1) || null;
   }
 
   assertDependenciesCompleted(workspace, stageRecord) {
@@ -404,7 +404,15 @@ export class WorkContext {
       current.data.updated_at = new Date().toISOString();
       this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), current.data, `${current.body}\n\n## Result\n\n${options.result || "Stage completed."}`);
       generateProjections(this.storage);
-      return this.result({ session_id: sessionId, workspace, stage, state: "closed", status: "completed", knowledge_review: knowledgeReview, ...(knowledgeEntries ? { knowledge_entries: knowledgeEntries.length } : {}) }, [workspace, stage]);
+      const data = { session_id: sessionId, workspace, stage, state: "closed", status: "completed", knowledge_review: knowledgeReview, ...(knowledgeEntries ? { knowledge_entries: knowledgeEntries.length } : {}) };
+      const incompleteStages = this.listStages(workspace).data.stages.filter((item) => !["completed", "archived"].includes(item.status));
+      const next = incompleteStages.length ? null : {
+        action: "workspace_finish",
+        workspace,
+        command: `/wc workspace finish ${workspace}`,
+        reason: "All workspace stages are completed",
+      };
+      return this.result(data, [workspace, stage], next);
     });
   }
 
@@ -412,7 +420,7 @@ export class WorkContext {
      return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace is optional for stage add/rename/update/archive when the current session identifies one workspace; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }
 
-  result(data, changed) {
-    return { ok: true, data, changed, next: null };
+  result(data, changed, next = null) {
+    return { ok: true, data, changed, next };
   }
 }
