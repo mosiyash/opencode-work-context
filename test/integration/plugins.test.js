@@ -53,6 +53,28 @@ test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
   }
 });
 
+test("finishing a stage refreshes the OpenCode title with its terminal state", async () => {
+  const fixture = createFixture();
+  try {
+    const { context, root } = fixture;
+    context.createWorkspace("Finished workspace", { workspace: "999903", sessionId: "oc-create" });
+    context.finish("999903", "01", "oc-create", { knowledgeReview: "none" });
+    context.addStage("999903", "Finished stage");
+    const session = context.startSession("999903", "02", { sessionId: "internal-2", opencodeSessionId: "oc-finish" });
+
+    const host = createSessionHost(root, "oc-finish");
+    const hooks = await serverPlugin(host);
+    await hooks["tool.execute.after"]({ tool: "work_context_start_session", sessionID: "oc-finish" });
+    assert.equal(host.title, "999903 02/01\nFinished workspace");
+
+    context.finish("999903", "02", session.data.session_id, { knowledgeReview: "none" });
+    await hooks["tool.execute.after"]({ tool: "work_context_finish_stage", sessionID: "oc-finish" });
+    assert.equal(host.title, "999903 02/01 (closed)\nFinished workspace");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("create tool can create multiple workspaces in one OpenCode session", async () => {
   const fixture = createFixture();
   try {

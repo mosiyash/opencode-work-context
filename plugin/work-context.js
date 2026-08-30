@@ -23,7 +23,7 @@ export default async ({ client, directory, worktree }) => ({
 async function updateSessionTitle(client, projectRoot, directory, sessionId) {
   try {
     const context = contextFor(projectRoot, sessionId);
-    const session = context.sessionById(sessionId) || context.sessionByOpenCodeId(sessionId);
+    const session = context.sessionById(sessionId) || context.sessionByOpenCodeId(sessionId, null, null, null);
     if (!session) return;
     const title = titleFor(context, session.workspace, session.stage, sessionId, session);
     if (!title) return;
