@@ -19,7 +19,20 @@ const dependencyManifestFile = path.join(dependencyRoot, "package.json");
 let dependencyManifest = {};
 try { dependencyManifest = JSON.parse(fs.readFileSync(dependencyManifestFile, "utf8")); } catch {}
 const pluginLoader = `export { default } from "${packageManifest.name}/plugin";\n`;
-const tuiLoader = `export { default } from "${packageManifest.name}/tui";\n`;
+const tuiLoader = `import { createSignal } from "solid-js";
+import { jsx } from "@opentui/solid/jsx-runtime";
+import plugin from "${packageManifest.name}/tui";
+
+export default {
+  ...plugin,
+  async tui(api, options) {
+    return plugin.tui(api, {
+      ...options,
+      runtime: { createSignal, jsx },
+    });
+  },
+};
+`;
 const tuiConfig = JSON.stringify({
   $schema: "https://opencode.ai/tui.json",
   plugin: ["./tui-plugins/work-context-stages.js"],

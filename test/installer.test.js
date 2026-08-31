@@ -71,7 +71,7 @@ test("installer keeps standalone npm files at project root", () => {
       fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"),
       fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8"),
     );
-    assert.equal(fs.readFileSync(path.join(root, ".opencode", "tui-plugins", "work-context-stages.js"), "utf8"), "export { default } from \"opencode-work-context/tui\";\n");
+    assert.match(fs.readFileSync(path.join(root, ".opencode", "tui-plugins", "work-context-stages.js"), "utf8"), /runtime: \{ createSignal, jsx \}/);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, ".opencode", "tui.json"), "utf8")), {
       $schema: "https://opencode.ai/tui.json",
       plugin: ["./tui-plugins/work-context-stages.js"],
