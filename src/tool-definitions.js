@@ -36,7 +36,7 @@ const addStageFromTool = (ctx, args, oc) => {
   const workspace = workspaceFromSession(ctx, args.workspace);
   const created = ctx.addStage(workspace, args.title, { goal: args.goal, prompt: args.prompt, dependsOn: args.dependsOn });
   const currentSession = ctx.sessionByOpenCodeId(oc.sessionID) || ctx.sessionById(oc.sessionID);
-  if (args.workspace && currentSession) return created;
+  if (currentSession) return created;
   const session = ctx.startSession(workspace, created.data.stage, {
     sessionId: randomUUID(),
     opencodeSessionId: oc.sessionID,
@@ -53,7 +53,10 @@ export const work_context_list_workspaces = tool({ description: "List work-conte
 export const work_context_workspace_list = tool({ description: "List a workspace with stage descriptions and sessions.", args: { workspace: tool.schema.string().regex(/^\d{6}$/) }, execute: run((ctx, a) => ctx.listStages(a.workspace)) });
 export const work_context_rename_workspace = tool({ description: "Rename a workspace.", args: { workspace: tool.schema.string().regex(/^\d{6}$/), title: tool.schema.string() }, execute: run((ctx, a) => ctx.renameWorkspace(a.workspace, a.title)) });
 export const work_context_workspace_finish = tool({ description: "Finish a workspace after all stages are completed.", args: { workspace: tool.schema.string().regex(/^\d{6}$/) }, execute: run((ctx, a) => ctx.finishWorkspace(a.workspace)) });
-export const work_context_create_workspace = tool({ description: "Create workspace, enter its planning stage in the current OpenCode session, and return resume context.", args: { title: tool.schema.string() }, execute: run((ctx, a, oc) => ctx.createWorkspace(a.title, { sessionId: randomUUID(), opencodeSessionId: oc.sessionID })) });
+export const work_context_create_workspace = tool({ description: "Create a workspace; enter its planning stage only when the current OpenCode session is not associated with a workspace.", args: { title: tool.schema.string() }, execute: run((ctx, a, oc) => {
+  const currentSession = ctx.sessionByOpenCodeId(oc.sessionID);
+  return ctx.createWorkspace(a.title, { sessionId: randomUUID(), ...(currentSession ? {} : { opencodeSessionId: oc.sessionID }) });
+}) });
 export const work_context_start_session = tool({ description: "Start a new active session for a stage.", args: { ...common, summary: tool.schema.string().optional() }, execute: run((ctx, a, oc) => ctx.startSession(a.workspace, a.stage, { sessionId: randomUUID(), opencodeSessionId: oc.sessionID, summary: a.summary, takeover: true })) });
 export const work_context_add_stage = tool({ description: "Add a stage; when workspace is omitted, enter the new stage in the current OpenCode session and return resume context.", args: { workspace: tool.schema.string().regex(/^\d{6}$/).optional(), title: tool.schema.string(), goal: tool.schema.string().optional(), prompt: tool.schema.string().optional(), dependsOn: tool.schema.array(tool.schema.string()).optional() }, execute: run(addStageFromTool) });
 export const work_context_rename_stage = tool({ description: "Rename a stage while preserving its ID and history; workspace and stage can be omitted in the current OpenCode session.", args: { ...contextualStage, title: tool.schema.string() }, execute: run((ctx, a) => { const workspace = workspaceFromSession(ctx, a.workspace); return ctx.renameStage(workspace, stageFromSession(ctx, workspace, a.stage), a.title); }) });

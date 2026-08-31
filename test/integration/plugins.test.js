@@ -103,7 +103,7 @@ test("finishing a stage refreshes the OpenCode title with its terminal state", a
   }
 });
 
-test("create tool can create multiple workspaces in one OpenCode session", async () => {
+test("create tool does not switch from an existing workspace", async () => {
   const fixture = createFixture();
   try {
     const executeContext = {
@@ -119,13 +119,14 @@ test("create tool can create multiple workspaces in one OpenCode session", async
     assert.equal(first.ok, true);
     assert.equal(second.ok, true);
     assert.notEqual(first.data.session_id, second.data.session_id);
-    assert.equal(fixture.context.sessionByOpenCodeId("oc-shared", second.data.workspace, "01").session_id, second.data.session_id);
+    assert.equal(fixture.context.sessionByOpenCodeId("oc-shared").workspace, first.data.workspace);
+    assert.equal(fixture.context.sessionByOpenCodeId("oc-shared", second.data.workspace), null);
   } finally {
     fixture.cleanup();
   }
 });
 
-test("stage add without a workspace enters the new stage and returns resume context", async () => {
+test("stage add without a workspace does not switch an existing workspace session", async () => {
   const fixture = createFixture();
   try {
     const { context } = fixture;
@@ -141,11 +142,9 @@ test("stage add without a workspace enters the new stage and returns resume cont
     assert.equal(result.ok, true);
     assert.equal(result.data.workspace, "999905");
     assert.equal(result.data.stage, "02");
-    assert.equal(result.data.created.stage, "02");
-    assert.equal(result.data.resume.next_action, "start_work");
-    assert.equal(context.sessionByOpenCodeId("oc-current", "999905", "02").state, "active");
+    assert.equal(context.sessionByOpenCodeId("oc-current", "999905", "02"), null);
     const snapshot = readStagesSnapshot({ projectRoot: fixture.root, sessionId: "oc-current" });
-    assert.equal(snapshot.data.currentStage, "02");
+    assert.equal(snapshot.data.currentStage, "01");
   } finally {
     fixture.cleanup();
   }

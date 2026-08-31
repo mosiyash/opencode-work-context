@@ -57,7 +57,7 @@ Supported syntax:
 - `resume` returns `resume.context` with the stage essence, the previous session's result/stopping point, and the current plan; report this concise context to the user before doing any work
 - on every subsequent resume, report the context and wait for explicit user confirmation; do not automatically continue implementation
 - when `resume.next_action` is `await_confirmation`, do not inspect or modify application code until the user confirms
-- `create` enters the new workspace's Planning stage in the current OpenCode session and returns the same actionable `resume` context; continue from that context without requiring a second `resume` command
+- `create` enters the new workspace's Planning stage in the current OpenCode session only when that session is not yet in a workspace; otherwise it only creates the workspace and its planning session
 - `stage add` enters the newly created stage and returns its actionable `resume` context when the current OpenCode session is not yet in a workspace; otherwise it only creates the planned stage
 - `resume` returns `resume.next_action` and `resume.instruction`; begin or continue implementation only when the stage prompt is non-empty and, after reviewing it, there are no unanswered questions
 - when `resume.next_action` is `ask_questions`, do not inspect or modify application code and ask the user focused questions needed to make the prompt actionable
