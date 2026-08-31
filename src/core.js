@@ -186,7 +186,7 @@ export class WorkContext {
           last_session_summary: null,
           context: {
             essence: planningGoal,
-            previous: "Предыдущая сессия не сохранила итог; точку остановки нужно уточнить.",
+            previous: "The previous session did not save a result; the stopping point needs to be clarified.",
             now: planningPrompt,
           },
           next_action: "start_work",
@@ -262,8 +262,8 @@ export class WorkContext {
           last_session_summary: previousSession?.summary || null,
           context: {
             essence: stageRecord.data.goal || stageRecord.data.title,
-            previous: previousSession?.summary || "Предыдущая сессия не сохранила итог; точку остановки нужно уточнить.",
-            now: hasPrompt ? stageRecord.data.prompt : "Сначала уточнить задачу и план работ у пользователя.",
+            previous: previousSession?.summary || "The previous session did not save a result; the stopping point needs to be clarified.",
+            now: hasPrompt ? stageRecord.data.prompt : "First clarify the task and work plan with the user.",
           },
           next_action: hasPrompt ? (firstResume ? "start_work" : "await_confirmation") : "ask_questions",
           instruction: hasPrompt

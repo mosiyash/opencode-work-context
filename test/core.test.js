@@ -114,7 +114,7 @@ test("resume returns the saved prompt and a continuation summary", () => {
     assert.equal(first.data.resume.instruction, first.data.prompt);
     assert.deepEqual(first.data.resume.context, {
       essence: "Implementation",
-      previous: "Предыдущая сессия не сохранила итог; точку остановки нужно уточнить.",
+      previous: "The previous session did not save a result; the stopping point needs to be clarified.",
       now: "Implement the feature and add regression coverage.",
     });
 
