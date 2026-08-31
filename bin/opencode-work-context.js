@@ -19,12 +19,19 @@ const dependencyManifestFile = path.join(dependencyRoot, "package.json");
 let dependencyManifest = {};
 try { dependencyManifest = JSON.parse(fs.readFileSync(dependencyManifestFile, "utf8")); } catch {}
 const pluginLoader = `export { default } from "${packageManifest.name}/plugin";\n`;
+const tuiLoader = `export { default } from "${packageManifest.name}/tui";\n`;
+const tuiConfig = JSON.stringify({
+  $schema: "https://opencode.ai/tui.json",
+  plugin: ["./tui-plugins/work-context-stages.js"],
+}, null, 2) + "\n";
 const command = fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8");
 const generated = new Map([
   [path.join(".work-context", "config.yaml"), defaultConfig()],
   [path.join(".opencode", "commands", "wc.md"), command],
   [path.join(".opencode", "plugins", "work-context.js"), `// Thin project integration; tools remain in the installed npm package.
 ${pluginLoader}`],
+  [path.join(".opencode", "tui-plugins", "work-context-stages.js"), tuiLoader],
+  [path.join(".opencode", "tui.json"), tuiConfig],
 ]);
 
 const fail = (message) => {

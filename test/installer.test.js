@@ -52,7 +52,7 @@ if (${JSON.stringify(mode === "fail-after-mutation")}) process.exit(17);
 };
 
 const assertIntegration = (root) => {
-  for (const relative of [".work-context/config.yaml", ".opencode/commands/wc.md", ".opencode/plugins/work-context.js"]) {
+  for (const relative of [".work-context/config.yaml", ".opencode/commands/wc.md", ".opencode/plugins/work-context.js", ".opencode/tui-plugins/work-context-stages.js", ".opencode/tui.json"]) {
     assert.equal(fs.existsSync(path.join(root, relative)), true, relative);
   }
 };
@@ -71,6 +71,11 @@ test("installer keeps standalone npm files at project root", () => {
       fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"),
       fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8"),
     );
+    assert.equal(fs.readFileSync(path.join(root, ".opencode", "tui-plugins", "work-context-stages.js"), "utf8"), "export { default } from \"opencode-work-context/tui\";\n");
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, ".opencode", "tui.json"), "utf8")), {
+      $schema: "https://opencode.ai/tui.json",
+      plugin: ["./tui-plugins/work-context-stages.js"],
+    });
   } finally { removeRoot(root); removeRoot(bin); }
 });
 

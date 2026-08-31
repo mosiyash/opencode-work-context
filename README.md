@@ -94,12 +94,14 @@ Generated files:
 - `.work-context/config.yaml` for filesystem configuration;
 - `.opencode/commands/wc.md` for the `/wc` command contract;
 - `.opencode/plugins/work-context.js` as a thin loader from the installed package;
+- `.opencode/tui-plugins/work-context-stages.js` as the reactive stages-panel loader;
 - `.work-context/local/` in `.gitignore` for personal session events.
 - `<workspace>/KNOWLEDGE.md` is the canonical durable knowledge ledger and is
   created on the first explicit knowledge operation.
 
-The optional read-only stages panel is a separate TUI plugin. Add a project-local
-loader outside OpenCode's server-plugin autoscan at `.opencode/tui-plugins/work-context-stages.js`:
+The optional read-only stages panel is a separate TUI plugin. `init` installs a
+project-local loader outside OpenCode's server-plugin autoscan at
+`.opencode/tui-plugins/work-context-stages.js` and enables it in `.opencode/tui.json`:
 
 ```js
 export { default } from "opencode-work-context/tui";
