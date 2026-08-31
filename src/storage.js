@@ -36,8 +36,8 @@ const validEvents = new Set(["session.started", "session.renamed", "session.hand
 const validateEvent = (item) => {
   if (!item || item.schema !== 1 || Object.keys(item).some((key) => !["schema", "event_id", "event", "occurred_at", "session_id", "workspace", "stage", "ordinal", "actor", "data"].includes(key)) || !validEvents.has(item.event) || typeof item.event_id !== "string" || !item.event_id.trim() || !validTimestamp(item.occurred_at) || typeof item.session_id !== "string" || !item.session_id.trim() || !/^\d{6}$/.test(item.workspace) || !/^\d{2}$/.test(item.stage) || !Number.isInteger(item.ordinal) || item.ordinal < 1 || typeof item.actor !== "string" || !item.actor.trim() || !item.data || typeof item.data !== "object" || Array.isArray(item.data)) fail(ERROR_CODES.STORAGE_ERROR, "Invalid session event");
   const keys = Object.keys(item.data);
-  const allowed = item.event === "session.started" ? ["summary", "opencode_session_id", "branch"] : item.event === "session.renamed" ? ["summary"] : ["reason"];
-  if (keys.some((key) => !allowed.includes(key)) || (item.event === "session.started" && (typeof item.data.summary !== "string" || !item.data.summary.trim() || (item.data.opencode_session_id !== null && item.data.opencode_session_id !== undefined && typeof item.data.opencode_session_id !== "string") || (item.data.branch !== null && item.data.branch !== undefined && typeof item.data.branch !== "string"))) || (item.event === "session.renamed" && (typeof item.data.summary !== "string" || !item.data.summary.trim())) || (item.event !== "session.started" && item.event !== "session.renamed" && (typeof item.data.reason !== "string" || !item.data.reason.trim()))) fail(ERROR_CODES.STORAGE_ERROR, "Invalid session event data");
+  const allowed = item.event === "session.started" ? ["summary", "opencode_session_id", "branch"] : item.event === "session.renamed" ? ["summary"] : ["reason", "forced"];
+  if (keys.some((key) => !allowed.includes(key)) || (item.event === "session.started" && (typeof item.data.summary !== "string" || !item.data.summary.trim() || (item.data.opencode_session_id !== null && item.data.opencode_session_id !== undefined && typeof item.data.opencode_session_id !== "string") || (item.data.branch !== null && item.data.branch !== undefined && typeof item.data.branch !== "string"))) || (item.event === "session.renamed" && (typeof item.data.summary !== "string" || !item.data.summary.trim())) || (item.event !== "session.started" && item.event !== "session.renamed" && (typeof item.data.reason !== "string" || !item.data.reason.trim()) || (item.data.forced !== undefined && typeof item.data.forced !== "boolean"))) fail(ERROR_CODES.STORAGE_ERROR, "Invalid session event data");
 };
 const validateEventStream = (events) => {
   const ids = new Set();
@@ -231,7 +231,18 @@ export class FileStorage {
   appendEvents(events) {
     ensure(path.dirname(this.sessionFile()));
     const current = fs.existsSync(this.sessionFile()) ? fs.readFileSync(this.sessionFile(), "utf8") : "";
-    atomicWrite(this.sessionFile(), current + events.map((item) => JSON.stringify(item)).join("\n") + "\n");
+    let previousTimestamp = current.trim().split("\n").filter(Boolean).at(-1);
+    previousTimestamp = previousTimestamp ? JSON.parse(previousTimestamp).occurred_at : null;
+    const monotonic = events.map((item) => {
+      const currentTime = Date.parse(item.occurred_at);
+      const previousTime = previousTimestamp ? Date.parse(previousTimestamp) : null;
+      if (previousTime !== null && currentTime < previousTime) {
+        item.occurred_at = new Date(previousTime + 1).toISOString();
+      }
+      previousTimestamp = item.occurred_at;
+      return item;
+    });
+    atomicWrite(this.sessionFile(), current + monotonic.map((item) => JSON.stringify(item)).join("\n") + "\n");
   }
   readEvents() {
     this.assertNoSymlinks();

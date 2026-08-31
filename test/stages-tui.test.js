@@ -38,7 +38,7 @@ test("snapshot selects workspace and current stage by OpenCode session ID", () =
     assert.deepEqual(result.data.workspace, { id: "999987", title: "Panel workspace", status: "in_progress" });
     assert.equal(result.data.currentStage, "02");
     assert.deepEqual(result.data.stages, [
-      { id: "01", title: "Планирование", status: "in_progress", description: "Уточнить цель и ограничения работы", current: false },
+      { id: "01", title: "Planning", status: "in_progress", description: "Clarify the work goal and constraints", current: false },
       { id: "02", title: "Implementation", status: "in_progress", description: "Build the panel", current: true },
     ]);
     assert.equal(typeof result.data.generatedAt, "string");

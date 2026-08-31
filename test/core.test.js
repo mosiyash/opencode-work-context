@@ -47,10 +47,10 @@ test("workspace list includes stage descriptions", () => {
     context.createWorkspace("Described workspace", { workspace: "999990", sessionId: "session-1" });
 
     const stage = context.listStages("999990").data.stages[0];
-    assert.equal(stage.title, "Планирование");
+    assert.equal(stage.title, "Planning");
     assert.equal(stage.description, stage.goal);
-    assert.equal(stage.description, "Уточнить цель и ограничения работы");
-    assert.match(stage.prompt, /декомпозируй работу на следующие stages/);
+    assert.equal(stage.description, "Clarify the work goal and constraints");
+    assert.match(stage.prompt, /decompose the work into the following stages/);
   } finally {
     removeRoot(root);
   }
@@ -110,13 +110,81 @@ test("resume returns the saved prompt and a continuation summary", () => {
     const first = context.startSession("999985", "02", { sessionId: "session-2" });
     assert.equal(first.data.resume.first, true);
     assert.equal(first.data.prompt, "Implement the feature and add regression coverage.");
+    assert.equal(first.data.resume.next_action, "start_work");
+    assert.equal(first.data.resume.instruction, first.data.prompt);
 
-    context.renameSession("999985", "02", "session-2", "Реализовали основную логику, осталось добавить проверки.");
+    context.renameSession("999985", "02", "session-2", "Implemented the main logic; verification remains.");
     context.handoff("999985", "02", "session-2");
     const second = context.startSession("999985", "02", { sessionId: "session-3" });
     assert.equal(second.data.resume.first, false);
-    assert.match(second.data.resume.summary, /осталось добавить проверки/);
-    assert.equal(second.data.resume.last_session_summary, "Реализовали основную логику, осталось добавить проверки.");
+    assert.equal(second.data.resume.next_action, "continue_work");
+    assert.match(second.data.resume.summary, /verification remains/);
+    assert.equal(second.data.resume.last_session_summary, "Implemented the main logic; verification remains.");
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("force close requires confirmation, closes stale active sessions, and is idempotent", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Force close workspace", { workspace: "999981", sessionId: "session-1" });
+    context.handoff("999981", "01", "session-1");
+    context.addStage("999981", "Stale stage");
+    const session = context.startSession("999981", "02", { sessionId: "stale-session" });
+
+    assert.throws(
+      () => context.forceCloseSession("999981", "02", session.data.session_id, "stale", "no"),
+      (error) => error instanceof WorkContextError && error.code === ERROR_CODES.CONFIRMATION_REQUIRED,
+    );
+    const result = context.forceCloseSession("999981", "02", session.data.session_id, "OpenCode session is unavailable", "FORCE_CLOSE");
+    assert.deepEqual(result.data, {
+      session_id: session.data.session_id,
+      state: "closed",
+      forced: true,
+      reason: "OpenCode session is unavailable",
+    });
+    const repeated = context.forceCloseSession("999981", "02", session.data.session_id, "same reason", "FORCE_CLOSE");
+    assert.deepEqual(repeated.data, { session_id: session.data.session_id, state: "closed", idempotent: true });
+    assert.equal(context.sessionById(session.data.session_id).state, "closed");
+    assert.equal(context.storage.readEvents().at(-1).data.forced, true);
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("new events remain ordered when the system clock moves backwards", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Clock workspace", { workspace: "999978", sessionId: "session-1" });
+    const first = context.storage.readEvents()[0];
+    context.storage.appendEvents([{
+      ...first,
+      event_id: "manual-event",
+      occurred_at: "2000-01-01T00:00:00.000Z",
+      event: "session.closed",
+      data: { reason: "clock test" },
+    }]);
+    assert.doesNotThrow(() => context.storage.readEvents());
+    assert.ok(Date.parse(context.storage.readEvents().at(-1).occurred_at) > Date.parse(first.occurred_at));
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("stage finish returns downstream stages for prompt review", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Review workspace", { workspace: "999982", sessionId: "session-1" });
+    context.finish("999982", "01", "session-1", { knowledgeReview: "none" });
+    context.addStage("999982", "Second", { prompt: "Original second plan" });
+    context.addStage("999982", "Third", { goal: "Third description", prompt: "Original third plan" });
+    context.startSession("999982", "02", { sessionId: "session-2" });
+    const result = context.finish("999982", "02", "session-2", { knowledgeReview: "none" });
+    assert.deepEqual(result.data.prompt_review, [{ stage: "03", title: "Third", description: "Third description", prompt: "Original third plan", status: "planned" }]);
   } finally {
     removeRoot(root);
   }
@@ -277,7 +345,7 @@ test("renaming a stage preserves its ID and goal", () => {
     const stage = context.storage.readStage("999976", "01").data;
     assert.equal(stage.stage, "01");
     assert.equal(stage.title, "Renamed stage");
-    assert.equal(stage.goal, "Уточнить цель и ограничения работы");
+    assert.equal(stage.goal, "Clarify the work goal and constraints");
   } finally { removeRoot(root); }
 });
 
@@ -291,7 +359,7 @@ test("stage description can be updated without changing its ID or title", () => 
     assert.deepEqual(result.data, { workspace: "999975", stage: "01", description: "Clarify the project goal and constraints" });
     const stage = context.listStages("999975").data.stages[0];
     assert.equal(stage.stage, "01");
-    assert.equal(stage.title, "Планирование");
+    assert.equal(stage.title, "Planning");
     assert.equal(stage.goal, "Clarify the project goal and constraints");
     assert.equal(stage.description, "Clarify the project goal and constraints");
   } finally { removeRoot(root); }

@@ -48,6 +48,34 @@ test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
     assert.equal(result.ok, true);
     assert.equal(result.data.prompt, "Start by inspecting the existing tests, then implement the change.");
     assert.equal(result.data.resume.first, true);
+    assert.equal(result.data.resume.next_action, "start_work");
+    assert.equal(result.data.resume.instruction, result.data.prompt);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("force-close tool returns a stable confirmation error and closes a stale session", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Force tool workspace", { workspace: "999904", sessionId: "oc-create" });
+    context.handoff("999904", "01", "oc-create");
+    context.addStage("999904", "Stale stage");
+    const session = context.startSession("999904", "02", { sessionId: "stale-session" });
+    const executeContext = { directory: fixture.root, worktree: fixture.root, sessionID: "oc-force", metadata: async () => {} };
+
+    const missingConfirmation = JSON.parse((await tools.work_context_force_close_session.execute({
+      workspace: "999904", stage: "02", sessionId: session.data.session_id, reason: "stale OpenCode session", confirmation: "no",
+    }, executeContext)).output);
+    assert.equal(missingConfirmation.ok, false);
+    assert.equal(missingConfirmation.error.code, "CONFIRMATION_REQUIRED");
+
+    const closed = JSON.parse((await tools.work_context_force_close_session.execute({
+      workspace: "999904", stage: "02", sessionId: session.data.session_id, reason: "stale OpenCode session", confirmation: "FORCE_CLOSE",
+    }, executeContext)).output);
+    assert.equal(closed.ok, true);
+    assert.equal(closed.data.forced, true);
   } finally {
     fixture.cleanup();
   }

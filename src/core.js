@@ -68,7 +68,7 @@ export class WorkContext {
   }
 
   transact(name, fn) {
-    // Все mutating operations меняют общий sessions.jsonl, поэтому нужен единый lock.
+    // All mutating operations update the shared sessions.jsonl, so they need one lock.
     this.storage.assertSafeRoots();
     return withLock(this.storage.lockPath("write"), () => {
       this.storage.assertNoSymlinks();
@@ -165,12 +165,12 @@ export class WorkContext {
       if (fs.existsSync(this.storage.workspaceDir(workspace))) fail(ERROR_CODES.CONFLICT, "Workspace already exists");
       fs.mkdirSync(path.join(this.storage.workspaceDir(workspace), "stages"), { recursive: true });
       this.storage.writeMarkdown(this.storage.workspaceFile(workspace), { schema: 1, workspace, title: title.trim(), status: "in_progress", created_at: now, updated_at: now, tracker_links: [] }, body(title));
-      const planningGoal = "Уточнить цель и ограничения работы";
-      const planningPrompt = "Диагностируй и планируй задачу без функциональных изменений. Обсуди возможные решения, зафиксируй ограничения и декомпозируй работу на следующие stages. Для каждого нового рабочего stage запиши отдельный подробный prompt с контекстом, конкретными действиями, ограничениями, критериями готовности и ожидаемым результатом. Уточняющие вопросы задавай только при реальном блокере.";
-      this.storage.writeMarkdown(this.storage.stageFile(workspace, "01"), { schema: 1, workspace, stage: "01", title: "Планирование", status: "in_progress", goal: planningGoal, prompt: planningPrompt, depends_on: [], owner: actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body("Планирование", planningGoal, planningPrompt));
+      const planningGoal = "Clarify the work goal and constraints";
+      const planningPrompt = "Diagnose and plan the task without functional changes. Discuss possible solutions, record constraints, and decompose the work into the following stages. For each new implementation stage, write a separate detailed prompt with context, concrete actions, constraints, completion criteria, and the expected result. Ask clarifying questions only when genuinely blocked.";
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, "01"), { schema: 1, workspace, stage: "01", title: "Planning", status: "in_progress", goal: planningGoal, prompt: planningPrompt, depends_on: [], owner: actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body("Planning", planningGoal, planningPrompt));
       const sessionId = options.sessionId || randomUUID();
       if (this.storage.readEvents().some((item) => item.session_id === sessionId)) fail(ERROR_CODES.CONFLICT, "Session ID already exists");
-      this.writeEvents([event("session.started", workspace, "01", 1, sessionId, actor(this.options), { summary: `планирование ${title.trim()}`, opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
+      this.writeEvents([event("session.started", workspace, "01", 1, sessionId, actor(this.options), { summary: `planning ${title.trim()}`, opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
       generateProjections(this.storage);
       return this.result({ workspace, stage: "01", session_id: sessionId, ordinal: "01/01" }, [workspace, "01"]);
     });
@@ -221,7 +221,7 @@ export class WorkContext {
         stageRecord.data.updated_at = new Date().toISOString();
         this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), stageRecord.data, stageRecord.body);
       }
-      this.writeEvents([event("session.started", workspace, stage, ordinal, sessionId, actor(this.options), { summary: options.summary || "продолжение работы", opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
+       this.writeEvents([event("session.started", workspace, stage, ordinal, sessionId, actor(this.options), { summary: options.summary || "continued work", opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
       generateProjections(this.storage);
       const previousSession = previous.at(-1) || null;
       const firstResume = previous.length === 0;
@@ -236,9 +236,13 @@ export class WorkContext {
         resume: {
           first: firstResume,
           summary: firstResume
-            ? `Начинаем работу над stage ${stage}: ${stageRecord.data.title}.`
-            : `Продолжаем stage ${stage}: ${stageRecord.data.title}. Последняя зафиксированная суть: ${previousSession?.summary || "нет сохранённого отчёта"}.`,
+             ? `Starting work on stage ${stage}: ${stageRecord.data.title}.`
+             : `Continuing work on stage ${stage}: ${stageRecord.data.title}. Last recorded summary: ${previousSession?.summary || "no saved report"}.`,
           last_session_summary: previousSession?.summary || null,
+          next_action: firstResume ? "start_work" : "continue_work",
+          instruction: stageRecord.data.prompt || (firstResume
+             ? `Review stage ${stage}: ${stageRecord.data.title} and begin work.`
+             : `Continue work on stage ${stage}: ${stageRecord.data.title}.`),
         },
       }, [workspace, stage]);
     });
@@ -293,6 +297,22 @@ export class WorkContext {
       this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, stageBody(record, record.data.title, nextDescription));
       generateProjections(this.storage);
       return this.result({ workspace, stage, description: nextDescription }, [workspace, stage]);
+    });
+  }
+
+  updateStagePrompt(workspace, stage, prompt) {
+    id(workspace, 6);
+    stage = stageId(stage);
+    if (!prompt?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Prompt is required");
+    return this.transact(`stage-${workspace}-${stage}`, () => {
+      const record = this.storage.readStage(workspace, stage);
+      const nextPrompt = prompt.trim();
+      if (record.data.prompt === nextPrompt) return this.result({ workspace, stage, prompt: nextPrompt }, []);
+      record.data.prompt = nextPrompt;
+      record.data.updated_at = new Date().toISOString();
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, stageBody(record, record.data.title, record.data.goal, nextPrompt));
+      generateProjections(this.storage);
+      return this.result({ workspace, stage, prompt: nextPrompt }, [workspace, stage]);
     });
   }
 
@@ -390,6 +410,25 @@ export class WorkContext {
     });
   }
 
+  forceCloseSession(workspace, stage, sessionId, reason, confirmation) {
+    id(workspace, 6);
+    stage = stageId(stage);
+    if (!sessionId?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Session ID is required");
+    if (!reason?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Force-close reason is required");
+    if (confirmation !== "FORCE_CLOSE") fail(ERROR_CODES.CONFIRMATION_REQUIRED, "Force close requires confirmation FORCE_CLOSE", { expected: "FORCE_CLOSE" });
+    return this.transact(`stage-${workspace}-${stage}`, () => {
+      const session = this.storage.readEvents().length
+        ? this.sessionById(sessionId)
+        : null;
+      if (!session || session.workspace !== workspace || session.stage !== stage) fail(ERROR_CODES.NOT_FOUND, "Session not found", { session_id: sessionId, workspace, stage });
+      if (session.state === "closed") return this.result({ session_id: sessionId, state: "closed", idempotent: true }, []);
+      if (session.state !== "active") fail(ERROR_CODES.SESSION_NOT_ACTIVE, "Session is not active", { session_id: sessionId, state: session.state });
+      this.writeEvents([event("session.closed", workspace, stage, session.ordinal, sessionId, actor(this.options), { reason: reason.trim(), forced: true })]);
+      generateProjections(this.storage);
+      return this.result({ session_id: sessionId, state: "closed", forced: true, reason: reason.trim() }, []);
+    });
+  }
+
   handoff(workspace, stage, sessionId, options = {}) {
     stage = stageId(stage);
     return this.transact(`stage-${workspace}-${stage}`, () => {
@@ -425,7 +464,10 @@ export class WorkContext {
       current.data.updated_at = new Date().toISOString();
       this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), current.data, `${current.body}\n\n## Result\n\n${options.result || "Stage completed."}`);
       generateProjections(this.storage);
-      const data = { session_id: sessionId, workspace, stage, state: "closed", status: "completed", knowledge_review: knowledgeReview, ...(knowledgeEntries ? { knowledge_entries: knowledgeEntries.length } : {}) };
+       const promptReview = this.listStages(workspace).data.stages
+         .filter((item) => Number(item.stage) > Number(stage) && !["completed", "archived"].includes(item.status))
+         .map(({ stage: id, title, description, prompt, status }) => ({ stage: id, title, description, prompt: prompt || null, status }));
+       const data = { session_id: sessionId, workspace, stage, state: "closed", status: "completed", knowledge_review: knowledgeReview, prompt_review: promptReview, ...(knowledgeEntries ? { knowledge_entries: knowledgeEntries.length } : {}) };
       const incompleteStages = this.listStages(workspace).data.stages.filter((item) => !["completed", "archived"].includes(item.status));
       const next = incompleteStages.length ? null : {
         action: "workspace_finish",
@@ -438,7 +480,7 @@ export class WorkContext {
   }
 
   help(command = "") {
-     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace is optional for stage add/rename/update/archive when the current session identifies one workspace; stage add accepts an optional prompt, which should contain the complete implementation context when the stage is created from stage 01 planning; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
+     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage update-prompt|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace is optional for stage add/rename/update/archive when the current session identifies one workspace; stage add accepts an optional prompt, which should contain the complete implementation context when the stage is created from stage 01 planning; resume returns resume.next_action and resume.instruction for immediate work; force-close requires a session ID, reason, and exact confirmation FORCE_CLOSE; stage finish returns downstream stages for prompt review; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }
 
   result(data, changed, next = null) {
