@@ -125,6 +125,87 @@ test("create tool can create multiple workspaces in one OpenCode session", async
   }
 });
 
+test("stage add without a workspace enters the new stage and returns resume context", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Stage add workspace", { workspace: "999905", sessionId: "internal-create", opencodeSessionId: "oc-current" });
+    const executeContext = {
+      directory: fixture.root,
+      worktree: fixture.root,
+      sessionID: "oc-current",
+      metadata: async () => {},
+    };
+    const result = JSON.parse((await tools.work_context_add_stage.execute({ title: "New current stage", prompt: "Implement the stage and verify it." }, executeContext)).output);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.data.workspace, "999905");
+    assert.equal(result.data.stage, "02");
+    assert.equal(result.data.created.stage, "02");
+    assert.equal(result.data.resume.next_action, "start_work");
+    assert.equal(context.sessionByOpenCodeId("oc-current", "999905", "02").state, "active");
+    const snapshot = readStagesSnapshot({ projectRoot: fixture.root, sessionId: "oc-current" });
+    assert.equal(snapshot.data.currentStage, "02");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("stage add with an explicit workspace enters it when the session is unassociated", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Explicit stage workspace", { workspace: "999906", sessionId: "oc-create" });
+    context.handoff("999906", "01", "oc-create");
+    const executeContext = {
+      directory: fixture.root,
+      worktree: fixture.root,
+      sessionID: "oc-unassociated",
+      metadata: async () => {},
+    };
+    const result = JSON.parse((await tools.work_context_add_stage.execute({ workspace: "999906", title: "Entered explicit stage", prompt: "Implement and verify." }, executeContext)).output);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.data.stage, "02");
+    assert.equal(result.data.resume.next_action, "start_work");
+    assert.equal(context.sessionByOpenCodeId("oc-unassociated", "999906", "02").state, "active");
+    const host = createSessionHost(fixture.root, "oc-unassociated");
+    const hooks = await serverPlugin(host);
+    await hooks["tool.execute.after"]({ tool: "work_context_add_stage", sessionID: "oc-unassociated" });
+    assert.equal(host.title, "999906 02/01\nExplicit stage workspace");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("stage lifecycle tools can resolve workspace from the current OpenCode session", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Contextual lifecycle workspace", { workspace: "999907", sessionId: "internal-create", opencodeSessionId: "oc-current" });
+    const executeContext = {
+      directory: fixture.root,
+      worktree: fixture.root,
+      sessionID: "oc-current",
+      metadata: async () => {},
+    };
+
+    const renamed = JSON.parse((await tools.work_context_rename_stage.execute({ title: "Renamed current stage" }, executeContext)).output);
+    assert.equal(renamed.ok, true);
+    assert.deepEqual(renamed.data, { workspace: "999907", stage: "01", title: "Renamed current stage" });
+    const finished = JSON.parse((await tools.work_context_finish_stage.execute({ stage: "01", knowledgeReview: "none" }, executeContext)).output);
+    assert.equal(finished.ok, true);
+    assert.equal(finished.data.workspace, "999907");
+
+    context.addStage("999907", "Archive me");
+    const archived = JSON.parse((await tools.work_context_archive_stage.execute({ stage: "02" }, executeContext)).output);
+    assert.equal(archived.ok, true);
+    assert.deepEqual(archived.data, { workspace: "999907", stage: "02", status: "archived" });
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("stage tracker link is preferred over workspace tracker link in the session title", async () => {
   const fixture = createFixture();
   try {

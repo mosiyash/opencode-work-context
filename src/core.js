@@ -172,7 +172,27 @@ export class WorkContext {
       if (this.storage.readEvents().some((item) => item.session_id === sessionId)) fail(ERROR_CODES.CONFLICT, "Session ID already exists");
       this.writeEvents([event("session.started", workspace, "01", 1, sessionId, actor(this.options), { summary: `planning ${title.trim()}`, opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
       generateProjections(this.storage);
-      return this.result({ workspace, stage: "01", session_id: sessionId, ordinal: "01/01" }, [workspace, "01"]);
+      return this.result({
+        workspace,
+        stage: "01",
+        session_id: sessionId,
+        ordinal: "01/01",
+        title: "Planning",
+        description: planningGoal,
+        prompt: planningPrompt,
+        resume: {
+          first: true,
+          summary: "Starting work on stage 01: Planning.",
+          last_session_summary: null,
+          context: {
+            essence: planningGoal,
+            previous: "Предыдущая сессия не сохранила итог; точку остановки нужно уточнить.",
+            now: planningPrompt,
+          },
+          next_action: "start_work",
+          instruction: planningPrompt,
+        },
+      }, [workspace, "01"]);
     });
   }
 
@@ -245,12 +265,12 @@ export class WorkContext {
             previous: previousSession?.summary || "Предыдущая сессия не сохранила итог; точку остановки нужно уточнить.",
             now: hasPrompt ? stageRecord.data.prompt : "Сначала уточнить задачу и план работ у пользователя.",
           },
-          next_action: hasPrompt ? (firstResume ? "start_work" : "continue_work") : "ask_questions",
+          next_action: hasPrompt ? (firstResume ? "start_work" : "await_confirmation") : "ask_questions",
           instruction: hasPrompt
-            ? stageRecord.data.prompt
-              || (firstResume
-                ? `Review stage ${stage}: ${stageRecord.data.title} and begin work only after confirming there are no unanswered questions.`
-                : `Continue work on stage ${stage}: ${stageRecord.data.title} only after confirming there are no unanswered questions.`)
+            ? firstResume
+              ? stageRecord.data.prompt
+                || `Review stage ${stage}: ${stageRecord.data.title} and begin work only after confirming there are no unanswered questions.`
+              : `Stage ${stage}: ${stageRecord.data.title} was resumed before. Report the context and wait for the user's confirmation before continuing work.`
             : `Stage ${stage}: ${stageRecord.data.title} has no non-empty prompt. Do not start implementation; ask the user the questions needed to define the work.`,
         },
       }, [workspace, stage]);
@@ -489,7 +509,7 @@ export class WorkContext {
   }
 
   help(command = "") {
-     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage update-prompt|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace is optional for stage add/rename/update/archive when the current session identifies one workspace; stage add accepts an optional prompt, which should contain the complete implementation context when the stage is created from stage 01 planning; resume returns resume.next_action and resume.instruction, but implementation may begin only with a non-empty prompt and no unanswered questions; ask focused questions and do not modify application code when next_action is ask_questions; force-close requires a session ID, reason, and exact confirmation FORCE_CLOSE; stage finish returns downstream stages for prompt review; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
+     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage update-prompt|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace and stage are optional for stage rename/update/update-prompt/archive/handoff/abandon/finish and session rename/close when the current session identifies them; finish <stage> is a shortcut for stage finish <stage>; when only one numeric identifier is supplied, six digits mean workspace and one or two digits mean stage; stage add accepts an optional prompt, which should contain the complete implementation context when the stage is created from stage 01 planning; resume returns resume.next_action and resume.instruction, but implementation may begin only with a non-empty prompt and no unanswered questions; ask focused questions and do not modify application code when next_action is ask_questions; force-close requires a session ID, reason, and exact confirmation FORCE_CLOSE; stage finish returns downstream stages for prompt review; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; stage finish reviews Knowledge Base automatically by default (knowledgeReview=auto); mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }
 
   result(data, changed, next = null) {

@@ -19,7 +19,7 @@ export function readStagesSnapshot({ projectRoot, sessionId }) {
     if (!session && sessionId) {
       for (const workspace of context.listWorkspaces().data) {
         const candidate = context.listStages(workspace.workspace).data.sessions
-          .find((item) => item.opencode_session_id === sessionId);
+          .filter((item) => item.opencode_session_id === sessionId).at(-1);
         if (candidate) { session = candidate; break; }
       }
     }

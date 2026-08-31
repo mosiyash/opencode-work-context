@@ -52,7 +52,8 @@ When you return later, continue from the active stage. A stage must have a
 non-empty prompt before implementation begins; if the prompt is missing or
 ambiguous, `/wc resume` instructs the agent to ask focused questions first.
 Before working, the agent reports the stage essence, the previous session's
-result or stopping point, and what it will do now:
+result or stopping point, and what it will do now. On subsequent resumes, it
+only reports that context and waits for explicit confirmation before continuing:
 
 ```text
 /wc resume 000001 02

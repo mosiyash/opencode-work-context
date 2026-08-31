@@ -122,10 +122,11 @@ test("resume returns the saved prompt and a continuation summary", () => {
     context.handoff("999985", "02", "session-2");
     const second = context.startSession("999985", "02", { sessionId: "session-3" });
     assert.equal(second.data.resume.first, false);
-    assert.equal(second.data.resume.next_action, "continue_work");
+    assert.equal(second.data.resume.next_action, "await_confirmation");
     assert.match(second.data.resume.summary, /verification remains/);
     assert.equal(second.data.resume.last_session_summary, "Implemented the main logic; verification remains.");
     assert.equal(second.data.resume.context.previous, "Implemented the main logic; verification remains.");
+    assert.match(second.data.resume.instruction, /wait for the user's confirmation/);
   } finally {
     removeRoot(root);
   }
