@@ -112,6 +112,11 @@ test("resume returns the saved prompt and a continuation summary", () => {
     assert.equal(first.data.prompt, "Implement the feature and add regression coverage.");
     assert.equal(first.data.resume.next_action, "start_work");
     assert.equal(first.data.resume.instruction, first.data.prompt);
+    assert.deepEqual(first.data.resume.context, {
+      essence: "Implementation",
+      previous: "Предыдущая сессия не сохранила итог; точку остановки нужно уточнить.",
+      now: "Implement the feature and add regression coverage.",
+    });
 
     context.renameSession("999985", "02", "session-2", "Implemented the main logic; verification remains.");
     context.handoff("999985", "02", "session-2");
@@ -120,6 +125,24 @@ test("resume returns the saved prompt and a continuation summary", () => {
     assert.equal(second.data.resume.next_action, "continue_work");
     assert.match(second.data.resume.summary, /verification remains/);
     assert.equal(second.data.resume.last_session_summary, "Implemented the main logic; verification remains.");
+    assert.equal(second.data.resume.context.previous, "Implemented the main logic; verification remains.");
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("resume blocks implementation when a stage has no prompt", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Unspecified resume workspace", { workspace: "999977", sessionId: "session-1" });
+    context.handoff("999977", "01", "session-1");
+    context.addStage("999977", "Unspecified implementation");
+
+    const result = context.startSession("999977", "02", { sessionId: "session-2" });
+
+    assert.equal(result.data.resume.next_action, "ask_questions");
+    assert.match(result.data.resume.instruction, /Do not start implementation/);
   } finally {
     removeRoot(root);
   }

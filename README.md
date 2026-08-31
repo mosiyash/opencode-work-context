@@ -44,11 +44,15 @@ Then create a task and its first stage in OpenCode:
 ```text
 /wc create "Add CSV export to analytics report"
 /wc stage rename 000001 01 "Planning"
-/wc stage add 000001 "Update the export endpoint"
+/wc stage add 000001 "Update the export endpoint" "Inspect the current endpoint, implement CSV export, add regression tests, and verify the result."
 /wc resume 000001 02
 ```
 
-When you return later, continue from the active stage:
+When you return later, continue from the active stage. A stage must have a
+non-empty prompt before implementation begins; if the prompt is missing or
+ambiguous, `/wc resume` instructs the agent to ask focused questions first.
+Before working, the agent reports the stage essence, the previous session's
+result or stopping point, and what it will do now:
 
 ```text
 /wc resume 000001 02

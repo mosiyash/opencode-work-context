@@ -51,7 +51,9 @@ Supported syntax:
 - `stage handoff <workspace> <stage>`
 - `stage abandon <workspace> <stage>`
 - `stage finish <workspace> <stage>` automatically reviews the Knowledge Base (`auto` by default)
-- `resume` returns an actionable `resume.next_action` and `resume.instruction`; begin or continue the work immediately from that structured context
+- `resume` returns `resume.context` with the stage essence, the previous session's result/stopping point, and the current plan; report this concise context to the user before doing any work
+- `resume` returns `resume.next_action` and `resume.instruction`; begin or continue implementation only when the stage prompt is non-empty and, after reviewing it, there are no unanswered questions
+- when `resume.next_action` is `ask_questions`, do not inspect or modify application code and ask the user focused questions needed to make the prompt actionable
 - `stage finish` returns downstream unfinished stages whose prompts should be reviewed after new findings
 - `knowledge list|add|update|supersede <workspace> ...`
 
