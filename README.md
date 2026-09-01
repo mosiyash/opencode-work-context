@@ -94,6 +94,27 @@ Use `--force` to replace a conflicting package-owned generated file or package
 version. Without it, existing files are never silently overwritten. Re-running
 with unchanged files is safe and idempotent.
 
+## Update
+
+Run the update from the root of the OpenCode project that has the plugin
+installed:
+
+```sh
+npx --yes opencode-work-context@latest init --force
+```
+
+This installs the latest package version as an exact devDependency and refreshes
+the package-owned server and TUI loaders. It preserves the project's
+`.work-context` data. Check the installed version with:
+
+```sh
+npm ls opencode-work-context --depth=0
+```
+
+Restart OpenCode after updating so it loads the new server plugin and TUI code.
+Use a specific version instead of `latest` when you need a pinned upgrade, for
+example `npx --yes opencode-work-context@0.1.10 init --force`.
+
 Generated files:
 
 - `.work-context/config.yaml` for filesystem configuration;
