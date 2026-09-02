@@ -4,7 +4,7 @@
 // invalidate host-rendered slot content.
 import { createSignal } from "solid-js";
 import { jsx } from "@opentui/solid/jsx-runtime";
-import plugin from "../../plugin/stages-tui.js";
+import plugin from "../../plugin/tui.js";
 
 export default {
   ...plugin,

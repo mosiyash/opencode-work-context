@@ -3,8 +3,8 @@
 Keep the context of a task between OpenCode sessions.
 
 Create one workspace for one task, split it into stages, and return to the
-exact stage where you stopped. The optional sidebar shows the current task and
-its progress at a glance.
+exact stage where you stopped. The optional sidebar and modal show the current
+task and its progress at a glance.
 
 ![OpenCode Work Context stages sidebar](docs/assets/opencode-work-context.png)
 
@@ -68,6 +68,16 @@ Useful commands:
 /wc stage finish 000001 02
 ```
 
+Workspace IDs are exactly six digits. Stage IDs are one or two digits and are
+normalized to two digits by the command contract. Canonical examples are:
+
+```text
+/wc workspace list 000004
+/wc resume 000004 02
+/wc stage handoff 000004 02
+/wc stage finish 000004 02
+```
+
 ## Install
 
 Run from the root of a standalone OpenCode project:
@@ -85,7 +95,7 @@ with a new `package.json` when neither exists. Package files, lockfiles, and
 `.gitignore` always belong to the project root.
 
 The installer ensures that the dependency-root package uses `"type": "module"`
-and generates an ESM plugin loader. OpenCode loads local plugins as JavaScript
+and generates ESM server and TUI loaders. OpenCode loads local plugins as JavaScript
 modules; keeping the generated `.js` integration path ESM avoids a CommonJS
 interop failure before custom tools are registered.
 It does not create a workspace. Start one explicitly with `/wc create "Title"`.
@@ -111,7 +121,10 @@ the package-owned server and TUI loaders. It preserves the project's
 npm ls opencode-work-context --depth=0
 ```
 
-Restart OpenCode after updating so it loads the new server plugin and TUI code.
+Restart OpenCode after updating so it reloads the new server plugin, TUI loader,
+keymap, and modal code. A restart is required after changing package code or
+`.opencode/tui.json`; lifecycle data changes are picked up by the existing
+refresh mechanisms.
 Use a specific version instead of `latest` when you need a pinned upgrade, for
 example `npx --yes opencode-work-context@0.1.10 init --force`.
 
@@ -125,7 +138,7 @@ Generated files:
 - `<workspace>/KNOWLEDGE.md` is the canonical durable knowledge ledger and is
   created on the first explicit knowledge operation.
 
-The optional read-only stages panel is a separate TUI plugin. `init` installs a
+The optional read-only stages panel and modal are a separate TUI plugin. `init` installs a
 project-local loader outside OpenCode's server-plugin autoscan at
 `.opencode/tui-plugins/work-context-stages.js` and enables it in `.opencode/tui.json`:
 
@@ -139,21 +152,43 @@ Enable that loader explicitly in `.opencode/tui.json`:
 { "$schema": "https://opencode.ai/tui.json", "plugin": ["./tui-plugins/work-context-stages.js"] }
 ```
 
-The package keeps the
-existing `opencode-work-context/plugin` server export unchanged and exposes the
-panel as `opencode-work-context/tui`. The panel only reads canonical storage via
-`WorkContext.openExisting`; it does not create `.work-context`, call lifecycle
+The package keeps the existing `opencode-work-context/plugin` server export and
+also exposes the explicit server entry as `opencode-work-context/server`.
+The combined read-only panel and modal are exposed only as
+`opencode-work-context/tui`. Both TUI adapters read canonical storage via
+`WorkContext.openExisting`; they do not create `.work-context`, call lifecycle
 tools, or modify Markdown/JSONL projections. Hosts without the TUI plugin API
 continue to load the server plugin and its tools normally.
 
-Tools are registered by the installed plugin and are not copied into the project.
+The modal is opened with `Ctrl+Alt+W` when the host supports the public TUI
+keymap and dialog APIs. Its `l`, `r`, `h`, and `f` actions only prepare visible
+`/wc` commands. They never submit, invoke tools, dispatch commands, invoke an
+LLM, or mutate storage. Prompt insertion is best effort: a host-provided public
+append bridge may insert the command, otherwise the modal shows the exact
+command and `PROMPT_INSERT_UNAVAILABLE` for manual submission. The installed
+`@opencode-ai/plugin` 1.18.21 declarations expose `TuiPromptRef/set`, not a
+confirmed `prompt.append` API, so runtime support must be verified rather than
+assumed.
+
+Tools are registered by the installed server export and are not copied into the
+project. Core and storage remain in the installed package; projects should not
+copy `src/` or `tools/`. `.work-context` Markdown, JSONL, `INDEX.md`, and
+`SESSIONS.md` are generated projections and must never be edited manually.
 Tracker links support GitLab issues (`/-/issues/<number>`), GitHub issues
 (`/issues/<number>`), and Jira issues (`/browse/KEY-123`). They are URL-based
 references only; the plugin does not call provider APIs or synchronize issue
 metadata.
 Knowledge operations are explicit: list, add, update, and supersede. Finishing a
-stage automatically validates the Knowledge Base by default (`knowledgeReview=auto`);
-the legacy `added` and `none` modes remain accepted.
+stage always validates the Knowledge Base and reports its total and active entry
+counts. Before finishing, persist new durable findings, update changed entries,
+supersede obsolete entries, or explicitly use `knowledgeReview=none` when no
+durable findings were produced. The default `knowledgeReview=auto` remains
+accepted, and `knowledgeReview=added` records that the ledger was changed.
+Every stage start/resume includes all active entries in
+`resume.context.workspace_knowledge`. Agents should treat this as established
+workspace-wide context and avoid repeating earlier analysis unless an entry is
+incomplete, contradicted, or requires verification. Superseded entries and full
+stage results are not injected into later stages.
 Finish a workspace explicitly with `/wc workspace finish <workspace>`; it is
 accepted only after every stage is `completed`. Use `/wc workspace list <workspace>`
 to list stages with their descriptions. Workspace titles can be changed with

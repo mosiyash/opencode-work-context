@@ -36,6 +36,7 @@ test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
     const { context } = fixture;
     context.createWorkspace("Prompt integration workspace", { workspace: "999902", sessionId: "oc-create" });
     context.handoff("999902", "01", "oc-create");
+    context.addKnowledge("999902", { title: "Shared constraint", kind: "contract", text: "Preserve the structured tool contract.", sources: ["stage:01"] });
     context.addStage("999902", "Prompted stage", { prompt: "Start by inspecting the existing tests, then implement the change." });
 
     const executeContext = {
@@ -50,6 +51,7 @@ test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
     assert.equal(result.data.resume.first, true);
     assert.equal(result.data.resume.next_action, "start_work");
     assert.equal(result.data.resume.instruction, result.data.prompt);
+    assert.equal(result.data.resume.context.workspace_knowledge[0].text, "Preserve the structured tool contract.");
   } finally {
     fixture.cleanup();
   }
@@ -195,6 +197,9 @@ test("stage lifecycle tools can resolve workspace from the current OpenCode sess
     const finished = JSON.parse((await tools.work_context_finish_stage.execute({ stage: "01", knowledgeReview: "none" }, executeContext)).output);
     assert.equal(finished.ok, true);
     assert.equal(finished.data.workspace, "999907");
+    const updatedResult = JSON.parse((await tools.work_context_update_stage_result.execute({ result: "Updated completion result" }, executeContext)).output);
+    assert.equal(updatedResult.ok, true);
+    assert.deepEqual(updatedResult.data, { workspace: "999907", stage: "01", result: "Updated completion result" });
 
     context.addStage("999907", "Archive me");
     const archived = JSON.parse((await tools.work_context_archive_stage.execute({ stage: "02" }, executeContext)).output);

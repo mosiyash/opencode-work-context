@@ -130,8 +130,10 @@ supported `sidebar_content` slot and listens to the public `session.updated`
 event bus. It accepts the current event payload (`data.sessionID`) and legacy
 session fields used by older hosts.
 
-The package installer continues to generate only the server loader, preserving
-existing project-local plugin loading. TUI hosts opt in with a separate local
-loader and configuration entry. Contract tests cover both exports, installer
-loading, no-TUI server loading, read-only storage discovery, and TUI lifecycle
-cleanup. No mutating tools or new dependencies are part of this release.
+The package installer generates a server loader and, separately, a TUI loader
+and configuration entry. The server loader imports the explicit `server` export;
+the TUI loader imports the combined `tui` export, which preserves the existing
+stages panel while adding optional TUI features. Contract tests cover both
+exports, installer loading, no-TUI server loading, read-only storage discovery,
+and TUI lifecycle cleanup. No mutating tools or new dependencies are part of
+this release.

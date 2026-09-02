@@ -10,6 +10,8 @@ const POLL_MS = 1000;
 const PATH_TIMEOUT_MS = 5000;
 const PATH_POLL_MS = 25;
 const WORK_CONTEXT_PREFIX = "work" + "_" + "context_";
+const activeTuiInstances = new WeakMap();
+const ACTIVE_TUI_KEY = Symbol.for("opencode-work-context.stages-tui");
 const statusMarker = (status) => ({
   planned: "[ ]",
   in_progress: "[•]",
@@ -194,6 +196,7 @@ const ACTIVE_WORKSPACE_SESSION = "__active_" + "work" + "_context_workspace__";
 
 // Optional TUI entry point. It is deliberately not imported by the server plugin.
 export const tui = async (api, options = {}) => {
+  if (activeTuiInstances.has(api) || api?.[ACTIVE_TUI_KEY]) return activeTuiInstances.get(api) || api[ACTIVE_TUI_KEY];
   const projectRoot = await resolveProjectRoot(api, options);
   if (!projectRoot) return;
 
@@ -242,14 +245,18 @@ export const tui = async (api, options = {}) => {
   cleanup = () => {
     if (cleaned) return;
     cleaned = true;
+    if (activeTuiInstances.get(api) === cleanup) activeTuiInstances.delete(api);
+    if (api?.[ACTIVE_TUI_KEY] === cleanup) delete api[ACTIVE_TUI_KEY];
     controller.dispose();
     storageWatcher?.close();
     disposeRegistration(unsubscribe);
     disposeRegistration(unsubscribeTool);
     disposeRegistration(unregisterSlot);
   };
+  api[ACTIVE_TUI_KEY] = cleanup;
+  activeTuiInstances.set(api, cleanup);
   api.lifecycle?.onDispose?.(cleanup);
-
+  return cleanup;
 };
 
 export default { id: "work-context-stages", tui };

@@ -116,6 +116,7 @@ test("resume returns the saved prompt and a continuation summary", () => {
       essence: "Implementation",
       previous: "The previous session did not save a result; the stopping point needs to be clarified.",
       now: "Implement the feature and add regression coverage.",
+      workspace_knowledge: [],
     });
 
     context.renameSession("999985", "02", "session-2", "Implemented the main logic; verification remains.");
@@ -144,6 +145,31 @@ test("resume blocks implementation when a stage has no prompt", () => {
 
     assert.equal(result.data.resume.next_action, "ask_questions");
     assert.match(result.data.resume.instruction, /Do not start implementation/);
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("resume includes active workspace knowledge and excludes superseded entries", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Shared knowledge workspace", { workspace: "999976", sessionId: "session-1" });
+    context.handoff("999976", "01", "session-1");
+    context.addKnowledge("999976", { title: "Old decision", kind: "decision", text: "Use the old adapter.", sources: ["stage:01"] });
+    context.addKnowledge("999976", { title: "Current decision", kind: "decision", text: "Use the structured adapter.", sources: ["stage:01"] });
+    context.supersedeKnowledge("999976", "KC-0001", "KC-0002");
+    context.addStage("999976", "Implementation", { prompt: "Implement the structured adapter." });
+
+    const result = context.startSession("999976", "02", { sessionId: "session-2" });
+
+    assert.deepEqual(result.data.resume.context.workspace_knowledge, [{
+      id: "KC-0002",
+      title: "Current decision",
+      kind: "decision",
+      text: "Use the structured adapter.",
+      sources: ["stage:01"],
+    }]);
   } finally {
     removeRoot(root);
   }
@@ -255,6 +281,7 @@ test("stage finish automatically reviews the knowledge ledger by default", () =>
     const result = context.finish("999987", "01", "session-1");
     assert.equal(result.data.knowledge_review, "auto");
     assert.equal(result.data.knowledge_entries, 0);
+    assert.equal(result.data.active_knowledge_entries, 0);
     assert.deepEqual(result.next, {
       action: "workspace_finish",
       workspace: "999987",
@@ -262,6 +289,40 @@ test("stage finish automatically reviews the knowledge ledger by default", () =>
       reason: "All workspace stages are completed",
     });
     assert.equal(context.storage.readStage("999987", "01").data.status, "completed");
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("stage finish validates knowledge and reports active entries for explicit review modes", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Explicit review workspace", { workspace: "999973", sessionId: "session-1" });
+    context.addKnowledge("999973", { title: "Established fact", text: "The adapter is structured." });
+
+    const result = context.finish("999973", "01", "session-1", { knowledgeReview: "added" });
+
+    assert.equal(result.data.knowledge_review, "added");
+    assert.equal(result.data.knowledge_entries, 1);
+    assert.equal(result.data.active_knowledge_entries, 1);
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("explicit knowledge review modes cannot bypass ledger validation", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Invalid review workspace", { workspace: "999972", sessionId: "session-1" });
+    fs.writeFileSync(path.join(root, ".work-context", "999972", "KNOWLEDGE.md"), "invalid ledger\n");
+
+    assert.throws(
+      () => context.finish("999972", "01", "session-1", { knowledgeReview: "none" }),
+      (error) => error.code === ERROR_CODES.STORAGE_ERROR,
+    );
+    assert.equal(context.storage.readStage("999972", "01").data.status, "in_progress");
   } finally {
     removeRoot(root);
   }
@@ -399,6 +460,31 @@ test("stage updates preserve the result section", () => {
     context.renameStage("999974", "01", "Renamed planning");
     context.updateStage("999974", "01", "Clarify the project goal");
     assert.match(context.storage.readStage("999974", "01").body, /## Result\n\nThe stage result/);
+  } finally { removeRoot(root); }
+});
+
+test("an existing stage result can be updated without changing stage metadata", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Result update workspace", { workspace: "999971", sessionId: "session-1" });
+    assert.throws(
+      () => context.updateStageResult("999971", "01", "Too early"),
+      (error) => error.code === ERROR_CODES.INVALID_STATE,
+    );
+    context.finish("999971", "01", "session-1", { result: "Original result", knowledgeReview: "none" });
+    const before = context.storage.readStage("999971", "01").data;
+
+    const updated = context.updateStageResult("999971", "01", "Translated result");
+    assert.deepEqual(updated.data, { workspace: "999971", stage: "01", result: "Translated result" });
+    assert.deepEqual(updated.changed, ["999971", "01"]);
+    const after = context.storage.readStage("999971", "01");
+    assert.equal(after.data.title, before.title);
+    assert.equal(after.data.goal, before.goal);
+    assert.equal(after.data.prompt, before.prompt);
+    assert.equal(after.data.status, "completed");
+    assert.match(after.body, /## Result\n\nTranslated result\n$/);
+    assert.deepEqual(context.updateStageResult("999971", "01", "Translated result").changed, []);
   } finally { removeRoot(root); }
 });
 

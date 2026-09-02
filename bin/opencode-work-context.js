@@ -18,8 +18,13 @@ const dependencyRoot = fs.existsSync(path.join(projectRoot, "package.json"))
 const dependencyManifestFile = path.join(dependencyRoot, "package.json");
 let dependencyManifest = {};
 try { dependencyManifest = JSON.parse(fs.readFileSync(dependencyManifestFile, "utf8")); } catch {}
-const pluginLoader = `export { default } from "${packageManifest.name}/plugin";\n`;
-const tuiLoader = `import { createSignal } from "solid-js";
+const pluginLoader = `// Server tools and lifecycle hooks stay in the installed package.
+import serverPlugin from "${packageManifest.name}/server";
+
+export default serverPlugin.server;
+`;
+const tuiLoader = `// TUI integration stays in the installed package; do not copy src/ or tools.
+import { createSignal } from "solid-js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import plugin from "${packageManifest.name}/tui";
 

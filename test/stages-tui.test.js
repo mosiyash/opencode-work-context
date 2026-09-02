@@ -5,9 +5,10 @@ import path from "node:path";
 import test from "node:test";
 import { testRender } from "@opentui/solid";
 import { createSignal } from "solid-js";
-import { WorkContext, readStagesSnapshot, renderStagesPanel } from "../src/index.js";
+import { WorkContext, readStagesSnapshot, readWorkContextSnapshot, renderStagesPanel } from "../src/index.js";
 import tuiModule, { createStagesTuiController, renderStagesElement, sessionIdForSlot } from "../plugin/stages-tui.js";
 import realTuiLoader from "../.opencode/tui-plugins/work-context-stages.js";
+import { appendPromptCommand, buildWorkContextActionCommand, createWorkContextActionFlow, createWorkContextModalController, filterWorkspaces, insertPromptCommand, prepareWorkContextCommand, renderWorkContextModal, WORK_CONTEXT_ACTIONS } from "../plugin/work-context-modal.js";
 
 const makeRoot = () => fs.mkdtempSync(path.join("/tmp/opencode", "stages-tui-test-"));
 const removeRoot = (root) => fs.rmSync(root, { recursive: true, force: true });
@@ -21,6 +22,32 @@ test("snapshot is read-only when storage is absent", () => {
     assert.equal(result.ok, true);
     assert.equal(result.data.workspace, null);
     assert.equal(fs.existsSync(path.join(root, ".work-context")), false);
+  } finally { removeRoot(root); }
+});
+
+test("work-context snapshot lists every workspace without initializing absent storage", () => {
+  const root = makeRoot();
+  try {
+    const result = readWorkContextSnapshot({ projectRoot: root, sessionId: "missing" });
+    assert.deepEqual(result.data.workspaces, []);
+    assert.equal(fs.existsSync(path.join(root, ".work-context")), false);
+  } finally { removeRoot(root); }
+});
+
+test("work-context snapshot includes stages and session metadata for all workspaces", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("First workspace", { workspace: "999970", sessionId: "oc-first" });
+    context.createWorkspace("Second workspace", { workspace: "999971", sessionId: "oc-second" });
+    context.addStage("999970", "Implementation", { goal: "Build the read model" });
+    const result = readWorkContextSnapshot({ projectRoot: root, sessionId: "oc-first" });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.data.workspaces.map((workspace) => workspace.id), ["999970", "999971"]);
+    assert.equal(result.data.currentWorkspace, "999970");
+    assert.equal(result.data.workspaces[0].currentStage, "01");
+    assert.equal(result.data.workspaces[0].activeSession.session_id, "oc-first");
+    assert.equal(result.data.workspaces[0].stages[1].description, "Build the read model");
   } finally { removeRoot(root); }
 });
 
@@ -441,7 +468,7 @@ test("package exports preserve server and TUI plugin entry points", async () => 
   assert.equal(typeof adapter.readStagesSnapshot, "function");
   assert.equal(packageManifest.exports["./plugin"], "./plugin/work-context.js");
   assert.equal(packageManifest.exports["./server"], "./plugin/server.js");
-  assert.equal(packageManifest.exports["./tui"], "./plugin/stages-tui.js");
+  assert.equal(packageManifest.exports["./tui"], "./plugin/tui.js");
   assert.equal(fs.readFileSync(new URL("../plugin/stages-tui.js", import.meta.url), "utf8").includes("work_context_"), false);
 });
 
@@ -450,6 +477,7 @@ test("TUI loader is outside the server plugin autoscan path", () => {
   assert.deepEqual(config.plugin, ["./tui-plugins/work-context-stages.js"]);
   assert.equal(fs.existsSync(new URL("../.opencode/tui-plugins/work-context-stages.js", import.meta.url)), true);
   assert.equal(fs.existsSync(new URL("../.opencode/plugins/work-context-stages.js", import.meta.url)), false);
+  assert.match(fs.readFileSync(new URL("../.opencode/tui-plugins/work-context-stages.js", import.meta.url), "utf8"), /plugin\/tui\.js/);
 });
 
 test("server plugin remains usable without TUI APIs", async () => {
@@ -555,4 +583,268 @@ test("TUI cleanup releases subscriptions and slot registration once", async () =
     assert.equal(unsubscribed, 2);
     assert.equal(unregistered, 1);
   } finally { removeRoot(api.state.path.worktree); }
+});
+
+test("reinitializing the TUI on one host does not duplicate the stages slot", async () => {
+  let registrations = 0;
+  const root = makeRoot();
+  const api = {
+    state: { path: { worktree: root } },
+    slots: { register: () => { registrations += 1; return "stages-slot"; } },
+    lifecycle: { onDispose: () => () => {} },
+    stagesSnapshotProvider: async () => ({ ok: true, data: { workspace: null, stages: [] } }),
+  };
+  try {
+    await tuiModule.tui(api, { pollMs: 0 });
+    await tuiModule.tui(api, { pollMs: 0 });
+    assert.equal(registrations, 1);
+  } finally { removeRoot(root); }
+});
+
+test("nested TUI loaders keep one stages slot through the stable plugin ID", async () => {
+  const registrations = [];
+  const root = makeRoot();
+  const api = {
+    state: { path: { worktree: root } },
+    slots: { register: (plugin) => { registrations.push(plugin.slots.sidebar_content); return () => {}; } },
+    lifecycle: { onDispose: () => () => {} },
+    stagesSnapshotProvider: async () => ({ ok: true, data: { workspace: null, stages: [] } }),
+  };
+  try {
+    // OpenCode 1.18.25 walks nested .opencode/tui.json files and keeps the
+    // first module for a plugin ID. The local aggregate is discovered first.
+    const loadedById = new Map();
+    for (const plugin of [realTuiLoader, tuiModule]) {
+      if (!loadedById.has(plugin.id)) loadedById.set(plugin.id, plugin);
+    }
+    assert.equal(realTuiLoader.id, "work-context-stages");
+    assert.equal(loadedById.size, 1);
+    for (const plugin of loadedById.values()) await plugin.tui(api, { pollMs: 0 });
+    assert.equal(registrations.length, 1);
+  } finally { removeRoot(root); }
+});
+
+test("work-context modal filtering keeps matching stages and workspaces", () => {
+  const filtered = filterWorkspaces([
+    { id: "000001", title: "Alpha", status: "in_progress", stages: [{ id: "01", title: "Build", description: "Read model" }] },
+    { id: "000002", title: "Beta", status: "planned", stages: [{ id: "01", title: "Plan", description: "Scope" }] },
+  ], "read model");
+  assert.deepEqual(filtered.map((workspace) => workspace.id), ["000001"]);
+  assert.deepEqual(filtered[0].stages.map((stage) => stage.id), ["01"]);
+});
+
+test("work-context modal controller bounds workspace and stage navigation", async () => {
+  let closed = 0;
+  const controller = createWorkContextModalController({
+    projectRoot: "/tmp/project",
+    read: async () => ({ ok: true, data: { schema: 1, currentWorkspace: "000001", workspaces: [
+      { id: "000001", title: "First", status: "in_progress", stages: [{ id: "01", title: "One" }], sessions: [] },
+      { id: "000002", title: "Second", status: "planned", stages: [{ id: "01", title: "Two" }], sessions: [] },
+    ] } }),
+    onClose: () => { closed += 1; },
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.handleKey({ key: "ArrowUp" });
+    assert.equal(controller.selectedWorkspace().id, "000001");
+    controller.handleKey({ key: "ArrowDown" });
+    controller.handleKey({ key: "ArrowDown" });
+    assert.equal(controller.selectedWorkspace().id, "000002");
+    controller.handleKey({ key: "ArrowRight" });
+    assert.equal(controller.selectedStage().id, "01");
+    controller.handleKey({ name: "escape" });
+    assert.equal(closed, 1);
+  } finally { controller.dispose(); }
+});
+
+test("work-context modal renderer exposes empty, filter, and navigation state", async () => {
+  const controller = createWorkContextModalController({ read: async () => ({ ok: true, data: { workspaces: [], currentWorkspace: null } }) });
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const element = renderWorkContextModal(controller, {}, runtime);
+    const children = element.props.children();
+    assert.equal(children.some((item) => item.props?.children === "No workspaces found."), true);
+    assert.equal(children.some((item) => item.props?.children?.some?.((child) => String(child.props?.children).includes("type to filter"))), true);
+  } finally { controller.dispose(); }
+});
+
+test("work-context modal constrains workspace and stage lists independently", async () => {
+  const controller = createWorkContextModalController({ read: async () => ({ ok: true, data: { workspaces: [
+    { id: "000001", title: "Long workspace title", status: "in_progress", stages: [{ id: "01", title: "Planning" }], sessions: [] },
+  ], currentWorkspace: "000001" } }) });
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const children = renderWorkContextModal(controller, {}, runtime, { maxListHeight: 18 }).props.children();
+    const columns = children.find((item) => item.props?.children?.some?.((child) => child.props?.children?.[0]?.props?.children === "Workspaces"));
+    const [workspaceColumn, stageColumn] = columns.props.children;
+    assert.equal(workspaceColumn.props.width, "40%");
+    assert.equal(workspaceColumn.props.children[1].type, "scrollbox");
+    assert.equal(workspaceColumn.props.children[1].props.maxHeight, 18);
+    assert.equal(stageColumn.props.children[1].type, "scrollbox");
+    assert.equal(stageColumn.props.children[1].props.maxHeight, 18);
+  } finally { controller.dispose(); }
+});
+
+test("modal prepares canonical commands and normalizes stage identifiers", () => {
+  assert.deepEqual(prepareWorkContextCommand("list", "000004"), { ok: true, command: "/wc workspace list 000004" });
+  assert.deepEqual(prepareWorkContextCommand("resume", "000004", "7"), { ok: true, command: "/wc resume 000004 07" });
+  assert.deepEqual(prepareWorkContextCommand("handoff", "000004", "02"), { ok: true, command: "/wc stage handoff 000004 02" });
+  assert.deepEqual(prepareWorkContextCommand("finish", "000004", "02"), { ok: true, command: "/wc stage finish 000004 02" });
+  assert.equal(prepareWorkContextCommand("resume", "4", "2").error.code, "INVALID_ARGUMENT");
+  assert.equal(prepareWorkContextCommand("finish", "000004", "0").error.code, "INVALID_ARGUMENT");
+});
+
+test("action modal builds canonical commands and safely quotes user input", () => {
+  assert.deepEqual(buildWorkContextActionCommand("create", { value: "New workspace" }), { ok: true, command: "/wc create \"New workspace\"" });
+  assert.deepEqual(buildWorkContextActionCommand("stage.add", { workspace: "000004", value: "Build", prompt: "Implement \"carefully\"" }), { ok: true, command: "/wc stage add 000004 \"Build\" \"Implement \\\"carefully\\\"\"" });
+  assert.deepEqual(buildWorkContextActionCommand("stage.finish", { workspace: "000004", stage: "2" }), { ok: true, command: "/wc stage finish 000004 02" });
+  assert.deepEqual(buildWorkContextActionCommand("stage.update-result", { workspace: "000004", stage: "2", value: "Translated result" }), { ok: true, command: "/wc stage update-result 000004 02 \"Translated result\"" });
+  assert.equal(buildWorkContextActionCommand("stage.rename", { workspace: "000004", stage: "02" }).error.code, "INVALID_ARGUMENT");
+});
+
+test("action modal appends through the public TUI endpoint without submitting", async () => {
+  const calls = [];
+  const api = { state: { path: { directory: "/tmp/project" } }, client: { tui: { appendPrompt: async (...args) => calls.push(args) } } };
+  assert.deepEqual(await appendPromptCommand(api, "/wc list"), { ok: true, command: "/wc list", submitted: false });
+  assert.deepEqual(calls, [[{ directory: "/tmp/project", text: "/wc list" }, { throwOnError: true }]]);
+});
+
+test("action modal uses native dialogs to prepare an add-stage command", async () => {
+  let current;
+  let cleared = 0;
+  const appended = [];
+  const api = {
+    state: { path: { worktree: "/tmp/project" } },
+    ui: {
+      DialogSelect: (props) => ({ type: "select", props }),
+      DialogPrompt: (props) => ({ type: "prompt", props }),
+      dialog: { replace: (render) => { current = render(); }, clear: () => { cleared += 1; }, setSize: () => {} },
+      toast: () => {},
+    },
+    client: { tui: { appendPrompt: async ({ text }) => appended.push(text) } },
+  };
+  const flow = createWorkContextActionFlow(api, { read: async () => ({ ok: true, data: { workspaces: [
+    { id: "000004", title: "Demo", status: "in_progress", stages: [] },
+  ] } }) });
+  flow.open();
+  assert.equal(current.type, "select");
+  assert.equal(current.props.options, WORK_CONTEXT_ACTIONS);
+  current.props.onSelect(current.props.options.find((option) => option.value === "stage.add"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  current.props.onSelect(current.props.options[0]);
+  current.props.onConfirm("Build UI");
+  current.props.onConfirm("Use native dialogs");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(appended, ["/wc stage add 000004 \"Build UI\" \"Use native dialogs\""]);
+  assert.equal(cleared, 1);
+});
+
+test("browse workspaces opens a searchable read-only stage list before actions", async () => {
+  let current;
+  const appended = [];
+  const api = {
+    state: { path: { worktree: "/tmp/project" } },
+    ui: {
+      DialogSelect: (props) => ({ type: "select", props }),
+      DialogPrompt: (props) => ({ type: "prompt", props }),
+      dialog: { replace: (render) => { current = render(); }, clear: () => {}, setSize: () => {} },
+      toast: () => {},
+    },
+    client: { tui: { appendPrompt: async ({ text }) => appended.push(text) } },
+  };
+  const flow = createWorkContextActionFlow(api, { read: async () => ({ ok: true, data: {
+    currentWorkspace: "000006",
+    workspaces: [
+      { id: "000001", title: "Completed research", status: "completed", stages: [{ id: "01", title: "Plan", status: "completed" }] },
+      { id: "000006", title: "Modal", status: "in_progress", stages: [{ id: "12", title: "Manual verification", status: "in_progress", current: true }] },
+    ],
+  } }) });
+  flow.open();
+  current.props.onSelect(current.props.options.find((option) => option.value === "list"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(current.props.title, "Workspaces");
+  assert.match(current.props.options[0].category, /^000006/);
+  assert.equal(current.props.options.some((option) => option.title.includes("Manual verification") && option.category.includes("Modal")), true);
+  assert.deepEqual(appended, []);
+  current.props.onSelect(current.props.options.find((option) => option.value.type === "stage" && option.value.stage.id === "12"));
+  assert.match(current.props.title, /^000006\/12/);
+  current.props.onSelect(current.props.options.find((option) => option.value === "stage.finish"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(appended, ["/wc stage finish 000006 12"]);
+});
+
+test("stage and session browsers provide searchable read-only projections", async () => {
+  let current;
+  const appended = [];
+  const api = {
+    state: { path: { worktree: "/tmp/project" } },
+    ui: {
+      DialogSelect: (props) => ({ type: "select", props }),
+      DialogPrompt: (props) => ({ type: "prompt", props }),
+      dialog: { replace: (render) => { current = render(); }, clear: () => {}, setSize: () => {} },
+      toast: () => {},
+    },
+    client: { tui: { appendPrompt: async ({ text }) => appended.push(text) } },
+  };
+  const snapshot = { ok: true, data: { currentWorkspace: "000006", workspaces: [{
+    id: "000006",
+    title: "Modal",
+    status: "in_progress",
+    stages: [
+      { id: "01", title: "Planning", status: "completed" },
+      { id: "12", title: "Manual verification", status: "in_progress", current: true },
+    ],
+    sessions: [
+      { workspace: "000006", stage: "12", ordinal: 1, session_id: "internal-active", opencode_session_id: "oc-current", summary: "Testing modal", state: "active", updated_at: "2026-09-01T12:00:00.000Z" },
+      { workspace: "000006", stage: "01", ordinal: 1, session_id: "internal-closed", summary: "Planned work", state: "closed", updated_at: "2026-08-31T12:00:00.000Z" },
+    ],
+  }] } };
+  const flow = createWorkContextActionFlow(api, { sessionId: "oc-current", read: async () => snapshot });
+
+  flow.selectAction("browse.stages");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(current.props.title, "Stages");
+  assert.equal(current.props.options[0].category, "Current");
+  assert.match(current.props.options[0].title, /000006\/12.*Manual verification.*Modal/);
+  current.props.onSelect(current.props.options[0]);
+  assert.match(current.props.title, /^000006\/12/);
+  assert.equal(current.props.options[0].title, "Back to stages");
+
+  flow.selectAction("browse.sessions");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(current.props.title, "Sessions");
+  assert.equal(current.props.options[0].category, "Current");
+  assert.match(current.props.options[0].title, /000006 12\/01.*Testing modal/);
+  current.props.onSelect(current.props.options.find((option) => option.value.session.state === "closed"));
+  assert.equal(current.props.title, "000006 01/01");
+  assert.equal(current.props.options.some((option) => option.title.includes("internal-closed") && option.disabled), true);
+  assert.deepEqual(appended, []);
+});
+
+test("prompt insertion is explicit, never submits, and has a safe fallback", () => {
+  const calls = [];
+  const host = { ui: { prompt: { append: (command) => calls.push(command) } } };
+  assert.deepEqual(insertPromptCommand(host, "/wc resume 000004 07"), { ok: true, command: "/wc resume 000004 07", submitted: false });
+  assert.deepEqual(calls, ["/wc resume 000004 07"]);
+  assert.equal(insertPromptCommand({}, "/wc stage finish 000004 02").error.code, "PROMPT_INSERT_UNAVAILABLE");
+});
+
+test("modal command actions only prepare and append visible prompt text", async () => {
+  const root = makeRoot();
+  const appended = [];
+  try {
+    const controller = createWorkContextModalController({
+      projectRoot: root,
+      read: async () => ({ ok: true, data: { workspaces: [{ id: "000004", title: "Demo", status: "in_progress", stages: [{ id: "02", title: "Build" }], sessions: [] }], currentWorkspace: "000004" } }),
+      onCommand: (command) => appended.push(command),
+      pollMs: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.handleKey({ key: "r" });
+    assert.deepEqual(appended, ["/wc resume 000004 02"]);
+    assert.equal(fs.existsSync(path.join(root, ".work-context")), false);
+    controller.dispose();
+  } finally { removeRoot(root); }
 });

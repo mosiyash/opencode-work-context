@@ -25,6 +25,7 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `stage rename [<workspace>] [<stage>] "title"` -> `work_context_rename_stage`
 - `stage update [<workspace>] [<stage>] "description"` -> `work_context_update_stage`
 - `stage update-prompt [<workspace>] [<stage>] "prompt"` -> `work_context_update_stage_prompt`
+- `stage update-result [<workspace>] [<stage>] "result"` -> `work_context_update_stage_result`
 - `stage archive [<workspace>] [<stage>]` -> `work_context_archive_stage`
 - `stage handoff [<workspace>] [<stage>]` -> `work_context_handoff_stage`
 - `stage abandon [<workspace>] [<stage>]` -> `work_context_abandon_stage`
@@ -44,6 +45,7 @@ Supported syntax:
 - `stage rename [<workspace>] [<stage>] "title"`
 - `stage update [<workspace>] [<stage>] "description"`
 - `stage update-prompt [<workspace>] [<stage>] "prompt"`
+- `stage update-result [<workspace>] [<stage>] "result"`
 - `stage archive [<workspace>] [<stage>]`
 - `stage handoff [<workspace>] [<stage>]`
 - `stage abandon [<workspace>] [<stage>]`
@@ -54,6 +56,7 @@ Supported syntax:
 - `stage abandon [<workspace>] <stage>`
 - `stage finish [<workspace>] <stage>` automatically reviews the Knowledge Base (`auto` by default)
 - stage lifecycle commands may omit stage, using the current OpenCode session; with one numeric identifier, six digits mean workspace and one or two digits mean stage
+- `stage update-result` replaces an existing result and does not create a result for an unfinished stage
 - `resume` returns an actionable `resume.next_action` and `resume.instruction`; begin or continue the work immediately from that structured context
 - `stage finish` returns downstream unfinished stages whose prompts should be reviewed after new findings
 - `knowledge list|add|update|supersede <workspace> ...`

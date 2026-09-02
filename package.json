@@ -29,6 +29,8 @@
     "opencode-work-context": "bin/opencode-work-context.js"
   },
   "scripts": {
+    "check:language": "node scripts/check-repository-language.js",
+    "prepublishOnly": "npm run check:language",
     "test": "node --test",
     "test:integration": "node --test test/integration/*.test.js",
     "test:tui": "OPENCODE_TUI_SMOKE=1 bun --conditions=browser test test/stages-tui.test.js"
@@ -52,7 +54,7 @@
     "./adapter": "./src/opencode-adapter.js",
     "./plugin": "./plugin/work-context.js",
     "./server": "./plugin/server.js",
-    "./tui": "./plugin/stages-tui.js",
+    "./tui": "./plugin/tui.js",
     "./tools/*": "./tools/*.js"
   }
 }
