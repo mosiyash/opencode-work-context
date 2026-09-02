@@ -199,6 +199,37 @@ If the host `opencode.json` restricts `experimental.primary_tools`, add the
 registered `work_context_*` tool names to that allowlist; the installer does not
 rewrite project-specific agent policy.
 
+## Release
+
+Maintainers publish this package only through
+`.github/workflows/release.yml` and npm Trusted Publishing with GitHub Actions
+OIDC. Do not create npm publish tokens or run `npm publish` locally.
+
+From a clean checkout, run the release checks:
+
+```sh
+npm test
+npm run test:tui
+npm run check:language
+npm pack --dry-run
+git diff --check
+```
+
+Then create and push the release commit and matching tag:
+
+```sh
+npm version patch
+git push origin main
+git push origin v<version>
+```
+
+Use `minor` or `major` instead of `patch` when required. The tag must exactly
+match the version in `package.json`. Pushing the tag runs the complete release
+workflow and publishes through short-lived OIDC credentials with automatic
+provenance. Monitor the GitHub Actions run and verify the version and `latest`
+dist-tag in the npm registry. Never reuse or move a tag that has already been
+pushed or published.
+
 ## License
 
 MIT. Copyright (c) 2026 Nikita Mosiyash.

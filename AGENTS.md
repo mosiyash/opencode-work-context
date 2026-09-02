@@ -24,3 +24,19 @@ a projection by hand.
 
 Before publishing a release, run `npm run check:language` and inspect all
 changed files for accidental non-English content.
+
+## npm Releases
+
+Publish this package only through `.github/workflows/release.yml` using npm
+Trusted Publishing with GitHub Actions OIDC. Never create, store, or request an
+npm publish token, and never run `npm publish` locally. The npm package trusts
+the `release.yml` workflow for the `npm publish` action.
+
+Before a release, run the test suites, language check, package dry run, and
+working-tree checks. Bump the version with `npm version patch`, `minor`, or
+`major` as appropriate, push the release commit to `main`, and then push the
+matching `v<version>` tag. Monitor the GitHub Actions workflow and verify the
+published version and `latest` dist-tag directly in the npm registry.
+
+The Git tag must exactly match the version in `package.json`. Never reuse or
+move a tag that has already been pushed or published.

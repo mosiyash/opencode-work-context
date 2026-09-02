@@ -138,3 +138,13 @@ All public repository artifacts must be English. Russian may be used during deve
 - Sources: ["src/core.js","src/tool-definitions.js","commands/wc.md","plugin/work-context-modal.js","tools/work_context_update_stage_result.js","test/core.test.js","test/integration/plugins.test.js","test/stages-tui.test.js"]
 
 The package now supports WorkContext.updateStageResult and the `work_context_update_stage_result` tool, mapped to `/wc stage update-result [<workspace>] [<stage>] "result"`. It updates only an existing non-empty `## Result` section, preserves stage metadata and status, regenerates projections transactionally, supports contextual workspace/stage resolution, and is idempotent. It rejects empty input with INVALID_ARGUMENT and stages without a result with INVALID_STATE. The TUI action modal can prepare the command. Full `npm test` verification passed 93 tests with 0 failures and 2 skips.
+
+## KC-0012: npm releases use GitHub Trusted Publishing
+
+- Kind: procedure
+- Status: active
+- Created: 2026-09-02T03:42:29.786Z
+- Updated: 2026-09-02T03:42:29.786Z
+- Sources: [".github/workflows/release.yml","AGENTS.md","README.md","package.json","https://registry.npmjs.org/opencode-work-context/0.1.11","https://github.com/mosiyash/opencode-work-context/actions/runs/33587819131"]
+
+Release 0.1.11 was published successfully through .github/workflows/release.yml using npm Trusted Publishing with GitHub Actions OIDC. The workflow runs on matching v* tags, requires the tag to equal package.json version, uses Node 24, npm 11, and Bun 1.4.0, runs the full Node and TUI suites plus the repository language check, and publishes with automatic provenance. Local npm publish and long-lived publish tokens are no longer part of the release process. Future releases should run local release checks, use npm version patch/minor/major, push main, then push the matching tag, monitor GitHub Actions, and verify the registry version and latest dist-tag. Release 0.1.11 is registry latest and its successful workflow run is https://github.com/mosiyash/opencode-work-context/actions/runs/33587819131.
