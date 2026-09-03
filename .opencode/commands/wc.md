@@ -56,9 +56,13 @@ Supported syntax:
 - `stage abandon [<workspace>] <stage>`
 - `stage finish [<workspace>] <stage>` automatically reviews the Knowledge Base (`auto` by default)
 - stage lifecycle commands may omit stage, using the current OpenCode session; with one numeric identifier, six digits mean workspace and one or two digits mean stage
+- explicit workspace and stage positions accept canonical padded IDs or unpadded positive integers (`1..999999` and `1..99`); results and generated commands remain padded
+- zero, signs, decimals, whitespace, overlong values, and other non-digit identifier forms are invalid; a lone unpadded workspace ID is not reinterpreted under the one-identifier rule
 - `stage update-result` replaces an existing result and does not create a result for an unfinished stage
+- `stage add` only creates a planned stage; it never starts, resumes, or binds the current OpenCode session to that stage
+- entering an added stage requires a separate OpenCode session and an explicit `resume <workspace> <stage>` operation; do not invoke `resume` automatically after creation
 - `resume` returns an actionable `resume.next_action` and `resume.instruction`; begin or continue the work immediately from that structured context
-- `stage finish` returns downstream unfinished stages whose prompts should be reviewed after new findings
+- `stage finish` closes only the current stage session and returns downstream unfinished stages for informational prompt review; it never starts or resumes one, and downstream work requires a separate session with an explicit `resume`
 - `knowledge list|add|update|supersede <workspace> ...`
 
 Arguments: $ARGUMENTS

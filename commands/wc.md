@@ -56,17 +56,21 @@ Supported syntax:
 - `stage abandon [<workspace>] <stage>`
 - `stage finish [<workspace>] <stage>` automatically reviews the Knowledge Base (`auto` by default)
 - stage lifecycle commands may omit stage, using the current OpenCode session; with one numeric identifier, six digits mean workspace and one or two digits mean stage
+- explicit workspace and stage positions accept canonical padded IDs or unpadded positive integers (`1..999999` and `1..99`); results and generated commands remain padded
+- zero, signs, decimals, whitespace, overlong values, and other non-digit identifier forms are invalid; a lone unpadded workspace ID is not reinterpreted under the one-identifier rule
 - `stage update-result` replaces an existing result and does not create a result for an unfinished stage
 - `resume` returns `resume.context` with the stage essence, the previous session's result/stopping point, and the current plan; report this concise context to the user before doing any work
 - `resume.context.workspace_knowledge` contains every active durable knowledge entry for the workspace; treat it as established shared context, and do not repeat earlier analysis unless an entry is incomplete, contradicted, or needs verification
 - on every subsequent resume, report the context and wait for explicit user confirmation; do not automatically continue implementation
 - when `resume.next_action` is `await_confirmation`, do not inspect or modify application code until the user confirms
 - `create` enters the new workspace's Planning stage in the current OpenCode session only when that session is not yet in a workspace; otherwise it only creates the workspace and its planning session
-- `stage add` enters the newly created stage and returns its actionable `resume` context when the current OpenCode session is not yet in a workspace; otherwise it only creates the planned stage
+- `stage add` only creates a planned stage; it never starts, resumes, or binds the current OpenCode session to that stage, even when the session is not yet associated with a workspace
+- entering an added stage always requires a separate OpenCode session and an explicit `resume <workspace> <stage>` operation; do not invoke `resume` automatically after creation
 - `resume` returns `resume.next_action` and `resume.instruction`; begin or continue implementation only when the stage prompt is non-empty and, after reviewing it, there are no unanswered questions
 - when `resume.next_action` is `ask_questions`, do not inspect or modify application code and ask the user focused questions needed to make the prompt actionable
 - before `stage finish`, review durable findings: add new knowledge, update changed knowledge, supersede obsolete knowledge, or explicitly use `knowledgeReview=none` when the stage produced no durable findings; use `knowledgeReview=added` after ledger changes
-- `stage finish` always validates the Knowledge Base and returns total and active entry counts plus downstream unfinished stages whose prompts should be reviewed after new findings
+- `stage finish` closes and completes only the current stage session; it never starts, resumes, or binds the same OpenCode session to a downstream stage
+- `stage finish` always validates the Knowledge Base and returns total and active entry counts plus downstream unfinished stages for informational prompt review; do not begin a downstream stage until the user explicitly resumes it in a separate OpenCode session
 - `knowledge list|add|update|supersede <workspace> ...`
 
 Arguments: $ARGUMENTS

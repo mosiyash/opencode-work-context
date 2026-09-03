@@ -12,6 +12,8 @@ export function renderStagesPanel(result) {
   if (!snapshot.workspace) return `work-context stages\n(no workspace for this session)${result.stale ? `\n! stale: ${result.error?.code || "STORAGE_ERROR"}` : ""}`;
 
   const lines = [
+    snapshot.workspace.title,
+    "",
     `Stages · ${snapshot.workspace.status}`,
   ];
   for (const stage of snapshot.stages) {

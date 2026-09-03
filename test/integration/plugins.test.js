@@ -19,7 +19,7 @@ test("new OpenCode session resumes a stage and updates its session title", async
     assert.equal(result.data.ordinal, "02/01");
 
     await hooks["tool.execute.after"]({ tool: "work_context_start_session", sessionID: "oc-resume" });
-    assert.equal(host.title, "999900 02/01\nIntegration workspace");
+    assert.equal(host.title, "Integration stage\n999900 02/01");
 
     const snapshot = readStagesSnapshot({ projectRoot: root, sessionId: "oc-resume" });
     assert.equal(snapshot.data.workspace.id, "999900");
@@ -52,6 +52,48 @@ test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
     assert.equal(result.data.resume.next_action, "start_work");
     assert.equal(result.data.resume.instruction, result.data.prompt);
     assert.equal(result.data.resume.context.workspace_knowledge[0].text, "Preserve the structured tool contract.");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("structured tools accept unpadded IDs and return canonical IDs", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Short tool IDs", { workspace: "000008", sessionId: "planning" });
+    context.finish("000008", "01", "planning", { knowledgeReview: "none" });
+    context.addStage("000008", "Implementation", { prompt: "Implement and verify." });
+    const executeContext = { directory: fixture.root, worktree: fixture.root, sessionID: "oc-short", metadata: async () => {} };
+
+    const resumed = JSON.parse((await tools.work_context_start_session.execute({ workspace: "8", stage: "2" }, executeContext)).output);
+    assert.equal(resumed.ok, true);
+    assert.equal(resumed.data.workspace, "000008");
+    assert.equal(resumed.data.stage, "02");
+
+    const handedOff = JSON.parse((await tools.work_context_handoff_stage.execute({ workspace: "8", stage: "2" }, executeContext)).output);
+    assert.equal(handedOff.ok, true);
+    const archived = JSON.parse((await tools.work_context_archive_stage.execute({ workspace: "8", stage: "2" }, executeContext)).output);
+    assert.deepEqual(archived.data, { workspace: "000008", stage: "02", status: "archived" });
+
+    const listed = JSON.parse((await tools.work_context_workspace_list.execute({ workspace: "8" }, executeContext)).output);
+    assert.equal(listed.data.workspace, "000008");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("structured tools return stable errors for malformed and missing shorthand IDs", async () => {
+  const fixture = createFixture();
+  try {
+    const executeContext = { directory: fixture.root, worktree: fixture.root, sessionID: "oc-invalid", metadata: async () => {} };
+    const malformed = JSON.parse((await tools.work_context_workspace_list.execute({ workspace: " 8" }, executeContext)).output);
+    assert.equal(malformed.ok, false);
+    assert.equal(malformed.error.code, "INVALID_ARGUMENT");
+
+    const missing = JSON.parse((await tools.work_context_workspace_list.execute({ workspace: "8" }, executeContext)).output);
+    assert.equal(missing.ok, false);
+    assert.equal(missing.error.code, "NOT_FOUND");
   } finally {
     fixture.cleanup();
   }
@@ -95,11 +137,11 @@ test("finishing a stage refreshes the OpenCode title with its terminal state", a
     const host = createSessionHost(root, "oc-finish");
     const hooks = await serverPlugin(host);
     await hooks["tool.execute.after"]({ tool: "work_context_start_session", sessionID: "oc-finish" });
-    assert.equal(host.title, "999903 02/01\nFinished workspace");
+    assert.equal(host.title, "Finished stage\n999903 02/01");
 
     context.finish("999903", "02", session.data.session_id, { knowledgeReview: "none" });
     await hooks["tool.execute.after"]({ tool: "work_context_finish_stage", sessionID: "oc-finish" });
-    assert.equal(host.title, "999903 02/01 (closed)\nFinished workspace");
+    assert.equal(host.title, "Finished stage\n999903 02/01 (closed)");
   } finally {
     fixture.cleanup();
   }
@@ -128,7 +170,7 @@ test("create tool does not switch from an existing workspace", async () => {
   }
 });
 
-test("stage add without a workspace does not switch an existing workspace session", async () => {
+test("stage add creates one or several planned stages without switching the current session", async () => {
   const fixture = createFixture();
   try {
     const { context } = fixture;
@@ -140,11 +182,13 @@ test("stage add without a workspace does not switch an existing workspace sessio
       metadata: async () => {},
     };
     const result = JSON.parse((await tools.work_context_add_stage.execute({ title: "New current stage", prompt: "Implement the stage and verify it." }, executeContext)).output);
+    const second = JSON.parse((await tools.work_context_add_stage.execute({ title: "Another planned stage", prompt: "Implement this only after explicit resume." }, executeContext)).output);
 
     assert.equal(result.ok, true);
-    assert.equal(result.data.workspace, "999905");
-    assert.equal(result.data.stage, "02");
+    assert.deepEqual(result.data, { workspace: "999905", stage: "02", status: "planned", session_started: false, resume_required: true });
+    assert.deepEqual(second.data, { workspace: "999905", stage: "03", status: "planned", session_started: false, resume_required: true });
     assert.equal(context.sessionByOpenCodeId("oc-current", "999905", "02"), null);
+    assert.equal(context.sessionByOpenCodeId("oc-current", "999905", "03"), null);
     const snapshot = readStagesSnapshot({ projectRoot: fixture.root, sessionId: "oc-current" });
     assert.equal(snapshot.data.currentStage, "01");
   } finally {
@@ -152,7 +196,7 @@ test("stage add without a workspace does not switch an existing workspace sessio
   }
 });
 
-test("stage add with an explicit workspace enters it when the session is unassociated", async () => {
+test("stage add with an explicit workspace stays creation-only when the session is unassociated", async () => {
   const fixture = createFixture();
   try {
     const { context } = fixture;
@@ -168,12 +212,37 @@ test("stage add with an explicit workspace enters it when the session is unassoc
 
     assert.equal(result.ok, true);
     assert.equal(result.data.stage, "02");
-    assert.equal(result.data.resume.next_action, "start_work");
-    assert.equal(context.sessionByOpenCodeId("oc-unassociated", "999906", "02").state, "active");
+    assert.equal(result.data.session_started, false);
+    assert.equal(result.data.resume_required, true);
+    assert.equal(context.sessionByOpenCodeId("oc-unassociated", "999906", "02"), null);
     const host = createSessionHost(fixture.root, "oc-unassociated");
     const hooks = await serverPlugin(host);
     await hooks["tool.execute.after"]({ tool: "work_context_add_stage", sessionID: "oc-unassociated" });
-    assert.equal(host.title, "999906 02/01\nExplicit stage workspace");
+    assert.equal(host.title, "");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("stage finish reports downstream plans without switching the OpenCode session", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Finish boundary workspace", { workspace: "999908", sessionId: "planning" });
+    context.finish("999908", "01", "planning", { knowledgeReview: "none" });
+    context.addStage("999908", "Current stage", { prompt: "Complete the current stage." });
+    context.addStage("999908", "Downstream stage", { prompt: "Start only after explicit resume." });
+    context.startSession("999908", "02", { sessionId: "internal-current", opencodeSessionId: "oc-current" });
+    const executeContext = { directory: fixture.root, worktree: fixture.root, sessionID: "oc-current", metadata: async () => {} };
+
+    const result = JSON.parse((await tools.work_context_finish_stage.execute({ knowledgeReview: "none" }, executeContext)).output);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.data.state, "closed");
+    assert.equal(result.data.next_stage_started, false);
+    assert.deepEqual(result.data.prompt_review.map(({ stage, status }) => ({ stage, status })), [{ stage: "03", status: "planned" }]);
+    assert.equal(context.sessionByOpenCodeId("oc-current", "999908", "02", null).state, "closed");
+    assert.equal(context.sessionByOpenCodeId("oc-current", "999908", "03", null), null);
   } finally {
     fixture.cleanup();
   }
@@ -224,7 +293,7 @@ test("stage tracker link is preferred over workspace tracker link in the session
     const host = createSessionHost(root, "oc-resume");
     const hooks = await serverPlugin(host);
     await hooks["tool.execute.after"]({ tool: "work_context_start_session", sessionID: "oc-resume" });
-    assert.equal(host.title, "GL#11 | 999901 02/01\nTracked workspace");
+    assert.equal(host.title, "Tracked stage\nGL#11 | 999901 02/01");
   } finally {
     fixture.cleanup();
   }

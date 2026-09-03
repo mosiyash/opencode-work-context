@@ -8,7 +8,10 @@ import { createSignal } from "solid-js";
 import { WorkContext, readStagesSnapshot, readWorkContextSnapshot, renderStagesPanel } from "../src/index.js";
 import tuiModule, { createStagesTuiController, renderStagesElement, sessionIdForSlot } from "../plugin/stages-tui.js";
 import realTuiLoader from "../.opencode/tui-plugins/work-context-stages.js";
-import { appendPromptCommand, buildWorkContextActionCommand, createWorkContextActionFlow, createWorkContextModalController, filterWorkspaces, insertPromptCommand, prepareWorkContextCommand, renderWorkContextModal, WORK_CONTEXT_ACTIONS } from "../plugin/work-context-modal.js";
+import { appendPromptCommand, buildWorkContextActionCommand, createWorkContextActionFlow, createWorkContextModalController, filterWorkspaces, insertPromptCommand, prepareWorkContextCommand, registerWorkContextModal, renderWorkContextModal, WORK_CONTEXT_ACTIONS } from "../plugin/work-context-modal.js";
+import { createStageSwitcherFlow, readStageSwitcherSnapshot, recentStageIds, rememberRecentStage, selectStageSession, startStageSession, switchToStage } from "../plugin/stage-switcher.js";
+import { createWorkspaceSwitcherFlow, selectWorkspaceSession, sortWorkspaceSwitcherEntries, switchToWorkspace } from "../plugin/workspace-switcher.js";
+import { createSessionSwitcherFlow, selectSession, sortSessionSwitcherEntries, switchToSession } from "../plugin/session-switcher.js";
 
 const makeRoot = () => fs.mkdtempSync(path.join("/tmp/opencode", "stages-tui-test-"));
 const removeRoot = (root) => fs.rmSync(root, { recursive: true, force: true });
@@ -141,6 +144,7 @@ test("renderer includes compact status rows and a non-color current marker", () 
   } });
   assert.match(output, /\[ \] 01\. Plan/);
   assert.doesNotMatch(output, /Define scope/);
+  assert.match(output, /^Demo\n\nStages · in_progress/);
   assert.match(output, /Stages · in_progress/);
 });
 
@@ -218,12 +222,12 @@ test("real TUI loader mounts a live storage update without remount", { skip: !tu
   }
 });
 
-test("renderer keeps long stage text for the TUI to wrap without duplicating workspace title", () => {
+test("renderer keeps workspace context separate and lets long titles wrap", () => {
   const output = renderStagesPanel({ ok: true, data: {
     workspace: { id: "000001", title: "A workspace title that is deliberately much too long" },
     stages: [{ id: "01", title: "A stage title that is deliberately much too long", status: "planned", description: "A description that is deliberately much too long for the compact sidebar panel", current: false }],
   } });
-  assert.doesNotMatch(output, /A workspace title/);
+  assert.match(output, /^A workspace title that is deliberately much too long\n\nStages/);
   assert.match(output, /\[ \] 01\. A stage title that is deliberately much too long/);
   assert.doesNotMatch(output, /A description that is deliberately/);
 });
@@ -288,11 +292,15 @@ test("stages use the native sidebar content slot", async () => {
 
 test("stages panel does not claim the whole sidebar height", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
-  const element = renderStagesElement({ ok: true, data: { workspace: { id: "000001", status: "in_progress" }, stages: [] } }, {}, runtime);
+  const element = renderStagesElement({ ok: true, data: { workspace: { id: "000001", title: "Demo workspace", status: "in_progress" }, stages: [] } }, {}, runtime);
   assert.equal(element.type, "box");
   assert.equal(element.props.flexGrow, undefined);
   assert.equal(element.props.minHeight, undefined);
   assert.equal(element.props.maxHeight, undefined);
+  const [workspaceBlock, stagesBlock] = element.props.children();
+  assert.equal(workspaceBlock.props.marginBottom, 1);
+  assert.equal(workspaceBlock.props.children.props.children.props.children, "Demo workspace");
+  assert.equal(stagesBlock.props.children[0].props.children.props.children, "Stages");
 });
 
 test("TUI performs an initial load and refreshes after session.updated with debounce", async () => {
@@ -692,7 +700,7 @@ test("modal prepares canonical commands and normalizes stage identifiers", () =>
   assert.deepEqual(prepareWorkContextCommand("resume", "000004", "7"), { ok: true, command: "/wc resume 000004 07" });
   assert.deepEqual(prepareWorkContextCommand("handoff", "000004", "02"), { ok: true, command: "/wc stage handoff 000004 02" });
   assert.deepEqual(prepareWorkContextCommand("finish", "000004", "02"), { ok: true, command: "/wc stage finish 000004 02" });
-  assert.equal(prepareWorkContextCommand("resume", "4", "2").error.code, "INVALID_ARGUMENT");
+  assert.deepEqual(prepareWorkContextCommand("resume", "4", "2"), { ok: true, command: "/wc resume 000004 02" });
   assert.equal(prepareWorkContextCommand("finish", "000004", "0").error.code, "INVALID_ARGUMENT");
 });
 
@@ -700,6 +708,7 @@ test("action modal builds canonical commands and safely quotes user input", () =
   assert.deepEqual(buildWorkContextActionCommand("create", { value: "New workspace" }), { ok: true, command: "/wc create \"New workspace\"" });
   assert.deepEqual(buildWorkContextActionCommand("stage.add", { workspace: "000004", value: "Build", prompt: "Implement \"carefully\"" }), { ok: true, command: "/wc stage add 000004 \"Build\" \"Implement \\\"carefully\\\"\"" });
   assert.deepEqual(buildWorkContextActionCommand("stage.finish", { workspace: "000004", stage: "2" }), { ok: true, command: "/wc stage finish 000004 02" });
+  assert.deepEqual(buildWorkContextActionCommand("stage.finish", { workspace: "4", stage: "2" }), { ok: true, command: "/wc stage finish 000004 02" });
   assert.deepEqual(buildWorkContextActionCommand("stage.update-result", { workspace: "000004", stage: "2", value: "Translated result" }), { ok: true, command: "/wc stage update-result 000004 02 \"Translated result\"" });
   assert.equal(buildWorkContextActionCommand("stage.rename", { workspace: "000004", stage: "02" }).error.code, "INVALID_ARGUMENT");
 });
@@ -739,6 +748,70 @@ test("action modal uses native dialogs to prepare an add-stage command", async (
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(appended, ["/wc stage add 000004 \"Build UI\" \"Use native dialogs\""]);
   assert.equal(cleared, 1);
+});
+
+test("Work Context command center exposes the stage switcher shortcut", () => {
+  let current;
+  let opened = 0;
+  const api = {
+    ui: {
+      DialogSelect: (props) => ({ type: "select", props }),
+      dialog: { replace: (render) => { current = render(); }, setSize: () => {} },
+    },
+  };
+  const flow = createWorkContextActionFlow(api, {
+    openStage: () => { opened += 1; },
+  });
+  flow.open();
+  const switchStage = current.props.options.find((option) => option.value === "switch.stage");
+  assert.equal(switchStage.category, "Navigation");
+  assert.equal(switchStage.footer, "ctrl+alt+w s");
+  current.props.onSelect(switchStage);
+  assert.equal(opened, 1);
+});
+
+test("session switcher ranks the current session, deduplicates native IDs, and keeps missing IDs unavailable", () => {
+  const entries = [
+    { workspace: { id: "000002", title: "Second" }, session: { opencode_session_id: "oc-duplicate", state: "handed_off", ordinal: 2 } },
+    { workspace: { id: "000001", title: "First" }, session: { opencode_session_id: "oc-duplicate", state: "active", ordinal: 1 } },
+    { workspace: { id: "000001", title: "First" }, session: { opencode_session_id: "oc-current", state: "closed", ordinal: 1 } },
+    { workspace: { id: "000001", title: "First" }, session: { session_id: "internal-only", state: "active", ordinal: 3 } },
+  ];
+  const sorted = sortSessionSwitcherEntries(entries, "oc-current");
+  assert.deepEqual(sorted.map(({ session }) => session.opencode_session_id), ["oc-current", "oc-duplicate"]);
+  assert.equal(selectSession(entries, "oc-current").opencode_session_id, "oc-current");
+});
+
+test("session switcher navigates read-only and reports host failures", () => {
+  const navigated = [];
+  const api = { route: { navigate: (...args) => navigated.push(args) }, ui: { dialog: { clear: () => {} } } };
+  assert.deepEqual(switchToSession(api, { session_id: "internal", opencode_session_id: "oc-session" }), { ok: true, data: { opencode_session_id: "oc-session", created: false, navigated: true } });
+  assert.deepEqual(navigated, [["session", { sessionID: "oc-session" }]]);
+  assert.equal(switchToSession(api, { session_id: "internal" }).error.code, "SESSION_OPENCODE_ID_MISSING");
+  assert.equal(switchToSession({}, { opencode_session_id: "oc-session" }).error.code, "SESSION_SWITCH_UNAVAILABLE");
+});
+
+test("session switcher exposes current and historical sessions as searchable options", async () => {
+  let current;
+  const toasts = [];
+  const api = {
+    route: { current: { params: { sessionID: "oc-current" } }, navigate: () => {} },
+    ui: {
+      DialogSelect: (props) => ({ type: "select", props }),
+      dialog: { replace: (render) => { current = render(); }, clear: () => {}, setSize: () => {} },
+      toast: (toast) => toasts.push(toast),
+    },
+  };
+  const flow = createSessionSwitcherFlow(api, { read: async () => ({ ok: true, data: { workspaces: [{ id: "000008", title: "Sessions", sessions: [
+    { stage: "02", ordinal: 1, session_id: "internal-current", opencode_session_id: "oc-current", state: "active", summary: "Current" },
+    { stage: "01", ordinal: 2, session_id: "internal-closed", state: "closed", summary: "Historical" },
+  ] }] } }) });
+  await flow.open();
+  assert.equal(current.props.title, "Switch session");
+  assert.equal(current.props.options[0].category, "Current");
+  assert.equal(current.props.options[1].disabled, true);
+  current.props.onSelect(current.props.options[0]);
+  assert.deepEqual(toasts.at(-1), { message: "Session opened", variant: "success" });
 });
 
 test("browse workspaces opens a searchable read-only stage list before actions", async () => {
@@ -829,6 +902,232 @@ test("prompt insertion is explicit, never submits, and has a safe fallback", () 
   assert.deepEqual(insertPromptCommand(host, "/wc resume 000004 07"), { ok: true, command: "/wc resume 000004 07", submitted: false });
   assert.deepEqual(calls, ["/wc resume 000004 07"]);
   assert.equal(insertPromptCommand({}, "/wc stage finish 000004 02").error.code, "PROMPT_INSERT_UNAVAILABLE");
+});
+
+test("stage switcher opens the active existing OpenCode session without starting another", async () => {
+  const navigated = [];
+  let starts = 0;
+  const api = {
+    route: { navigate: (...args) => navigated.push(args) },
+    ui: { dialog: { clear: () => {} } },
+  };
+  const stage = {
+    id: "04",
+    title: "Switcher",
+    status: "in_progress",
+    sessions: [
+      { state: "handed_off", ordinal: 2, opencode_session_id: "oc-newer", updated_at: "2026-09-02T12:00:00.000Z" },
+      { state: "active", ordinal: 1, opencode_session_id: "oc-active", updated_at: "2026-09-01T12:00:00.000Z" },
+    ],
+  };
+  assert.equal(selectStageSession(stage.sessions).opencode_session_id, "oc-active");
+  const result = await switchToStage(api, stage, { workspace: "000008", start: async () => { starts += 1; } });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.created, false);
+  assert.equal(starts, 0);
+  assert.deepEqual(navigated, [["session", { sessionID: "oc-active" }]]);
+});
+
+test("stage switcher exposes successful navigation history in a Recent section", async () => {
+  let current;
+  const navigated = [];
+  const api = {
+    route: { navigate: (...args) => navigated.push(args) },
+    ui: {
+      DialogSelect: (props) => ({ type: "select", props }),
+      dialog: { replace: (render) => { current = render(); }, clear: () => {}, setSize: () => {} },
+    },
+  };
+  const stage = (id, title, isCurrent = false) => ({
+    id, title, status: "in_progress", current: isCurrent, blocked: false, blockers: [], sessions: [{ opencode_session_id: `oc-${id}` }],
+  });
+  const flow = createStageSwitcherFlow(api, {
+    read: async () => ({ ok: true, data: {
+      workspace: { id: "000008", title: "Recent stages", status: "in_progress" },
+      currentStage: "01",
+      stages: [stage("01", "Current", true), stage("02", "Earlier"), stage("03", "Another")],
+    } }),
+  });
+
+  await flow.open();
+  const target = current.props.options.find((option) => option.value.id === "02" && option.category !== "Recent");
+  current.props.onSelect(target);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(recentStageIds(api, "000008"), ["01", "02"]);
+
+  await flow.open();
+  assert.equal(current.props.options[0].category, "Recent");
+  assert.equal(current.props.options[0].value.id, "02");
+  assert.equal(current.props.options[0].title.includes("02. Earlier"), true);
+  assert.deepEqual(navigated, [["session", { sessionID: "oc-02" }]]);
+});
+
+test("stage switcher restores recent stages from project-local TUI state", () => {
+  const root = makeRoot();
+  try {
+    const firstApi = { state: { path: { worktree: root } } };
+    rememberRecentStage(firstApi, "000008", "02");
+    rememberRecentStage(firstApi, "000008", "01");
+    assert.deepEqual(recentStageIds(firstApi, "000008"), ["01", "02"]);
+
+    const secondApi = { state: { path: { worktree: root } } };
+    assert.deepEqual(recentStageIds(secondApi, "000008"), ["01", "02"]);
+    assert.equal(fs.existsSync(path.join(root, ".work-context", "local", "tui-state.json")), true);
+  } finally { removeRoot(root); }
+});
+
+test("Ctrl+Alt+W acts as a Work Context leader prefix", () => {
+  let layer;
+  const registration = registerWorkContextModal({ keymap: { registerLayer: (value) => { layer = value; return () => {}; } } });
+  assert.equal(registration.supported, true);
+  assert.deepEqual(layer.bindings, [
+    { key: "<leader>w", cmd: "work_context.open", desc: "Open Work Context" },
+    { key: "<leader>s", cmd: "work_context.stage", desc: "Switch Work Context Stage" },
+    { key: "<leader>o", cmd: "work_context.workspace", desc: "Switch Work Context Workspace" },
+    { key: "<leader>e", cmd: "work_context.session", desc: "Switch Work Context Session" },
+  ]);
+  assert.deepEqual(layer.commands.map((command) => command.name), ["work_context.open", "work_context.stage", "work_context.workspace", "work_context.session", "work_context.actions"]);
+});
+
+test("workspace switcher selects the best existing session and keeps current workspaces first", () => {
+  const sessions = [
+    { state: "closed", ordinal: 9, opencode_session_id: "oc-closed" },
+    { state: "handed_off", ordinal: 1, opencode_session_id: "oc-old", updated_at: "2026-09-01T12:00:00.000Z" },
+    { state: "active", ordinal: 1, opencode_session_id: "oc-active", updated_at: "2026-09-01T12:00:00.000Z" },
+  ];
+  assert.equal(selectWorkspaceSession(sessions).opencode_session_id, "oc-active");
+  assert.deepEqual(sortWorkspaceSwitcherEntries([
+    { id: "000002", status: "planned" }, { id: "000001", status: "in_progress" },
+  ], "000002").map((workspace) => workspace.id), ["000002", "000001"]);
+});
+
+test("workspace switcher navigates existing sessions without mutating context", () => {
+  const navigated = [];
+  const api = { route: { navigate: (...args) => navigated.push(args) }, ui: { dialog: { clear: () => {} } } };
+  const result = switchToWorkspace(api, { id: "000008", sessions: [{ state: "closed", opencode_session_id: "oc-closed" }] });
+  assert.deepEqual(result, { ok: true, data: { opencode_session_id: "oc-closed", created: false } });
+  assert.deepEqual(navigated, [["session", { sessionID: "oc-closed" }]]);
+});
+
+test("workspace switcher disables workspaces without OpenCode sessions", async () => {
+  let current;
+  const toasts = [];
+  const api = {
+    route: { current: { params: { sessionID: "oc-current" } } },
+    ui: {
+      DialogSelect: (props) => ({ type: "select", props }),
+      dialog: { replace: (render) => { current = render(); }, setSize: () => {} },
+      toast: (toast) => toasts.push(toast),
+    },
+  };
+  const flow = createWorkspaceSwitcherFlow(api, { read: async () => ({ ok: true, data: { currentWorkspace: "000001", workspaces: [
+    { id: "000001", title: "Current", status: "in_progress", sessions: [{ state: "active", opencode_session_id: "oc-current" }] },
+    { id: "000002", title: "Offline", status: "completed", sessions: [] },
+  ] } }) });
+  await flow.open();
+  assert.equal(current.props.title, "Switch workspace");
+  assert.equal(current.props.options[1].disabled, true);
+  current.props.onSelect(current.props.options[1]);
+  assert.deepEqual(toasts.at(-1), { message: "WORKSPACE_SESSION_UNAVAILABLE: This workspace has no OpenCode-backed session to open", variant: "error" });
+});
+
+test("stage switcher snapshot is scoped to the current workspace and includes archived stages", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Switcher workspace", { workspace: "999970", sessionId: "wc-current", opencodeSessionId: "oc-current" });
+    context.addStage("999970", "Archived work");
+    context.archiveStage("999970", "02");
+    const result = readStageSwitcherSnapshot({ projectRoot: root, sessionId: "oc-current" });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.data.workspace, { id: "999970", title: "Switcher workspace", status: "in_progress" });
+    assert.equal(result.data.currentStage, "01");
+    assert.equal(result.data.stages.find((stage) => stage.id === "02").status, "archived");
+  } finally { removeRoot(root); }
+});
+
+test("stage switcher starts and opens a new session only when none is available", async () => {
+  let current;
+  const navigated = [];
+  const starts = [];
+  const toasts = [];
+  const api = {
+    state: { path: { worktree: "/tmp/project" } },
+    route: { current: { name: "session", params: { sessionID: "oc-current" } }, navigate: (...args) => navigated.push(args) },
+    ui: {
+      DialogSelect: (props) => ({ type: "select", props }),
+      dialog: { replace: (render) => { current = render(); }, clear: () => {}, setSize: () => {} },
+      toast: (toast) => toasts.push(toast),
+    },
+  };
+  const flow = createStageSwitcherFlow(api, {
+    read: async () => ({ ok: true, data: {
+      workspace: { id: "000008", title: "Session switching", status: "in_progress" },
+      currentStage: "04",
+      stages: [{ id: "05", title: "Verify", status: "planned", blocked: false, blockers: [], sessions: [] }],
+    } }),
+    start: async (_api, input) => {
+      starts.push(input);
+      return { ok: true, data: { session_id: "wc-new", opencode_session_id: "oc-new", created: true } };
+    },
+  });
+  await flow.open();
+  assert.equal(current.props.title, "Switch stage · 000008  Session switching");
+  assert.match(current.props.options[0].description, /new session/);
+  current.props.onSelect(current.props.options[0]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(starts, [{ workspace: "000008", stage: "05", title: "Verify" }]);
+  assert.deepEqual(navigated, [["session", { sessionID: "oc-new" }]]);
+  assert.deepEqual(toasts.at(-1), { message: "Stage session created", variant: "success" });
+});
+
+test("new stage sessions open separately and execute the public wc resume command", async () => {
+  const calls = [];
+  const context = {
+    sessionByOpenCodeId: (...args) => {
+      calls.push(["lookup", ...args]);
+      return { workspace: "000008", stage: "05", session_id: "wc-new", ordinal: 1, state: "active" };
+    },
+  };
+  const api = {
+    state: { path: { worktree: "/tmp/project" } },
+    route: { current: { name: "session", params: { sessionID: "oc-current" } }, navigate: (...args) => calls.push(["navigate", ...args]) },
+    ui: { dialog: { clear: () => calls.push(["clear"]) } },
+    client: { session: {
+      create: async (...args) => { calls.push(["create", ...args]); return { data: { id: "oc-new" } }; },
+      command: async (...args) => calls.push(["command", ...args]),
+      delete: async (...args) => calls.push(["delete", ...args]),
+    } },
+  };
+  const result = await startStageSession(api, { workspace: "000008", stage: "05", title: "Verify" }, {
+    readContext: (...args) => { calls.push(["context", ...args]); return context; },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.opencode_session_id, "oc-new");
+  assert.equal(calls[0][0], "create");
+  assert.deepEqual(calls.find((call) => call[0] === "navigate").slice(1), ["session", { sessionID: "oc-new" }]);
+  assert.deepEqual(calls.find((call) => call[0] === "command").slice(1), [{
+    sessionID: "oc-new", directory: "/tmp/project", command: "wc", arguments: "resume 000008 05",
+  }, { throwOnError: true }]);
+  assert.equal(calls.some((call) => call[0] === "delete"), false);
+});
+
+test("failed navigation removes the unbound OpenCode session", async () => {
+  const deleted = [];
+  const api = {
+    state: { path: { worktree: "/tmp/project" } },
+    route: { current: { name: "session", params: { sessionID: "oc-current" } }, navigate: () => { throw new Error("Cannot navigate"); } },
+    ui: { dialog: { clear: () => {} } },
+    client: { session: {
+      create: async () => ({ data: { id: "oc-orphan" } }),
+      command: async () => {},
+      delete: async (input) => deleted.push(input),
+    } },
+  };
+  const result = await startStageSession(api, { workspace: "000008", stage: "05", title: "Blocked" });
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "SESSION_SWITCH_ERROR");
+  assert.deepEqual(deleted, [{ sessionID: "oc-orphan", directory: "/tmp/project" }]);
 });
 
 test("modal command actions only prepare and append visible prompt text", async () => {

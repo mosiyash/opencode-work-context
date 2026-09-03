@@ -72,14 +72,22 @@ panel. No error path writes to storage.
 
 The current server plugin's title update remains independent of the panel. A
 missing TUI API must not prevent tool registration or session-title updates.
+The OpenCode session title uses the stage title as its first, descriptive line
+and `<workspace> <stage>/<session ordinal>` as its second, identifying line.
+An optional issue reference prefixes the identifying line, and inactive session
+state follows it. OpenCode uses this same title in the sidebar header and its
+session picker.
 
 ## Layout and interaction
 
-The panel displays:
+The panel displays the workspace title as a separate context block before the
+stage list:
 
 ```text
-<workspace id>  <workspace title>
-<stage id>  <status>  <stage title>
+<workspace title>
+
+Stages · <workspace status>
+<status marker> <stage id>. <stage title>
 ...
 ```
 

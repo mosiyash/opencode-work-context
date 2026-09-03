@@ -12,6 +12,6 @@ export function titleFor(context, workspace, stage, sessionId, knownSession = nu
   if (!current) return null;
   const meta = context.storage.readWorkspace(workspace).data;
   const stageMeta = context.storage.readStage(workspace, stage).data;
-  return renderTitle({ workspace, workspaceTitle: meta.title, stage, ordinal: current.ordinal, state: current.state, trackerLinks: stageMeta.tracker_links?.length ? stageMeta.tracker_links : meta.tracker_links, issuePrefix: context.storage.config.title?.issue_prefix || "short" });
+  return renderTitle({ workspace, stageTitle: stageMeta.title, stage, ordinal: current.ordinal, state: current.state, trackerLinks: stageMeta.tracker_links?.length ? stageMeta.tracker_links : meta.tracker_links, issuePrefix: context.storage.config.title?.issue_prefix || "short" });
 }
 export const packageRoot = () => path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

@@ -14,6 +14,12 @@ task and its progress at a glance.
 > The sidebar is an optional read-only TUI panel. The core workflow works
 > through `/wc` commands and OpenCode tools without it.
 
+Work-context session titles put the stage title first so OpenCode's session
+picker remains easy to scan. The second line carries the workspace and stage
+IDs, session ordinal, optional issue reference, and inactive state. In the
+optional sidebar, the workspace title is shown separately above the stages
+panel.
+
 ## How It Works
 
 ```text
@@ -48,6 +54,12 @@ Then create a task and its first stage in OpenCode:
 /wc resume 000001 02
 ```
 
+`stage add` only creates a `planned` stage. It never starts that stage or binds
+the current OpenCode session to it. Open a separate OpenCode session and use
+`/wc resume <workspace> <stage>` explicitly for every transition into an added
+stage. Multiple sessions may work on the same non-terminal stage through
+explicit resume and handoff operations.
+
 When you return later, continue from the active stage. A stage must have a
 non-empty prompt before implementation begins; if the prompt is missing or
 ambiguous, `/wc resume` instructs the agent to ask focused questions first.
@@ -68,15 +80,24 @@ Useful commands:
 /wc stage finish 000001 02
 ```
 
-Workspace IDs are exactly six digits. Stage IDs are one or two digits and are
-normalized to two digits by the command contract. Canonical examples are:
+Workspace and stage IDs accept their canonical padded form or an unpadded
+positive integer. Workspace IDs use `1..999999`; stage IDs use `1..99`.
+Results, storage, logs, UI, and generated commands always use six-digit
+workspace IDs and two-digit stage IDs, so these pairs are equivalent:
 
 ```text
 /wc workspace list 000004
+/wc workspace list 4
 /wc resume 000004 02
+/wc resume 4 2
 /wc stage handoff 000004 02
-/wc stage finish 000004 02
+/wc stage finish 4 2
 ```
+
+Zero, signs, decimals, surrounding whitespace, overlong values, and other
+non-digit forms are invalid. A single identifier keeps the command grammar's
+existing disambiguation rule: six digits mean workspace; one or two digits mean
+stage. Use explicit workspace and stage positions for unpadded workspace IDs.
 
 ## Install
 
@@ -138,7 +159,7 @@ Generated files:
 - `<workspace>/KNOWLEDGE.md` is the canonical durable knowledge ledger and is
   created on the first explicit knowledge operation.
 
-The optional read-only stages panel and modal are a separate TUI plugin. `init` installs a
+The optional stages panel, action modal, and stage switcher are a separate TUI plugin. `init` installs a
 project-local loader outside OpenCode's server-plugin autoscan at
 `.opencode/tui-plugins/work-context-stages.js` and enables it in `.opencode/tui.json`:
 
@@ -154,21 +175,32 @@ Enable that loader explicitly in `.opencode/tui.json`:
 
 The package keeps the existing `opencode-work-context/plugin` server export and
 also exposes the explicit server entry as `opencode-work-context/server`.
-The combined read-only panel and modal are exposed only as
-`opencode-work-context/tui`. Both TUI adapters read canonical storage via
-`WorkContext.openExisting`; they do not create `.work-context`, call lifecycle
-tools, or modify Markdown/JSONL projections. Hosts without the TUI plugin API
-continue to load the server plugin and its tools normally.
+The combined TUI adapters are exposed only as `opencode-work-context/tui`. They
+read canonical storage through the package core and never edit Markdown or
+JSONL projections directly. Hosts without the TUI plugin API continue to load
+the server plugin and its tools normally.
 
-The modal is opened with `Ctrl+Alt+W` when the host supports the public TUI
-keymap and dialog APIs. Its `l`, `r`, `h`, and `f` actions only prepare visible
-`/wc` commands. They never submit, invoke tools, dispatch commands, invoke an
-LLM, or mutate storage. Prompt insertion is best effort: a host-provided public
-append bridge may insert the command, otherwise the modal shows the exact
-command and `PROMPT_INSERT_UNAVAILABLE` for manual submission. The installed
-`@opencode-ai/plugin` 1.18.21 declarations expose `TuiPromptRef/set`, not a
-confirmed `prompt.append` API, so runtime support must be verified rather than
-assumed.
+`Ctrl+Alt+W` runs `work_context.open` and opens a searchable stage switcher for
+the current workspace. Selecting a stage opens its active OpenCode-backed
+session, or otherwise its most recently updated OpenCode-backed session. If the
+stage has no available session, the switcher creates a separate OpenCode
+session, opens it, and executes the public `wc resume <workspace> <stage>`
+command in that destination session. The command invokes the canonical
+`work_context_start_session` flow and gives the destination agent its resume
+context. It never rebinds, closes, or submits work in the session being left.
+Completed, cancelled, archived, or dependency-blocked stages can open an
+existing session but cannot create a new one. Cancelling the selector changes
+nothing. A failed canonical start removes the newly created OpenCode session
+when the host supports deletion; a navigation failure leaves the new linked
+session available for a later switch.
+
+The command palette still exposes `work_context.actions` for the broader action
+modal. Its command actions only prepare visible `/wc` commands and never submit
+or invoke an LLM. The switcher uses OpenCode's public structured session-command
+endpoint rather than inserting `/wc resume` text into either prompt.
+The shortcut is registered with the public keymap layer. If another plugin or
+terminal reserves `Ctrl+Alt+W`, remove or change the conflicting binding, or
+disable this TUI loader; the package does not use an internal keymap fallback.
 
 Tools are registered by the installed server export and are not copied into the
 project. Core and storage remain in the installed package; projects should not
@@ -189,6 +221,10 @@ Every stage start/resume includes all active entries in
 workspace-wide context and avoid repeating earlier analysis unless an entry is
 incomplete, contradicted, or requires verification. Superseded entries and full
 stage results are not injected into later stages.
+Finishing a stage closes its current session and may report downstream stages
+whose prompts need review, but it never starts or resumes one of them. Any
+downstream work begins only in a separate OpenCode session through an explicit
+`/wc resume <workspace> <stage>` operation.
 Finish a workspace explicitly with `/wc workspace finish <workspace>`; it is
 accepted only after every stage is `completed`. Use `/wc workspace list <workspace>`
 to list stages with their descriptions. Workspace titles can be changed with

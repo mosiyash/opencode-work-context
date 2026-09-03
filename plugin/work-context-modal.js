@@ -1,11 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readWorkContextSnapshot } from "../src/work-context-snapshot.js";
+import { normalizeStageId, normalizeWorkspaceId } from "../src/identifiers.js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createSignal } from "solid-js";
+import { openStageSwitcher } from "./stage-switcher.js";
+import { openWorkspaceSwitcher } from "./workspace-switcher.js";
+import { openSessionSwitcher } from "./session-switcher.js";
 
 const COMMAND_NAME = "work_context.open";
-const SHORTCUT = "ctrl+alt+w";
+const ACTIONS_COMMAND_NAME = "work_context.actions";
+const SHORTCUT = "<leader>w";
+const STAGE_SHORTCUT = "<leader>s";
+const WORKSPACE_SHORTCUT = "<leader>o";
+const SESSION_SHORTCUT = "<leader>e";
 const DEBOUNCE_MS = 150;
 const POLL_MS = 1000;
 const MARKERS = { planned: "[ ]", in_progress: "[•]", completed: "[✓]", cancelled: "[!]" };
@@ -14,6 +22,9 @@ const activeTuiInstances = new WeakMap();
 
 export const WORK_CONTEXT_ACTIONS = [
   { value: "help", title: "Help", description: "Show work-context command help", category: "General" },
+  { value: "switch.stage", title: "Switch stage", description: "Open a stage session in the current workspace", footer: "ctrl+alt+w s", category: "Navigation" },
+  { value: "switch.workspace", title: "Switch workspace", description: "Open a workspace session", footer: "ctrl+alt+w o", category: "Navigation" },
+  { value: "switch.session", title: "Switch session", description: "Open an active or historical work session", footer: "ctrl+alt+w e", category: "Navigation" },
   { value: "list", title: "Browse workspaces", description: "Search workspaces and their stages", category: "General" },
   { value: "browse.stages", title: "Browse stages", description: "Search stages across every workspace", category: "General" },
   { value: "browse.sessions", title: "Browse sessions", description: "Search active and historical work sessions", category: "General" },
@@ -43,17 +54,19 @@ const closeDialog = (api) => api?.ui?.dialog?.clear?.();
 const textOf = (value) => String(value || "").toLocaleLowerCase();
 const matches = (value, query) => !query || textOf(value).includes(textOf(query));
 
-const validWorkspace = (workspace) => typeof workspace === "string" && /^\d{6}$/.test(workspace);
-const validStage = (stage) => typeof stage === "string" && /^\d{1,2}$/.test(stage) && Number(stage) > 0;
+const normalizedId = (normalize, value) => {
+  try { return normalize(value); } catch { return null; }
+};
 
 /** Prepare a canonical command without parsing or executing it. */
 export const prepareWorkContextCommand = (action, workspace, stage) => {
-  if (!validWorkspace(workspace)) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Workspace must be six digits" } };
+  const normalizedWorkspace = normalizedId(normalizeWorkspaceId, workspace);
+  if (!normalizedWorkspace) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Invalid workspace ID" } };
   if (!Object.hasOwn(COMMANDS, action)) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Unsupported work-context command" } };
-  if (action === "list") return { ok: true, command: `/wc workspace list ${workspace}` };
-  if (!validStage(stage)) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Stage must be one or two digits" } };
-  const normalizedStage = stage.padStart(2, "0");
-  return { ok: true, command: `/wc ${COMMANDS[action]} ${workspace} ${normalizedStage}` };
+  if (action === "list") return { ok: true, command: `/wc workspace list ${normalizedWorkspace}` };
+  const normalizedStage = normalizedId(normalizeStageId, stage);
+  if (!normalizedStage) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Invalid stage ID" } };
+  return { ok: true, command: `/wc ${COMMANDS[action]} ${normalizedWorkspace} ${normalizedStage}` };
 };
 
 /** Use only a host-provided prompt append bridge; never submit the prompt. */
@@ -277,31 +290,32 @@ export const buildWorkContextActionCommand = (action, { workspace, stage, value,
   if (action === "session.rename") return value?.trim()
     ? { ok: true, command: `/wc session rename ${quoteWorkContextArgument(value.trim())}` }
     : { ok: false, error: { code: "INVALID_ARGUMENT", message: "Summary is required" } };
-  if (!validWorkspace(workspace)) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Workspace must be six digits" } };
-  if (action === "workspace.list") return { ok: true, command: `/wc workspace list ${workspace}` };
-  if (action === "workspace.finish") return { ok: true, command: `/wc workspace finish ${workspace}` };
+  const normalizedWorkspace = normalizedId(normalizeWorkspaceId, workspace);
+  if (!normalizedWorkspace) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Invalid workspace ID" } };
+  if (action === "workspace.list") return { ok: true, command: `/wc workspace list ${normalizedWorkspace}` };
+  if (action === "workspace.finish") return { ok: true, command: `/wc workspace finish ${normalizedWorkspace}` };
   if (action === "workspace.rename") return value?.trim()
-    ? { ok: true, command: `/wc workspace rename ${workspace} ${quoteWorkContextArgument(value.trim())}` }
+    ? { ok: true, command: `/wc workspace rename ${normalizedWorkspace} ${quoteWorkContextArgument(value.trim())}` }
     : { ok: false, error: { code: "INVALID_ARGUMENT", message: "Title is required" } };
   if (action === "stage.add") {
     if (!value?.trim()) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Title is required" } };
-    return { ok: true, command: `/wc stage add ${workspace} ${quoteWorkContextArgument(value.trim())}${prompt?.trim() ? ` ${quoteWorkContextArgument(prompt.trim())}` : ""}` };
+    return { ok: true, command: `/wc stage add ${normalizedWorkspace} ${quoteWorkContextArgument(value.trim())}${prompt?.trim() ? ` ${quoteWorkContextArgument(prompt.trim())}` : ""}` };
   }
-  if (!validStage(stage)) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Stage must be one or two digits" } };
-  const normalizedStage = stage.padStart(2, "0");
+  const normalizedStage = normalizedId(normalizeStageId, stage);
+  if (!normalizedStage) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Invalid stage ID" } };
   const commandName = action.replace(".", " ");
-  if (["resume", "stage.archive", "stage.handoff", "stage.abandon", "stage.finish"].includes(action)) return { ok: true, command: `/wc ${commandName} ${workspace} ${normalizedStage}` };
+  if (["resume", "stage.archive", "stage.handoff", "stage.abandon", "stage.finish"].includes(action)) return { ok: true, command: `/wc ${commandName} ${normalizedWorkspace} ${normalizedStage}` };
   const inputCommands = { "stage.rename": "title", "stage.update": "description", "stage.update-prompt": "prompt", "stage.update-result": "result" };
   if (Object.hasOwn(inputCommands, action)) return value?.trim()
-    ? { ok: true, command: `/wc ${commandName} ${workspace} ${normalizedStage} ${quoteWorkContextArgument(value.trim())}` }
+    ? { ok: true, command: `/wc ${commandName} ${normalizedWorkspace} ${normalizedStage} ${quoteWorkContextArgument(value.trim())}` }
     : { ok: false, error: { code: "INVALID_ARGUMENT", message: `${inputCommands[action][0].toUpperCase()}${inputCommands[action].slice(1)} is required` } };
   return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Unsupported work-context action" } };
 };
 
-export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read = readWorkContextSnapshot } = {}) => {
+export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read = readWorkContextSnapshot, openStage = openStageSwitcher } = {}) => {
   const stack = api?.ui?.dialog;
   const toast = (message, variant = "warning") => api?.ui?.toast?.({ message, variant });
-  const showSelect = (title, options, onSelect) => stack.replace(() => api.ui.DialogSelect({ title, placeholder: "Search", options, onSelect }));
+  const showSelect = (title, options, onSelect, props = {}) => stack.replace(() => api.ui.DialogSelect({ title, placeholder: "Search", options, onSelect, ...props }));
   const showPrompt = (title, placeholder, onConfirm) => stack.replace(() => api.ui.DialogPrompt({ title, placeholder, onConfirm }));
   const insert = async (prepared) => {
     if (!prepared.ok) { toast(prepared.error.message); return; }
@@ -476,6 +490,9 @@ export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read 
   };
   const selectAction = (action) => {
     if (action === "help") void insert(buildWorkContextActionCommand(action));
+    else if (action === "switch.stage") openStage(api);
+    else if (action === "switch.workspace") openWorkspaceSwitcher(api);
+    else if (action === "switch.session") openSessionSwitcher(api);
     else if (action === "list") void browseWorkspaces();
     else if (action === "browse.stages") void browseStages();
     else if (action === "browse.sessions") void browseSessions();
@@ -525,8 +542,20 @@ export const openCompatibilityDialog = (api, runtime = {}, options = {}) => {
 
 export const registerWorkContextModal = (api, runtime = {}) => {
   if (typeof api?.keymap?.registerLayer !== "function") return { supported: false, dispose: () => {} };
-  const command = { name: COMMAND_NAME, title: "Open Work Context", desc: "Prepare a work-context command", category: "Work Context", namespace: "palette", run: () => openWorkContextActionDialog(api, runtime) };
-  const registration = api.keymap.registerLayer({ commands: [command], bindings: [{ key: SHORTCUT, cmd: COMMAND_NAME, desc: command.title }] });
+  const command = { name: COMMAND_NAME, title: "Open Work Context", desc: "Open work-context navigation and actions", category: "Work Context", namespace: "palette", run: () => openWorkContextActionDialog(api, runtime) };
+  const stageCommand = { name: "work_context.stage", title: "Switch Work Context Stage", desc: "Open a stage session in the current workspace", category: "Work Context", namespace: "palette", run: () => openStageSwitcher(api) };
+  const workspaceCommand = { name: "work_context.workspace", title: "Switch Work Context Workspace", desc: "Open a workspace session", category: "Work Context", namespace: "palette", run: () => openWorkspaceSwitcher(api) };
+  const sessionCommand = { name: "work_context.session", title: "Switch Work Context Session", desc: "Open an active or historical work session", category: "Work Context", namespace: "palette", run: () => openSessionSwitcher(api) };
+  const actions = { name: ACTIONS_COMMAND_NAME, title: "Open Work Context Actions", desc: "Prepare a work-context command", category: "Work Context", namespace: "palette", run: () => openWorkContextActionDialog(api, runtime) };
+  const registration = api.keymap.registerLayer({
+    commands: [command, stageCommand, workspaceCommand, sessionCommand, actions],
+    bindings: [
+      { key: SHORTCUT, cmd: COMMAND_NAME, desc: command.title },
+      { key: STAGE_SHORTCUT, cmd: stageCommand.name, desc: stageCommand.title },
+      { key: WORKSPACE_SHORTCUT, cmd: workspaceCommand.name, desc: workspaceCommand.title },
+      { key: SESSION_SHORTCUT, cmd: sessionCommand.name, desc: sessionCommand.title },
+    ],
+  });
   return { supported: true, dispose: () => disposeRegistration(registration) };
 };
 

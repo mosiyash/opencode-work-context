@@ -1,4 +1,5 @@
 {
   "$schema": "https://opencode.ai/tui.json",
-  "plugin": ["./tui-plugins/work-context-stages.js"]
+  "plugin": ["./tui-plugins/work-context-stages.js"],
+  "keybinds": { "leader": "ctrl+alt+w" }
 }

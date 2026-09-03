@@ -4,6 +4,10 @@
 - Date: 2026-09-01
 - Deciders: OpenCode
 
+ADR-0004 supersedes this decision only for the `work_context.open` command and
+`Ctrl+Alt+W` binding. The read-only overview and explicit action behavior remain
+available through `work_context.actions`.
+
 ## Context
 
 Work Context already has explicit `/wc` commands and structured server tools.

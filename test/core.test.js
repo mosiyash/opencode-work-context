@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { WorkContext } from "../src/index.js";
+import { normalizeStageId, normalizeWorkspaceId, WorkContext } from "../src/index.js";
 import { ERROR_CODES, WorkContextError } from "../src/errors.js";
 import { renderTitle } from "../src/title.js";
 
@@ -56,6 +56,59 @@ test("workspace list includes stage descriptions", () => {
   }
 });
 
+test("unpadded identifiers normalize once and remain canonical in storage and results", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    const created = context.createWorkspace("Short IDs", { workspace: "8", sessionId: "planning" });
+    assert.equal(created.data.workspace, "000008");
+
+    context.finish("8", "1", "planning", { knowledgeReview: "none" });
+    const added = context.addStage("8", "Implementation", { dependsOn: ["1"], prompt: "Implement it." });
+    assert.equal(added.data.workspace, "000008");
+    assert.equal(added.data.stage, "02");
+    assert.deepEqual(context.storage.readStage("000008", "02").data.depends_on, ["01"]);
+
+    const resumed = context.startSession("8", "2", { sessionId: "implementation" });
+    assert.equal(resumed.data.workspace, "000008");
+    assert.equal(resumed.data.stage, "02");
+    assert.equal(context.storage.readEvents().at(-1).workspace, "000008");
+    assert.equal(context.storage.readEvents().at(-1).stage, "02");
+
+    context.handoff("8", "2", "implementation");
+    assert.equal(context.archiveStage("8", "2").data.stage, "02");
+    assert.equal(context.listStages("8").data.workspace, "000008");
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("identifier normalization rejects ambiguous and out-of-range forms", () => {
+  assert.equal(normalizeWorkspaceId("1"), "000001");
+  assert.equal(normalizeWorkspaceId("000001"), "000001");
+  assert.equal(normalizeWorkspaceId("999999"), "999999");
+  assert.equal(normalizeStageId("1"), "01");
+  assert.equal(normalizeStageId("01"), "01");
+  assert.equal(normalizeStageId("99"), "99");
+
+  for (const value of ["0", "000000", "-1", "+1", "1.0", " 1", "1 ", "0000001", "1000000", 1, null, undefined]) {
+    assert.throws(() => normalizeWorkspaceId(value), (error) => error.code === ERROR_CODES.INVALID_ARGUMENT);
+  }
+  for (const value of ["0", "00", "-1", "+1", "1.0", " 1", "1 ", "001", "100", 1, null, undefined]) {
+    assert.throws(() => normalizeStageId(value), (error) => error.code === ERROR_CODES.INVALID_ARGUMENT);
+  }
+});
+
+test("normalized nonexistent identifiers return NOT_FOUND", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    assert.throws(() => context.listStages("9"), (error) => error.code === ERROR_CODES.NOT_FOUND);
+  } finally {
+    removeRoot(root);
+  }
+});
+
 test("workspace finish requires all stages to be completed", () => {
   const root = makeRoot();
   try {
@@ -82,7 +135,7 @@ test("stage prompt is optional but preserved separately from its description", (
     context.handoff("999986", "01", "session-1");
 
     context.addStage("999986", "Without prompt");
-    context.addStage("999986", "With prompt", {
+    const created = context.addStage("999986", "With prompt", {
       goal: "Short stage description",
       prompt: "Inspect the existing implementation, implement the agreed change, and verify it with regression tests.",
     });
@@ -92,6 +145,7 @@ test("stage prompt is optional but preserved separately from its description", (
     assert.equal(stages[2].description, "Short stage description");
     assert.match(stages[2].prompt, /Inspect the existing implementation/);
     assert.match(context.storage.readStage("999986", "03").body, /## Prompt/);
+    assert.deepEqual(created.data, { workspace: "999986", stage: "03", status: "planned", session_started: false, resume_required: true });
   } finally {
     removeRoot(root);
   }
@@ -235,6 +289,9 @@ test("stage finish returns downstream stages for prompt review", () => {
     context.startSession("999982", "02", { sessionId: "session-2" });
     const result = context.finish("999982", "02", "session-2", { knowledgeReview: "none" });
     assert.deepEqual(result.data.prompt_review, [{ stage: "03", title: "Third", description: "Third description", prompt: "Original third plan", status: "planned" }]);
+    assert.equal(result.data.next_stage_started, false);
+    assert.equal(context.sessionById("session-2").state, "closed");
+    assert.equal(context.listStages("999982").data.sessions.some((session) => session.stage === "03"), false);
   } finally {
     removeRoot(root);
   }
@@ -558,13 +615,13 @@ test("title renderer applies tracker prefix and inactive suffix", () => {
   assert.equal(
     renderTitle({
       workspace: "000005",
-      workspaceTitle: "Workspace title",
+      stageTitle: "Stage title",
       stage: "02",
       ordinal: 3,
       state: "closed",
       trackerLinks: [{ project: "group/project", iid: 42 }],
     }),
-    "GL#42 | 000005 02/03 (closed)\nWorkspace title",
+    "Stage title\nGL#42 | 000005 02/03 (closed)",
   );
 });
 

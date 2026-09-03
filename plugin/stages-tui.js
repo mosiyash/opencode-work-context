@@ -31,6 +31,10 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime) => !result
   ]
   : [
     runtime.jsx("box", {
+      marginBottom: 1,
+      children: runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: result.data.workspace.title }) }),
+    }),
+    runtime.jsx("box", {
       flexDirection: "row",
       children: [
         runtime.jsx("text", { children: runtime.jsx("b", { children: "Stages" }) }),

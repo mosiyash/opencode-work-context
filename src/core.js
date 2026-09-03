@@ -6,13 +6,8 @@ import { ERROR_CODES, fail } from "./errors.js";
 import { event, reduceSessions, activeSession, assertActive } from "./sessions.js";
 import { generateProjections, renderSessions } from "./projections.js";
 import { nextKnowledgeId, parseKnowledge, renderKnowledge, validateKnowledgeInput, validateKnowledgeRecords } from "./knowledge.js";
+import { normalizeStageId, normalizeWorkspaceId } from "./identifiers.js";
 
-const id = (value, digits) => {
-  const normalized = String(value);
-  if (!new RegExp(`^\\d{${digits}}$`).test(normalized)) fail(ERROR_CODES.INVALID_ARGUMENT, `Expected ${digits}-digit identifier`);
-  return normalized;
-};
-const stageId = (value) => id(String(value).padStart(2, "0"), 2);
 const actor = (options) => options.actor || "OpenCode";
 const activeKnowledge = (records) => records
   .filter((record) => record.status === "active")
@@ -96,7 +91,7 @@ export class WorkContext {
 
   listStages(workspace) {
     this.storage.assertNoSymlinks();
-    id(workspace, 6);
+    workspace = normalizeWorkspaceId(workspace);
     const dir = path.join(this.storage.workspaceDir(workspace), "stages");
     if (!fs.existsSync(dir)) fail(ERROR_CODES.NOT_FOUND, "Workspace not found");
     const stages = fs.readdirSync(dir).filter((file) => /^\d{2}\.md$/.test(file)).map((file) => {
@@ -121,7 +116,7 @@ export class WorkContext {
   }
 
   finishWorkspace(workspace) {
-    id(workspace, 6);
+    workspace = normalizeWorkspaceId(workspace);
     return this.transact(`workspace-${workspace}`, () => {
       const record = this.storage.readWorkspace(workspace);
       const stages = this.listStages(workspace).data.stages;
@@ -163,8 +158,7 @@ export class WorkContext {
     if (!title?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Title is required");
     const requestedWorkspace = options.workspace;
     return this.transact("workspace-create", () => {
-      const workspace = requestedWorkspace || this.nextWorkspace();
-      id(workspace, 6);
+      const workspace = requestedWorkspace === undefined ? this.nextWorkspace() : normalizeWorkspaceId(requestedWorkspace);
       const now = new Date().toISOString();
       if (fs.existsSync(this.storage.workspaceDir(workspace))) fail(ERROR_CODES.CONFLICT, "Workspace already exists");
       fs.mkdirSync(path.join(this.storage.workspaceDir(workspace), "stages"), { recursive: true });
@@ -202,7 +196,7 @@ export class WorkContext {
   }
 
   renameWorkspace(workspace, title) {
-    id(workspace, 6);
+    workspace = normalizeWorkspaceId(workspace);
     if (!title?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Title is required");
     return this.transact(`workspace-${workspace}`, () => {
       const record = this.storage.readWorkspace(workspace);
@@ -222,8 +216,8 @@ export class WorkContext {
   }
 
   startSession(workspace, stage, options = {}) {
-    id(workspace, 6);
-    stage = stageId(stage);
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
     const sessionId = options.sessionId || randomUUID();
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const stageRecord = this.storage.readStage(workspace, stage);
@@ -285,10 +279,11 @@ export class WorkContext {
   }
 
   addStage(workspace, title, options = {}) {
-    id(workspace, 6);
+    workspace = normalizeWorkspaceId(workspace);
     if (!title?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Title is required");
-    const dependsOn = options.dependsOn || [];
-    if (!Array.isArray(dependsOn) || new Set(dependsOn).size !== dependsOn.length || dependsOn.some((item) => typeof item !== "string" || !/^\d{2}$/.test(item))) fail(ERROR_CODES.INVALID_ARGUMENT, "dependsOn must contain unique two-digit stage IDs");
+    if (!Array.isArray(options.dependsOn || [])) fail(ERROR_CODES.INVALID_ARGUMENT, "dependsOn must contain unique stage IDs");
+    const dependsOn = (options.dependsOn || []).map(normalizeStageId);
+    if (new Set(dependsOn).size !== dependsOn.length) fail(ERROR_CODES.INVALID_ARGUMENT, "dependsOn must contain unique stage IDs");
     return this.transact(`workspace-${workspace}`, () => {
       const stages = this.listStages(workspace).data.stages;
       if (stages.length >= 99) fail(ERROR_CODES.INVALID_STATE, "A workspace cannot contain more than 99 stages");
@@ -300,13 +295,13 @@ export class WorkContext {
       const metadata = { schema: 1, workspace, stage, title: title.trim(), status: "planned", goal: options.goal || title.trim(), ...(prompt ? { prompt } : {}), depends_on: dependsOn, owner: options.owner || actor(this.options), created_at: now, updated_at: now, tracker_links: [] };
       this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), metadata, body(title, options.goal || title, prompt));
       generateProjections(this.storage);
-      return this.result({ workspace, stage }, [stage]);
+      return this.result({ workspace, stage, status: "planned", session_started: false, resume_required: true }, [stage]);
     });
   }
 
   renameStage(workspace, stage, title) {
-    id(workspace, 6);
-    stage = stageId(stage);
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
     if (!title?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Title is required");
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const record = this.storage.readStage(workspace, stage);
@@ -321,8 +316,8 @@ export class WorkContext {
   }
 
   updateStage(workspace, stage, description) {
-    id(workspace, 6);
-    stage = stageId(stage);
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
     if (!description?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Description is required");
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const record = this.storage.readStage(workspace, stage);
@@ -337,8 +332,8 @@ export class WorkContext {
   }
 
   updateStagePrompt(workspace, stage, prompt) {
-    id(workspace, 6);
-    stage = stageId(stage);
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
     if (!prompt?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Prompt is required");
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const record = this.storage.readStage(workspace, stage);
@@ -353,8 +348,8 @@ export class WorkContext {
   }
 
   updateStageResult(workspace, stage, result) {
-    id(workspace, 6);
-    stage = stageId(stage);
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
     if (!result?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Result is required");
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const record = this.storage.readStage(workspace, stage);
@@ -371,8 +366,8 @@ export class WorkContext {
   }
 
   archiveStage(workspace, stage) {
-    id(workspace, 6);
-    stage = stageId(stage);
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const record = this.storage.readStage(workspace, stage);
       if (record.data.status === "archived") return this.result({ workspace, stage, status: "archived" }, []);
@@ -386,7 +381,7 @@ export class WorkContext {
   }
 
   listKnowledge(workspace) {
-    id(workspace, 6);
+    workspace = normalizeWorkspaceId(workspace);
     this.storage.assertNoSymlinks();
     this.storage.readWorkspace(workspace);
     const text = this.storage.readKnowledge(workspace);
@@ -394,7 +389,7 @@ export class WorkContext {
   }
 
   addKnowledge(workspace, input) {
-    id(workspace, 6);
+    workspace = normalizeWorkspaceId(workspace);
     validateKnowledgeInput(input);
     return this.transact(`workspace-${workspace}`, () => {
       const records = this.listKnowledge(workspace).data;
@@ -406,7 +401,7 @@ export class WorkContext {
   }
 
   updateKnowledge(workspace, knowledgeId, input) {
-    id(workspace, 6);
+    workspace = normalizeWorkspaceId(workspace);
     validateKnowledgeInput(input, true);
     return this.transact(`workspace-${workspace}`, () => {
       const records = this.listKnowledge(workspace).data;
@@ -427,10 +422,10 @@ export class WorkContext {
   }
 
   linkIssue(workspace, url, stage = null) {
-    const normalizedWorkspace = id(workspace, 6);
-    const normalizedStage = stage ? stageId(stage) : null;
+    const normalizedWorkspace = normalizeWorkspaceId(workspace);
+    const normalizedStage = stage === null || stage === undefined ? null : normalizeStageId(stage);
     const parsed = parseIssue(url);
-    return this.transact(`link-${workspace}-${stage || "workspace"}`, () => {
+    return this.transact(`link-${normalizedWorkspace}-${normalizedStage || "workspace"}`, () => {
       const file = normalizedStage ? this.storage.stageFile(normalizedWorkspace, normalizedStage) : this.storage.workspaceFile(normalizedWorkspace);
       const current = normalizedStage ? this.storage.readStage(normalizedWorkspace, normalizedStage) : this.storage.readWorkspace(normalizedWorkspace);
       const links = current.data.tracker_links || [];
@@ -446,7 +441,8 @@ export class WorkContext {
 
   renameSession(workspace, stage, sessionId, summary) {
     if (!summary?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Summary is required");
-    stage = stageId(stage);
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const session = assertActive(this.storage.readEvents(), workspace, stage, sessionId);
       if (session.summary === summary.trim()) return this.result({ session_id: sessionId, summary: summary.trim() }, []);
@@ -456,7 +452,8 @@ export class WorkContext {
   }
 
   closeSession(workspace, stage, sessionId, reason = "closed", state = "closed") {
-    stage = stageId(stage);
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const session = assertActive(this.storage.readEvents(), workspace, stage, sessionId);
       this.writeEvents([event(`session.${state}`, workspace, stage, session.ordinal, sessionId, actor(this.options), { reason })]);
@@ -465,8 +462,8 @@ export class WorkContext {
   }
 
   forceCloseSession(workspace, stage, sessionId, reason, confirmation) {
-    id(workspace, 6);
-    stage = stageId(stage);
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
     if (!sessionId?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Session ID is required");
     if (!reason?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Force-close reason is required");
     if (confirmation !== "FORCE_CLOSE") fail(ERROR_CODES.CONFIRMATION_REQUIRED, "Force close requires confirmation FORCE_CLOSE", { expected: "FORCE_CLOSE" });
@@ -484,7 +481,8 @@ export class WorkContext {
   }
 
   handoff(workspace, stage, sessionId, options = {}) {
-    stage = stageId(stage);
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const session = assertActive(this.storage.readEvents(), workspace, stage, sessionId);
       this.writeEvents([event("session.handed_off", workspace, stage, session.ordinal, sessionId, actor(this.options), { reason: options.reason || "handoff" })]);
@@ -498,7 +496,8 @@ export class WorkContext {
   }
 
   finish(workspace, stage, sessionId, options = {}) {
-    stage = stageId(stage);
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const events = this.storage.readEvents();
       const current = this.storage.readStage(workspace, stage);
@@ -518,10 +517,10 @@ export class WorkContext {
       current.data.updated_at = new Date().toISOString();
       this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), current.data, `${current.body}\n\n## Result\n\n${options.result || "Stage completed."}`);
       generateProjections(this.storage);
-       const promptReview = this.listStages(workspace).data.stages
-         .filter((item) => Number(item.stage) > Number(stage) && !["completed", "archived"].includes(item.status))
-         .map(({ stage: id, title, description, prompt, status }) => ({ stage: id, title, description, prompt: prompt || null, status }));
-       const data = { session_id: sessionId, workspace, stage, state: "closed", status: "completed", knowledge_review: knowledgeReview, knowledge_entries: knowledgeEntries.length, active_knowledge_entries: activeKnowledge(knowledgeEntries).length, prompt_review: promptReview };
+      const promptReview = this.listStages(workspace).data.stages
+        .filter((item) => Number(item.stage) > Number(stage) && !["completed", "archived"].includes(item.status))
+        .map(({ stage: id, title, description, prompt, status }) => ({ stage: id, title, description, prompt: prompt || null, status }));
+      const data = { session_id: sessionId, workspace, stage, state: "closed", status: "completed", next_stage_started: false, knowledge_review: knowledgeReview, knowledge_entries: knowledgeEntries.length, active_knowledge_entries: activeKnowledge(knowledgeEntries).length, prompt_review: promptReview };
       const incompleteStages = this.listStages(workspace).data.stages.filter((item) => !["completed", "archived"].includes(item.status));
       const next = incompleteStages.length ? null : {
         action: "workspace_finish",
@@ -534,7 +533,7 @@ export class WorkContext {
   }
 
   help(command = "") {
-     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace and stage are optional for stage rename/update/update-prompt/update-result/archive/handoff/abandon/finish and session rename/close when the current session identifies them; stage update-result requires an existing stage result; finish <stage> is a shortcut for stage finish <stage>; when only one numeric identifier is supplied, six digits mean workspace and one or two digits mean stage; stage add accepts an optional prompt, which should contain local implementation context when the stage is created from stage 01 planning; resume returns resume.next_action, resume.instruction, and active shared entries in resume.context.workspace_knowledge; implementation may begin only with a non-empty prompt and no unanswered questions; ask focused questions and do not modify application code when next_action is ask_questions; force-close requires a session ID, reason, and exact confirmation FORCE_CLOSE; before stage finish, add, update, or supersede durable findings, or explicitly declare none; stage finish always validates Knowledge Base and returns downstream stages for prompt review; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
+     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace and stage are optional for stage rename/update/update-prompt/update-result/archive/handoff/abandon/finish and session rename/close when the current session identifies them; explicit workspace and stage positions accept padded or unpadded positive integer IDs and structured results remain canonical; zero, signs, decimals, whitespace, and overlong identifiers are invalid; stage update-result requires an existing stage result; finish <stage> is a shortcut for stage finish <stage>; when only one numeric identifier is supplied, six digits mean workspace and one or two digits mean stage; stage add accepts an optional local prompt and only creates a planned stage; entering any added stage requires an explicit resume in a new OpenCode session; resume returns resume.next_action, resume.instruction, and active shared entries in resume.context.workspace_knowledge; implementation may begin only with a non-empty prompt and no unanswered questions; ask focused questions and do not modify application code when next_action is ask_questions; force-close requires a session ID, reason, and exact confirmation FORCE_CLOSE; before stage finish, add, update, or supersede durable findings, or explicitly declare none; stage finish closes only the current stage session and returns downstream stages for informational prompt review without starting one; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }
 
   result(data, changed, next = null) {

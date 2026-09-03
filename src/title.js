@@ -1,4 +1,4 @@
-export function renderTitle({ workspace, workspaceTitle, stage, ordinal, state = "active", trackerLinks = [], issuePrefix = "short" }) {
+export function renderTitle({ workspace, stageTitle, stage, ordinal, state = "active", trackerLinks = [], issuePrefix = "short" }) {
   const link = trackerLinks[0]; let prefix = "";
   if (link && issuePrefix !== "none") {
     const identifier = link.key || link.iid;
@@ -6,5 +6,6 @@ export function renderTitle({ workspace, workspaceTitle, stage, ordinal, state =
     prefix = issuePrefix === "full" ? `${link.project}#${identifier} | ` : `${short} | `;
   }
   const suffix = state === "active" ? "" : ` (${state})`;
-  return `${prefix}${workspace} ${stage}/${String(ordinal).padStart(2, "0")}${suffix}\n${(workspaceTitle || workspace).replace(/[\r\n|]+/g, " ").trim().slice(0, 80)}`;
+  const description = (stageTitle || stage).replace(/[\r\n|]+/g, " ").trim().slice(0, 80);
+  return `${description}\n${prefix}${workspace} ${stage}/${String(ordinal).padStart(2, "0")}${suffix}`;
 }
