@@ -75,7 +75,6 @@ test("installer keeps standalone npm files at project root", () => {
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, ".opencode", "tui.json"), "utf8")), {
       $schema: "https://opencode.ai/tui.json",
       plugin: ["./tui-plugins/work-context-stages.js"],
-      keybinds: { leader: "ctrl+alt+w" },
     });
   } finally { removeRoot(root); removeRoot(bin); }
 });

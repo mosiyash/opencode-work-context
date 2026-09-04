@@ -765,7 +765,7 @@ test("Work Context command center exposes the stage switcher shortcut", () => {
   flow.open();
   const switchStage = current.props.options.find((option) => option.value === "switch.stage");
   assert.equal(switchStage.category, "Navigation");
-  assert.equal(switchStage.footer, "ctrl+alt+w s");
+  assert.equal(switchStage.footer, "ctrl+x s");
   current.props.onSelect(switchStage);
   assert.equal(opened, 1);
 });
@@ -976,7 +976,7 @@ test("stage switcher restores recent stages from project-local TUI state", () =>
   } finally { removeRoot(root); }
 });
 
-test("Ctrl+Alt+W acts as a Work Context leader prefix", () => {
+test("native leader prefix exposes Work Context bindings", () => {
   let layer;
   const registration = registerWorkContextModal({ keymap: { registerLayer: (value) => { layer = value; return () => {}; } } });
   assert.equal(registration.supported, true);

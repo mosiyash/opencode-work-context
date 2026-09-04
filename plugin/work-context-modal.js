@@ -22,9 +22,9 @@ const activeTuiInstances = new WeakMap();
 
 export const WORK_CONTEXT_ACTIONS = [
   { value: "help", title: "Help", description: "Show work-context command help", category: "General" },
-  { value: "switch.stage", title: "Switch stage", description: "Open a stage session in the current workspace", footer: "ctrl+alt+w s", category: "Navigation" },
-  { value: "switch.workspace", title: "Switch workspace", description: "Open a workspace session", footer: "ctrl+alt+w o", category: "Navigation" },
-  { value: "switch.session", title: "Switch session", description: "Open an active or historical work session", footer: "ctrl+alt+w e", category: "Navigation" },
+  { value: "switch.stage", title: "Switch stage", description: "Open a stage session in the current workspace", footer: "ctrl+x s", category: "Navigation" },
+  { value: "switch.workspace", title: "Switch workspace", description: "Open a workspace session", footer: "ctrl+x o", category: "Navigation" },
+  { value: "switch.session", title: "Switch session", description: "Open an active or historical work session", footer: "ctrl+x e", category: "Navigation" },
   { value: "list", title: "Browse workspaces", description: "Search workspaces and their stages", category: "General" },
   { value: "browse.stages", title: "Browse stages", description: "Search stages across every workspace", category: "General" },
   { value: "browse.sessions", title: "Browse sessions", description: "Search active and historical work sessions", category: "General" },

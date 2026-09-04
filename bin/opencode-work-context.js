@@ -41,7 +41,6 @@ export default {
 const tuiConfig = JSON.stringify({
   $schema: "https://opencode.ai/tui.json",
   plugin: ["./tui-plugins/work-context-stages.js"],
-  keybinds: { leader: "ctrl+alt+w" },
 }, null, 2) + "\n";
 const command = fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8");
 const generated = new Map([

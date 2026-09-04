@@ -180,7 +180,7 @@ read canonical storage through the package core and never edit Markdown or
 JSONL projections directly. Hosts without the TUI plugin API continue to load
 the server plugin and its tools normally.
 
-`Ctrl+Alt+W` runs `work_context.open` and opens a searchable stage switcher for
+The native `Ctrl+X` leader prefix followed by `W` runs `work_context.open` and opens a searchable stage switcher for
 the current workspace. Selecting a stage opens its active OpenCode-backed
 session, or otherwise its most recently updated OpenCode-backed session. If the
 stage has no available session, the switcher creates a separate OpenCode
@@ -199,7 +199,7 @@ modal. Its command actions only prepare visible `/wc` commands and never submit
 or invoke an LLM. The switcher uses OpenCode's public structured session-command
 endpoint rather than inserting `/wc resume` text into either prompt.
 The shortcut is registered with the public keymap layer. If another plugin or
-terminal reserves `Ctrl+Alt+W`, remove or change the conflicting binding, or
+terminal reserves `Ctrl+X`, remove or change the conflicting binding, or
 disable this TUI loader; the package does not use an internal keymap fallback.
 
 Tools are registered by the installed server export and are not copied into the
