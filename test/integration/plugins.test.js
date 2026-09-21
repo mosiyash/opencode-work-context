@@ -50,7 +50,8 @@ test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
     assert.equal(result.data.prompt, "Start by inspecting the existing tests, then implement the change.");
     assert.equal(result.data.resume.first, true);
     assert.equal(result.data.resume.next_action, "start_work");
-    assert.equal(result.data.resume.instruction, result.data.prompt);
+    assert.match(result.data.resume.instruction, /Start by inspecting the existing tests, then implement the change/);
+    assert.match(result.data.resume.instruction, /Do not invoke stage finish unless the user explicitly requests/);
     assert.equal(result.data.resume.context.workspace_knowledge[0].text, "Preserve the structured tool contract.");
   } finally {
     fixture.cleanup();
@@ -196,7 +197,7 @@ test("stage add creates one or several planned stages without switching the curr
   }
 });
 
-test("stage add with an explicit workspace stays creation-only when the session is unassociated", async () => {
+test("stage add enters the new stage when an explicit workspace is used from an unassociated session", async () => {
   const fixture = createFixture();
   try {
     const { context } = fixture;
@@ -212,13 +213,18 @@ test("stage add with an explicit workspace stays creation-only when the session 
 
     assert.equal(result.ok, true);
     assert.equal(result.data.stage, "02");
-    assert.equal(result.data.session_started, false);
-    assert.equal(result.data.resume_required, true);
-    assert.equal(context.sessionByOpenCodeId("oc-unassociated", "999906", "02"), null);
+    assert.equal(result.data.status, "in_progress");
+    assert.equal(result.data.session_started, true);
+    assert.equal(result.data.resume_required, false);
+    assert.equal(result.data.resume.next_action, "start_work");
+    assert.equal(context.sessionByOpenCodeId("oc-unassociated", "999906", "02").state, "active");
     const host = createSessionHost(fixture.root, "oc-unassociated");
     const hooks = await serverPlugin(host);
     await hooks["tool.execute.after"]({ tool: "work_context_add_stage", sessionID: "oc-unassociated" });
-    assert.equal(host.title, "");
+    assert.equal(host.title, "Entered explicit stage\n999906 02/01");
+    const snapshot = readStagesSnapshot({ projectRoot: fixture.root, sessionId: "oc-unassociated" });
+    assert.equal(snapshot.data.workspace.id, "999906");
+    assert.equal(snapshot.data.currentStage, "02");
   } finally {
     fixture.cleanup();
   }
@@ -274,6 +280,12 @@ test("stage lifecycle tools can resolve workspace from the current OpenCode sess
     const archived = JSON.parse((await tools.work_context_archive_stage.execute({ stage: "02" }, executeContext)).output);
     assert.equal(archived.ok, true);
     assert.deepEqual(archived.data, { workspace: "999907", stage: "02", status: "archived" });
+
+    const reopened = JSON.parse((await tools.work_context_reopen_stage.execute({ workspace: "999907", stage: "01", reason: "Correct the completion" }, executeContext)).output);
+    assert.equal(reopened.ok, true);
+    assert.equal(reopened.data.status, "in_progress");
+    assert.equal(reopened.data.session_started, false);
+    assert.equal(reopened.data.resume_required, true);
   } finally {
     fixture.cleanup();
   }

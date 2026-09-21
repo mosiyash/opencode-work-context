@@ -54,11 +54,24 @@ Then create a task and its first stage in OpenCode:
 /wc resume 000001 02
 ```
 
-`stage add` only creates a `planned` stage. It never starts that stage or binds
-the current OpenCode session to it. Open a separate OpenCode session and use
-`/wc resume <workspace> <stage>` explicitly for every transition into an added
-stage. Multiple sessions may work on the same non-terminal stage through
-explicit resume and handoff operations.
+`stage add` creates a stage and, when run from a new OpenCode session that is
+not associated with a workspace, immediately enters the new stage in that
+session. From an already associated session it only creates a `planned` stage;
+use `/wc resume <workspace> <stage>` in a separate OpenCode session to enter it.
+Multiple sessions may work on the same non-terminal stage through explicit
+resume and handoff operations.
+
+Stages remain in progress until the user explicitly requests `/wc stage finish`.
+Do not infer that request from completed work. Automatic completion is allowed
+only when the workspace Planning-stage prompt includes this standalone line:
+
+```text
+AUTO_STAGE_FINISH: allowed
+```
+
+To correct a completed stage without discarding its result or session history,
+use `/wc stage reopen <workspace> <stage> "reason"`. Reopening leaves
+downstream stages unchanged and requires a separate-session explicit resume.
 
 When you return later, continue from the active stage. A stage must have a
 non-empty prompt before implementation begins; if the prompt is missing or

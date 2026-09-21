@@ -165,12 +165,14 @@ test("resume returns the saved prompt and a continuation summary", () => {
     assert.equal(first.data.resume.first, true);
     assert.equal(first.data.prompt, "Implement the feature and add regression coverage.");
     assert.equal(first.data.resume.next_action, "start_work");
-    assert.equal(first.data.resume.instruction, first.data.prompt);
+    assert.match(first.data.resume.instruction, /Implement the feature and add regression coverage/);
+    assert.match(first.data.resume.instruction, /Do not invoke stage finish unless the user explicitly requests/);
     assert.deepEqual(first.data.resume.context, {
       essence: "Implementation",
       previous: "The previous session did not save a result; the stopping point needs to be clarified.",
       now: "Implement the feature and add regression coverage.",
       workspace_knowledge: [],
+      lifecycle: { automatic_finish_allowed: false },
     });
 
     context.renameSession("999985", "02", "session-2", "Implemented the main logic; verification remains.");
@@ -202,6 +204,22 @@ test("resume blocks implementation when a stage has no prompt", () => {
   } finally {
     removeRoot(root);
   }
+});
+
+test("resume exposes automatic completion only from the Planning-stage agreement", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Completion agreement workspace", { workspace: "999969", sessionId: "session-1" });
+    context.updateStagePrompt("999969", "01", "Plan the work.\nAUTO_STAGE_FINISH: allowed");
+    context.handoff("999969", "01", "session-1");
+    context.addStage("999969", "Implementation", { prompt: "Implement the change." });
+
+    const resumed = context.startSession("999969", "02", { sessionId: "session-2" });
+
+    assert.equal(resumed.data.resume.context.lifecycle.automatic_finish_allowed, true);
+    assert.match(resumed.data.resume.instruction, /AUTO_STAGE_FINISH: allowed/);
+  } finally { removeRoot(root); }
 });
 
 test("resume includes active workspace knowledge and excludes superseded entries", () => {
@@ -445,6 +463,7 @@ test("help exposes stage lifecycle commands without internal session or duplicat
     const syntax = WorkContext.open(root).help().data.syntax;
     assert.match(syntax, /stage handoff/);
     assert.match(syntax, /stage abandon/);
+    assert.match(syntax, /stage reopen/);
     assert.match(syntax, /workspace rename/);
     assert.match(syntax, /stage update/);
     assert.doesNotMatch(syntax, /session close|handoff\|knowledge/);
@@ -542,6 +561,34 @@ test("an existing stage result can be updated without changing stage metadata", 
     assert.equal(after.data.status, "completed");
     assert.match(after.body, /## Result\n\nTranslated result\n$/);
     assert.deepEqual(context.updateStageResult("999971", "01", "Translated result").changed, []);
+  } finally { removeRoot(root); }
+});
+
+test("reopening a completed stage preserves its result and requires explicit resume", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Reopen workspace", { workspace: "999970", sessionId: "session-1" });
+    context.finish("999970", "01", "session-1", { result: "Completed result", knowledgeReview: "none" });
+    context.addStage("999970", "Downstream stage");
+
+    const reopened = context.reopenStage("999970", "01", "Missing regression coverage");
+
+    assert.equal(reopened.data.status, "in_progress");
+    assert.equal(reopened.data.session_started, false);
+    assert.equal(reopened.data.resume_required, true);
+    assert.equal(reopened.data.reopen.reason, "Missing regression coverage");
+    assert.equal(context.storage.readWorkspace("999970").data.status, "in_progress");
+    assert.equal(context.storage.readStage("999970", "01").data.status, "in_progress");
+    assert.deepEqual(context.storage.readStage("999970", "01").data.reopen_history.map(({ reason }) => reason), ["Missing regression coverage"]);
+    assert.match(context.storage.readStage("999970", "01").body, /## Reopen History\n\n- .*Missing regression coverage\n  Previous result: Completed result/);
+    assert.equal(context.storage.readStage("999970", "02").data.status, "planned");
+    assert.equal(context.sessionByOpenCodeId(null, "999970", "01"), null);
+    context.startSession("999970", "01", { sessionId: "session-2" });
+    context.finish("999970", "01", "session-2", { result: "Revised result", knowledgeReview: "none" });
+    assert.match(context.storage.readStage("999970", "01").body, /Previous result: Completed result/);
+    assert.match(context.storage.readStage("999970", "01").body, /## Result\n\nRevised result/);
+    assert.throws(() => context.reopenStage("999970", "02", "Not completed"), (error) => error.code === ERROR_CODES.INVALID_STATE);
   } finally { removeRoot(root); }
 });
 

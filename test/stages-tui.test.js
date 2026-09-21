@@ -709,6 +709,7 @@ test("action modal builds canonical commands and safely quotes user input", () =
   assert.deepEqual(buildWorkContextActionCommand("stage.add", { workspace: "000004", value: "Build", prompt: "Implement \"carefully\"" }), { ok: true, command: "/wc stage add 000004 \"Build\" \"Implement \\\"carefully\\\"\"" });
   assert.deepEqual(buildWorkContextActionCommand("stage.finish", { workspace: "000004", stage: "2" }), { ok: true, command: "/wc stage finish 000004 02" });
   assert.deepEqual(buildWorkContextActionCommand("stage.finish", { workspace: "4", stage: "2" }), { ok: true, command: "/wc stage finish 000004 02" });
+  assert.deepEqual(buildWorkContextActionCommand("stage.reopen", { workspace: "4", stage: "2", value: "Restore incomplete work" }), { ok: true, command: "/wc stage reopen 000004 02 \"Restore incomplete work\"" });
   assert.deepEqual(buildWorkContextActionCommand("stage.update-result", { workspace: "000004", stage: "2", value: "Translated result" }), { ok: true, command: "/wc stage update-result 000004 02 \"Translated result\"" });
   assert.equal(buildWorkContextActionCommand("stage.rename", { workspace: "000004", stage: "02" }).error.code, "INVALID_ARGUMENT");
 });

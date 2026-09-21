@@ -14,10 +14,12 @@ const activeKnowledge = (records) => records
   .map(({ id: knowledgeId, title, kind, text, sources }) => ({ id: knowledgeId, title, kind, text, sources }));
 const body = (title, goal = "", prompt = "") => `# ${title}\n\n${goal ? `## Goal\n\n${goal}\n` : ""}${prompt ? `\n## Prompt\n\n${prompt}\n` : ""}`;
 const stageBody = (record, title, goal, prompt = record.data.prompt || "") => {
-  const result = record.body.match(/\n## Result[\s\S]*$/)?.[0] || "";
-  return `${body(title, goal, prompt).trimEnd()}${result}`;
+  const result = record.body.match(/\n## Result\s*\n[\s\S]*?(?=\n## Reopen History|$)/)?.[0] || "";
+  const history = record.body.match(/\n## Reopen History[\s\S]*?(?=\n## Result|$)/)?.[0] || "";
+  return `${body(title, goal, prompt).trimEnd()}${result}${history}`;
 };
-const stageResult = (record) => record.body.match(/\n## Result\s*\n([\s\S]*)$/)?.[1]?.trim() ?? null;
+const stageResult = (record) => record.body.match(/\n## Result\s*\n([\s\S]*?)(?=\n## Reopen History|$)/)?.[1]?.trim() ?? null;
+const automaticFinishAllowed = (storage, workspace) => /(?:^|\n)AUTO_STAGE_FINISH:\s*allowed\s*$/mi.test(storage.readStage(workspace, "01").data.prompt || "");
 const assertNoSymlinkPath = (file) => { let current = path.parse(file).root; for (const part of file.slice(current.length).split(path.sep).filter(Boolean)) { current = path.join(current, part); try { if (fs.lstatSync(current).isSymbolicLink()) fail(ERROR_CODES.STORAGE_ERROR, `Symlink path component is not supported: ${current}`); } catch (error) { if (error.code !== "ENOENT") throw error; break; } } };
 
 function parseIssue(url) {
@@ -164,7 +166,7 @@ export class WorkContext {
       fs.mkdirSync(path.join(this.storage.workspaceDir(workspace), "stages"), { recursive: true });
       this.storage.writeMarkdown(this.storage.workspaceFile(workspace), { schema: 1, workspace, title: title.trim(), status: "in_progress", created_at: now, updated_at: now, tracker_links: [] }, body(title));
       const planningGoal = "Clarify the work goal and constraints";
-      const planningPrompt = "Diagnose and plan the task without functional changes. Discuss possible solutions, record durable workspace-wide facts, decisions, constraints, important files, and risks through explicit knowledge operations, and decompose the work into the following stages. For each new implementation stage, write a separate detailed prompt with local context, concrete actions, constraints, completion criteria, and the expected result; do not duplicate shared knowledge that every stage receives in resume.context.workspace_knowledge. Ask clarifying questions only when genuinely blocked.";
+      const planningPrompt = "Diagnose and plan the task without functional changes. Discuss possible solutions, record durable workspace-wide facts, decisions, constraints, important files, and risks through explicit knowledge operations, and decompose the work into the following stages. For each new implementation stage, write a separate detailed prompt with local context, concrete actions, constraints, completion criteria, and the expected result; do not duplicate shared knowledge that every stage receives in resume.context.workspace_knowledge. Ask clarifying questions only when genuinely blocked. Stages must remain in progress until the user explicitly requests stage finish. If the user explicitly agrees to automatic completion for this workspace, add the exact standalone line AUTO_STAGE_FINISH: allowed to this Planning-stage prompt.";
       this.storage.writeMarkdown(this.storage.stageFile(workspace, "01"), { schema: 1, workspace, stage: "01", title: "Planning", status: "in_progress", goal: planningGoal, prompt: planningPrompt, depends_on: [], owner: actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body("Planning", planningGoal, planningPrompt));
       const sessionId = options.sessionId || randomUUID();
       if (this.storage.readEvents().some((item) => item.session_id === sessionId)) fail(ERROR_CODES.CONFLICT, "Session ID already exists");
@@ -187,9 +189,10 @@ export class WorkContext {
             previous: "The previous session did not save a result; the stopping point needs to be clarified.",
             now: planningPrompt,
             workspace_knowledge: [],
+            lifecycle: { automatic_finish_allowed: false },
           },
           next_action: "start_work",
-          instruction: planningPrompt,
+          instruction: `${planningPrompt}\n\nDo not invoke stage finish unless the user explicitly requests the lifecycle command. Automatic completion is permitted only when lifecycle.automatic_finish_allowed is true, which requires the exact AUTO_STAGE_FINISH: allowed line in this workspace's Planning-stage prompt.`,
         },
       }, [workspace, "01"]);
     });
@@ -246,6 +249,7 @@ export class WorkContext {
       const firstResume = previous.length === 0;
       const hasPrompt = Boolean(stageRecord.data.prompt?.trim());
       const workspaceKnowledge = activeKnowledge(this.listKnowledge(workspace).data);
+      const automaticFinish = automaticFinishAllowed(this.storage, workspace);
       return this.result({
         workspace,
         stage,
@@ -265,14 +269,15 @@ export class WorkContext {
             previous: previousSession?.summary || "The previous session did not save a result; the stopping point needs to be clarified.",
             now: hasPrompt ? stageRecord.data.prompt : "First clarify the task and work plan with the user.",
             workspace_knowledge: workspaceKnowledge,
+            lifecycle: { automatic_finish_allowed: automaticFinish },
           },
           next_action: hasPrompt ? (firstResume ? "start_work" : "await_confirmation") : "ask_questions",
-          instruction: hasPrompt
+          instruction: `${hasPrompt
             ? firstResume
               ? stageRecord.data.prompt
                 || `Review stage ${stage}: ${stageRecord.data.title} and begin work only after confirming there are no unanswered questions.`
               : `Stage ${stage}: ${stageRecord.data.title} was resumed before. Report the context and wait for the user's confirmation before continuing work.`
-            : `Stage ${stage}: ${stageRecord.data.title} has no non-empty prompt. Do not start implementation; ask the user the questions needed to define the work.`,
+            : `Stage ${stage}: ${stageRecord.data.title} has no non-empty prompt. Do not start implementation; ask the user the questions needed to define the work.`}\n\nDo not invoke stage finish unless the user explicitly requests the lifecycle command. Automatic completion is permitted only when lifecycle.automatic_finish_allowed is true, which requires the exact AUTO_STAGE_FINISH: allowed line in this workspace's Planning-stage prompt.`,
         },
       }, [workspace, stage]);
     });
@@ -353,12 +358,14 @@ export class WorkContext {
     if (!result?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Result is required");
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const record = this.storage.readStage(workspace, stage);
+      if (record.data.status !== "completed") fail(ERROR_CODES.INVALID_STATE, "Cannot update the result of an unfinished stage");
       const currentResult = stageResult(record);
       if (currentResult === null) fail(ERROR_CODES.INVALID_STATE, "Stage has no result to update");
       const nextResult = result.trim();
       if (currentResult === nextResult) return this.result({ workspace, stage, result: nextResult }, []);
       record.data.updated_at = new Date().toISOString();
-      const nextBody = `${body(record.data.title, record.data.goal, record.data.prompt).trimEnd()}\n\n## Result\n\n${nextResult}`;
+      const history = record.body.match(/\n## Reopen History[\s\S]*?(?=\n## Result|$)/)?.[0] || "";
+      const nextBody = `${body(record.data.title, record.data.goal, record.data.prompt).trimEnd()}\n\n## Result\n\n${nextResult}${history}`;
       this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, nextBody);
       generateProjections(this.storage);
       return this.result({ workspace, stage, result: nextResult }, [workspace, stage]);
@@ -495,6 +502,37 @@ export class WorkContext {
     return this.closeSession(workspace, stage, sessionId, reason, "abandoned");
   }
 
+  reopenStage(workspace, stage, reason) {
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
+    if (!reason?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Reopen reason is required");
+    return this.transact(`stage-${workspace}-${stage}`, () => {
+      const workspaceRecord = this.storage.readWorkspace(workspace);
+      if (workspaceRecord.data.status === "cancelled") fail(ERROR_CODES.INVALID_STATE, "Cannot reopen a stage in a cancelled workspace");
+      const record = this.storage.readStage(workspace, stage);
+      const active = activeSession(this.storage.readEvents(), workspace, stage);
+      if (active) fail(ERROR_CODES.ACTIVE_SESSION_EXISTS, "Cannot reopen a stage with an active session", { session_id: active.session_id });
+      if (record.data.status !== "completed") fail(ERROR_CODES.INVALID_STATE, "Only completed stages can be reopened", { status: record.data.status });
+      const reopenedAt = new Date().toISOString();
+      const previousResult = stageResult(record);
+      const entry = { at: reopenedAt, reason: reason.trim(), actor: actor(this.options), ...(previousResult ? { previous_result: previousResult } : {}) };
+      record.data.status = "in_progress";
+      record.data.reopen_history = [...(record.data.reopen_history || []), entry];
+      record.data.updated_at = reopenedAt;
+      const history = record.body.match(/\n## Reopen History[\s\S]*?(?=\n## Result|$)/)?.[0]
+        || "\n\n## Reopen History\n";
+      const priorResult = previousResult ? `\n  Previous result: ${previousResult}` : "";
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, `${body(record.data.title, record.data.goal, record.data.prompt).trimEnd()}${history}\n- ${reopenedAt}: ${reason.trim()}${priorResult}\n`);
+      if (workspaceRecord.data.status === "completed") {
+        workspaceRecord.data.status = "in_progress";
+        workspaceRecord.data.updated_at = reopenedAt;
+        this.storage.writeMarkdown(this.storage.workspaceFile(workspace), workspaceRecord.data, workspaceRecord.body);
+      }
+      generateProjections(this.storage);
+      return this.result({ workspace, stage, status: "in_progress", reopen: entry, session_started: false, resume_required: true }, [workspace, stage]);
+    });
+  }
+
   finish(workspace, stage, sessionId, options = {}) {
     workspace = normalizeWorkspaceId(workspace);
     stage = normalizeStageId(stage);
@@ -533,7 +571,12 @@ export class WorkContext {
   }
 
   help(command = "") {
-     return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace and stage are optional for stage rename/update/update-prompt/update-result/archive/handoff/abandon/finish and session rename/close when the current session identifies them; explicit workspace and stage positions accept padded or unpadded positive integer IDs and structured results remain canonical; zero, signs, decimals, whitespace, and overlong identifiers are invalid; stage update-result requires an existing stage result; finish <stage> is a shortcut for stage finish <stage>; when only one numeric identifier is supplied, six digits mean workspace and one or two digits mean stage; stage add accepts an optional local prompt and only creates a planned stage; entering any added stage requires an explicit resume in a new OpenCode session; resume returns resume.next_action, resume.instruction, and active shared entries in resume.context.workspace_knowledge; implementation may begin only with a non-empty prompt and no unanswered questions; ask focused questions and do not modify application code when next_action is ask_questions; force-close requires a session ID, reason, and exact confirmation FORCE_CLOSE; before stage finish, add, update, or supersede durable findings, or explicitly declare none; stage finish closes only the current stage session and returns downstream stages for informational prompt review without starting one; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
+    return this.result({
+      command,
+      syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage reopen|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
+      note: "stage finish requires an explicit user lifecycle request unless the Planning-stage prompt contains the exact line AUTO_STAGE_FINISH: allowed; stage reopen requires a completed stage and a reason, preserves completion history, does not affect downstream stages, and requires explicit separate-session resume.",
+    }, []);
+      return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace and stage are optional for stage rename/update/update-prompt/update-result/archive/handoff/abandon/finish and session rename/close when the current session identifies them; explicit workspace and stage positions accept padded or unpadded positive integer IDs and structured results remain canonical; zero, signs, decimals, whitespace, and overlong identifiers are invalid; stage update-result requires an existing stage result; finish <stage> is a shortcut for stage finish <stage>; when only one numeric identifier is supplied, six digits mean workspace and one or two digits mean stage; stage add accepts an optional local prompt; from an unassociated OpenCode session it also enters the new stage immediately, while an associated session remains on its current stage; resume returns resume.next_action, resume.instruction, and active shared entries in resume.context.workspace_knowledge; implementation may begin only with a non-empty prompt and no unanswered questions; ask focused questions and do not modify application code when next_action is ask_questions; force-close requires a session ID, reason, and exact confirmation FORCE_CLOSE; before stage finish, add, update, or supersede durable findings, or explicitly declare none; stage finish closes only the current stage session and returns downstream stages for informational prompt review without starting one; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }
 
   result(data, changed, next = null) {

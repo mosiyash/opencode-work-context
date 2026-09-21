@@ -22,6 +22,7 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `resume <workspace> <stage>` -> `work_context_start_session`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE` -> `work_context_force_close_session`
 - `stage add [<workspace>] ...` -> `work_context_add_stage` (optional `prompt`; a detailed local prompt is expected for stages created from planning, while shared context belongs in workspace knowledge)
+- `stage reopen <workspace> <stage> "reason"` -> `work_context_reopen_stage`
 - `stage rename [<workspace>] [<stage>] "title"` -> `work_context_rename_stage`
 - `stage update [<workspace>] [<stage>] "description"` -> `work_context_update_stage`
 - `stage update-prompt [<workspace>] [<stage>] "prompt"` -> `work_context_update_stage_prompt`
@@ -42,6 +43,7 @@ Supported syntax:
 - `resume <workspace> <stage>`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE`
 - `stage add [<workspace>] "title" ["prompt"]`
+- `stage reopen <workspace> <stage> "reason"`
 - `stage rename [<workspace>] [<stage>] "title"`
 - `stage update [<workspace>] [<stage>] "description"`
 - `stage update-prompt [<workspace>] [<stage>] "prompt"`
@@ -64,13 +66,16 @@ Supported syntax:
 - on every subsequent resume, report the context and wait for explicit user confirmation; do not automatically continue implementation
 - when `resume.next_action` is `await_confirmation`, do not inspect or modify application code until the user confirms
 - `create` enters the new workspace's Planning stage in the current OpenCode session only when that session is not yet in a workspace; otherwise it only creates the workspace and its planning session
-- `stage add` only creates a planned stage; it never starts, resumes, or binds the current OpenCode session to that stage, even when the session is not yet associated with a workspace
-- entering an added stage always requires a separate OpenCode session and an explicit `resume <workspace> <stage>` operation; do not invoke `resume` automatically after creation
+- `stage add` creates a stage; when the current OpenCode session is not associated with a workspace, it also enters the new stage in that session
+- when `stage add` is invoked from an associated session, it only creates a planned stage and leaves the current stage unchanged; enter it later with an explicit `resume <workspace> <stage>` in a separate OpenCode session
 - `resume` returns `resume.next_action` and `resume.instruction`; begin or continue implementation only when the stage prompt is non-empty and, after reviewing it, there are no unanswered questions
 - when `resume.next_action` is `ask_questions`, do not inspect or modify application code and ask the user focused questions needed to make the prompt actionable
 - before `stage finish`, review durable findings: add new knowledge, update changed knowledge, supersede obsolete knowledge, or explicitly use `knowledgeReview=none` when the stage produced no durable findings; use `knowledgeReview=added` after ledger changes
+- invoke `stage finish` only when the user explicitly requests that lifecycle command; do not infer the request from completed work, tests, or a final report
+- automatic completion is allowed only when the current workspace's Planning-stage prompt contains an exact standalone line `AUTO_STAGE_FINISH: allowed`; otherwise leave the stage in progress and report that the work is ready for the user's lifecycle decision
 - `stage finish` closes and completes only the current stage session; it never starts, resumes, or binds the same OpenCode session to a downstream stage
 - `stage finish` always validates the Knowledge Base and returns total and active entry counts plus downstream unfinished stages for informational prompt review; do not begin a downstream stage until the user explicitly resumes it in a separate OpenCode session
+- `stage reopen <workspace> <stage> "reason"` applies only to a completed stage, preserves its result and completion history, records the reason, changes it to `in_progress`, and does not start a session or affect downstream stages; use an explicit separate-session `resume` to work on it again
 - `knowledge list|add|update|supersede <workspace> ...`
 
 Arguments: $ARGUMENTS
