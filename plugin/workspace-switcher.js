@@ -64,7 +64,6 @@ export const createWorkspaceSwitcherFlow = (api, { read = readWorkContextSnapsho
         description: workspace.selectedSession
           ? `${workspace.status} · ${workspace.selectedSession.state || "unknown"} session`
           : `${workspace.status} · no OpenCode session available`,
-        footer: workspace.selectedSession?.opencode_session_id,
         category: workspace.id === data.currentWorkspace ? "Current" : workspace.status,
         disabled: !workspace.selectedSession,
         value: workspace,

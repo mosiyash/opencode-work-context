@@ -1026,6 +1026,8 @@ test("workspace switcher disables workspaces without OpenCode sessions", async (
   ] } }) });
   await flow.open();
   assert.equal(current.props.title, "Switch workspace");
+  assert.equal(current.props.options[0].title, "000001  Current · current");
+  assert.equal(current.props.options[0].footer, undefined);
   assert.equal(current.props.options[1].disabled, true);
   current.props.onSelect(current.props.options[1]);
   assert.deepEqual(toasts.at(-1), { message: "WORKSPACE_SESSION_UNAVAILABLE: This workspace has no OpenCode-backed session to open", variant: "error" });
