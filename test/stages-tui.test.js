@@ -1041,11 +1041,13 @@ test("stage switcher snapshot is scoped to the current workspace and includes ar
     context.createWorkspace("Switcher workspace", { workspace: "999970", sessionId: "wc-current", opencodeSessionId: "oc-current" });
     context.addStage("999970", "Archived work");
     context.archiveStage("999970", "02");
+    context.addStage("999970", "Dependent work", { dependsOn: ["02"] });
     const result = readStageSwitcherSnapshot({ projectRoot: root, sessionId: "oc-current" });
     assert.equal(result.ok, true);
     assert.deepEqual(result.data.workspace, { id: "999970", title: "Switcher workspace", status: "in_progress" });
     assert.equal(result.data.currentStage, "01");
     assert.equal(result.data.stages.find((stage) => stage.id === "02").status, "archived");
+    assert.deepEqual(result.data.stages.find((stage) => stage.id === "03").blockers, []);
   } finally { removeRoot(root); }
 });
 

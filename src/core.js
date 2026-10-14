@@ -7,6 +7,7 @@ import { event, reduceSessions, activeSession, assertActive } from "./sessions.j
 import { generateProjections, renderSessions } from "./projections.js";
 import { nextKnowledgeId, parseKnowledge, renderKnowledge, validateKnowledgeInput, validateKnowledgeRecords } from "./knowledge.js";
 import { normalizeStageId, normalizeWorkspaceId } from "./identifiers.js";
+import { isDependencySatisfied } from "./stage-status.js";
 
 const actor = (options) => options.actor || "OpenCode";
 const activeKnowledge = (records) => records
@@ -152,7 +153,7 @@ export class WorkContext {
     const stages = this.listStages(workspace).data.stages;
     for (const dependency of stageRecord.data.depends_on) {
       const record = stages.find((item) => item.stage === dependency);
-      if (!record || record.status !== "completed") fail(ERROR_CODES.INVALID_STATE, `Stage dependency is not completed: ${dependency}`);
+      if (!isDependencySatisfied(record)) fail(ERROR_CODES.INVALID_STATE, `Stage dependency is not completed: ${dependency}`);
     }
   }
 

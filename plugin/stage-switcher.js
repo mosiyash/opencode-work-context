@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { contextFor } from "../src/opencode-adapter.js";
 import { atomicWrite } from "../src/storage.js";
+import { isDependencySatisfied } from "../src/stage-status.js";
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "archived"]);
 const SESSION_STATE_RANK = { active: 0, handed_off: 1, abandoned: 2, closed: 3 };
@@ -69,7 +70,6 @@ export const readStageSwitcherSnapshot = ({ projectRoot: root, sessionId } = {})
     const listed = context.listStages(current.workspace).data;
     const workspace = context.listWorkspaces().data.find((item) => item.workspace === current.workspace);
     if (!workspace) return errorResult("NOT_FOUND", "The current work-context workspace no longer exists");
-    const completed = new Set(listed.stages.filter((stage) => stage.status === "completed").map((stage) => stage.stage));
     return {
       ok: true,
       data: {
@@ -77,7 +77,7 @@ export const readStageSwitcherSnapshot = ({ projectRoot: root, sessionId } = {})
         currentStage: current.stage,
         stages: listed.stages.map((stage) => {
           const sessions = listed.sessions.filter((session) => session.stage === stage.stage);
-          const blockers = (stage.depends_on || []).filter((dependency) => !completed.has(dependency));
+          const blockers = (stage.depends_on || []).filter((dependency) => !isDependencySatisfied(listed.stages.find((item) => item.stage === dependency)));
           return {
             id: stage.stage,
             title: stage.title,

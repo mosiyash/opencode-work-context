@@ -189,6 +189,45 @@ test("resume returns the saved prompt and a continuation summary", () => {
   }
 });
 
+test("resume accepts archived dependencies and continues a handed-off stage", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Archived dependency workspace", { workspace: "999968", sessionId: "session-1" });
+    context.handoff("999968", "01", "session-1");
+    context.archiveStage("999968", "01");
+    context.addStage("999968", "Implementation", { dependsOn: ["01"], prompt: "Implement the change." });
+
+    context.startSession("999968", "2", { sessionId: "session-2" });
+    context.handoff("999968", "02", "session-2");
+    const resumed = context.startSession("999968", "2", { sessionId: "session-3" });
+
+    assert.equal(resumed.data.resume.next_action, "await_confirmation");
+    assert.equal(resumed.data.ordinal, "02/02");
+  } finally {
+    removeRoot(root);
+  }
+});
+
+test("resume permits completed dependencies and blocks unfinished dependencies", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Dependency state workspace", { workspace: "999967", sessionId: "session-1" });
+    context.finish("999967", "01", "session-1", { knowledgeReview: "none" });
+    context.addStage("999967", "Permitted", { dependsOn: ["01"], prompt: "Implement the change." });
+    context.addStage("999967", "Blocked", { dependsOn: ["02"], prompt: "Wait for the dependency." });
+
+    assert.equal(context.startSession("999967", "02", { sessionId: "session-2" }).data.resume.next_action, "start_work");
+    assert.throws(
+      () => context.startSession("999967", "03", { sessionId: "session-3" }),
+      (error) => error instanceof WorkContextError && error.code === ERROR_CODES.INVALID_STATE,
+    );
+  } finally {
+    removeRoot(root);
+  }
+});
+
 test("resume blocks implementation when a stage has no prompt", () => {
   const root = makeRoot();
   try {

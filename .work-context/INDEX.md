@@ -11,4 +11,5 @@
 | 000006 | Implement fast read-only Work Context TUI modal | completed | 2026-09-02T03:42:48.234Z |
 | 000002 | Add CSV export to analytics report | completed | 2026-08-30T04:28:38.240Z |
 | 000004 | Stages fail to load in other projects | completed | 2026-08-31T10:23:15.456Z |
+| 000011 | Fixes | in_progress | 2026-10-14T02:39:34.801Z |
 | 000010 | Fixes for creating a new stage | in_progress | 2026-09-21T06:40:12.044Z |
