@@ -19,10 +19,12 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `workspace list <workspace>` or `<workspace> list` -> `work_context_workspace_list`
 - `workspace rename <workspace> "title"` -> `work_context_rename_workspace`
 - `workspace finish <workspace>` -> `work_context_workspace_finish`
+- `workspace reopen <workspace> "reason"` -> `work_context_reopen_workspace`
 - `resume <workspace> <stage>` -> `work_context_start_session`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE` -> `work_context_force_close_session`
 - `stage add [<workspace>] ...` -> `work_context_add_stage` (optional `prompt`; a detailed local prompt is expected for stages created from planning, while shared context belongs in workspace knowledge)
 - `stage reopen <workspace> <stage> "reason"` -> `work_context_reopen_stage`
+- `stage restore <workspace> <stage> "reason"` -> `work_context_restore_stage`
 - `stage rename [<workspace>] [<stage>] "title"` -> `work_context_rename_stage`
 - `stage update [<workspace>] [<stage>] "description"` -> `work_context_update_stage`
 - `stage update-prompt [<workspace>] [<stage>] "prompt"` -> `work_context_update_stage_prompt`
@@ -40,10 +42,12 @@ Supported syntax:
 - `workspace list <workspace>`
 - `workspace rename <workspace> "title"`
 - `workspace finish <workspace>`
+- `workspace reopen <workspace> "reason"`
 - `resume <workspace> <stage>`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE`
 - `stage add [<workspace>] "title" ["prompt"]`
 - `stage reopen <workspace> <stage> "reason"`
+- `stage restore <workspace> <stage> "reason"`
 - `stage rename [<workspace>] [<stage>] "title"`
 - `stage update [<workspace>] [<stage>] "description"`
 - `stage update-prompt [<workspace>] [<stage>] "prompt"`
@@ -76,6 +80,8 @@ Supported syntax:
 - `stage finish` closes and completes only the current stage session; it never starts, resumes, or binds the same OpenCode session to a downstream stage
 - `stage finish` always validates the Knowledge Base and returns total and active entry counts plus downstream unfinished stages for informational prompt review; do not begin a downstream stage until the user explicitly resumes it in a separate OpenCode session
 - `stage reopen <workspace> <stage> "reason"` applies only to a completed stage, preserves its result and completion history, records the reason, changes it to `in_progress`, and does not start a session or affect downstream stages; use an explicit separate-session `resume` to work on it again
+- `stage restore <workspace> <stage> "reason"` applies only to an archived stage and restores its saved pre-archive status. New archives preserve that status; legacy archives restore to `in_progress`. It records the reason, preserves stage content and results, does not start a session, and requires explicit separate-session `resume` when restored to `planned` or `in_progress`.
+- `workspace reopen <workspace> "reason"` applies only to a completed workspace, changes it to `in_progress`, and records durable recovery history. Cancelled workspaces cannot be reopened.
 - `knowledge list|add|update|supersede <workspace> ...`
 
 Arguments: $ARGUMENTS

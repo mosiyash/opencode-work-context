@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { normalizeStageId, normalizeWorkspaceId, WorkContext } from "../src/index.js";
 import { ERROR_CODES, WorkContextError } from "../src/errors.js";
+import { event } from "../src/sessions.js";
 import { renderTitle } from "../src/title.js";
 
 const makeRoot = () => fs.mkdtempSync(path.join("/tmp/opencode", "work-context-test-"));
@@ -386,6 +387,31 @@ test("workspace finish marks a workspace completed after all stages", () => {
   }
 });
 
+test("reopening a completed workspace requires a reason and preserves durable history", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Workspace recovery", { workspace: "999966", sessionId: "session-1" });
+    context.finish("999966", "01", "session-1", { knowledgeReview: "none" });
+    context.finishWorkspace("999966");
+
+    assert.throws(() => context.reopenWorkspace("999966", ""), (error) => error.code === ERROR_CODES.INVALID_ARGUMENT);
+    const reopened = context.reopenWorkspace("999966", "Resume follow-up work");
+    assert.deepEqual(reopened.data, {
+      workspace: "999966", status: "in_progress", reopen: reopened.data.reopen,
+    });
+    assert.equal(reopened.data.reopen.reason, "Resume follow-up work");
+    assert.equal(context.storage.readWorkspace("999966").data.status, "in_progress");
+    assert.deepEqual(context.storage.readWorkspace("999966").data.reopen_history.map(({ reason }) => reason), ["Resume follow-up work"]);
+    assert.match(context.storage.readWorkspace("999966").body, /## Reopen History\n\n- .*Resume follow-up work/);
+    assert.throws(() => context.reopenWorkspace("999966", "Already open"), (error) => error.code === ERROR_CODES.INVALID_STATE);
+    const cancelled = context.storage.readWorkspace("999966");
+    cancelled.data.status = "cancelled";
+    context.storage.writeMarkdown(context.storage.workspaceFile("999966"), cancelled.data, cancelled.body);
+    assert.throws(() => context.reopenWorkspace("999966", "Do not reopen cancelled work"), (error) => error.code === ERROR_CODES.INVALID_STATE);
+  } finally { removeRoot(root); }
+});
+
 test("stage finish automatically reviews the knowledge ledger by default", () => {
   const root = makeRoot();
   try {
@@ -503,7 +529,9 @@ test("help exposes stage lifecycle commands without internal session or duplicat
     assert.match(syntax, /stage handoff/);
     assert.match(syntax, /stage abandon/);
     assert.match(syntax, /stage reopen/);
+    assert.match(syntax, /stage restore/);
     assert.match(syntax, /workspace rename/);
+    assert.match(syntax, /workspace reopen/);
     assert.match(syntax, /stage update/);
     assert.doesNotMatch(syntax, /session close|handoff\|knowledge/);
   } finally { removeRoot(root); }
@@ -523,6 +551,57 @@ test("archiving preserves the stage ID, hides it from the TUI snapshot and ignor
     assert.equal(context.storage.readStage("999979", "03").data.status, "archived");
     assert.deepEqual(context.listStages("999979").data.stages.map((stage) => stage.stage), ["01", "02", "03"]);
     assert.throws(() => context.startSession("999979", "03", { sessionId: "session-3" }), (error) => error.code === ERROR_CODES.INVALID_STATE);
+  } finally { removeRoot(root); }
+});
+
+test("restoring an archived stage preserves its saved status, body, result, and recovery history", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Stage recovery", { workspace: "999965", sessionId: "session-1" });
+    context.finish("999965", "01", "session-1", { result: "Completed result", knowledgeReview: "none" });
+    context.archiveStage("999965", "01");
+
+    assert.throws(() => context.restoreStage("999965", "01", ""), (error) => error.code === ERROR_CODES.INVALID_ARGUMENT);
+    const restored = context.restoreStage("999965", "1", "Restore the completed record");
+    assert.equal(restored.data.workspace, "999965");
+    assert.equal(restored.data.stage, "01");
+    assert.equal(restored.data.status, "completed");
+    assert.equal(restored.data.restore.restored_status, "completed");
+    assert.equal(restored.data.session_started, false);
+    assert.equal(restored.data.resume_required, false);
+    const record = context.storage.readStage("999965", "01");
+    assert.equal(record.data.status, "completed");
+    assert.match(record.body, /## Result\n\nCompleted result/);
+    assert.match(record.body, /## Archive History\n\n- .*archived from completed\n- .*restored to completed; Restore the completed record/);
+    assert.deepEqual(record.data.archive_history.map(({ action }) => action), ["archived", "restored"]);
+    assert.throws(() => context.restoreStage("999965", "01", "Not archived"), (error) => error.code === ERROR_CODES.INVALID_STATE);
+  } finally { removeRoot(root); }
+});
+
+test("restoring actionable and legacy archived stages remains subject to session constraints", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Actionable stage recovery", { workspace: "999964", sessionId: "session-1" });
+    context.handoff("999964", "01", "session-1");
+    context.addStage("999964", "Planned stage", { prompt: "Implement recovery." });
+    context.archiveStage("999964", "02");
+    const restored = context.restoreStage("999964", "02", "Restore planned work");
+    assert.equal(restored.data.status, "planned");
+    assert.equal(restored.data.resume_required, true);
+    context.startSession("999964", "02", { sessionId: "session-2" });
+    context.handoff("999964", "02", "session-2");
+
+    context.archiveStage("999964", "02");
+    context.writeEvents([event("session.started", "999964", "02", 2, "session-active", "test", { summary: "Unexpected active session", opencode_session_id: null, branch: null })]);
+    assert.throws(() => context.restoreStage("999964", "02", "Active session blocks restore"), (error) => error.code === ERROR_CODES.ACTIVE_SESSION_EXISTS);
+    context.handoff("999964", "02", "session-active");
+    const legacy = context.storage.readStage("999964", "02");
+    delete legacy.data.archive_history;
+    context.storage.writeMarkdown(context.storage.stageFile("999964", "02"), legacy.data, legacy.body);
+    assert.equal(context.restoreStage("999964", "02", "Restore legacy archive").data.status, "in_progress");
+    assert.throws(() => context.restoreStage("999964", "02", "Not archived"), (error) => error.code === ERROR_CODES.INVALID_STATE);
   } finally { removeRoot(root); }
 });
 

@@ -73,6 +73,13 @@ To correct a completed stage without discarding its result or session history,
 use `/wc stage reopen <workspace> <stage> "reason"`. Reopening leaves
 downstream stages unchanged and requires a separate-session explicit resume.
 
+To recover an archived stage, use `/wc stage restore <workspace> <stage>
+"reason"`. It restores the status saved during archiving and preserves the
+stage body, result, and recovery history. Archives written by older versions
+did not save their source status and restore to `in_progress`. To reopen an
+accidentally completed workspace, use `/wc workspace reopen <workspace>
+"reason"`; it only accepts `completed` workspaces, never cancelled ones.
+
 When you return later, continue from the active stage. A stage must have a
 non-empty prompt before implementation begins; if the prompt is missing or
 ambiguous, `/wc resume` instructs the agent to ask focused questions first.
@@ -243,6 +250,8 @@ accepted only after every stage is `completed`. Use `/wc workspace list <workspa
 to list stages with their descriptions. Workspace titles can be changed with
 `/wc workspace rename <workspace> "title"`, and existing stage descriptions can
 be changed with `/wc stage update <workspace> <stage> "description"`.
+`/wc workspace reopen <workspace> "reason"` records a recovery entry and returns
+only a completed workspace to `in_progress`.
 
 If the host `opencode.json` restricts `experimental.primary_tools`, add the
 registered `work_context_*` tool names to that allowlist; the installer does not

@@ -40,6 +40,17 @@ const validReopenHistory = (history) => Array.isArray(history) && history.every(
   && requiredString(item, "reason")
   && requiredString(item, "actor")
   && (item.previous_result === undefined || requiredString(item, "previous_result")));
+const validArchiveHistory = (history) => Array.isArray(history) && history.every((item) => item
+  && typeof item === "object"
+  && !Array.isArray(item)
+  && Object.keys(item).every((key) => ["action", "at", "reason", "actor", "previous_status", "restored_status"].includes(key))
+  && ["archived", "restored"].includes(item.action)
+  && validTimestamp(item.at)
+  && requiredString(item, "actor")
+  && (item.reason === undefined || requiredString(item, "reason"))
+  && (item.previous_status === undefined || ["planned", "in_progress", "completed", "cancelled"].includes(item.previous_status))
+  && (item.restored_status === undefined || ["planned", "in_progress", "completed", "cancelled"].includes(item.restored_status))
+  && (item.action === "archived" ? item.previous_status !== undefined && item.reason === undefined && item.restored_status === undefined : requiredString(item, "reason") && item.restored_status !== undefined && item.previous_status === undefined));
 const validEvents = new Set(["session.started", "session.renamed", "session.handed_off", "session.closed", "session.abandoned"]);
 const validateEvent = (item) => {
   if (!item || item.schema !== 1 || Object.keys(item).some((key) => !["schema", "event_id", "event", "occurred_at", "session_id", "workspace", "stage", "ordinal", "actor", "data"].includes(key)) || !validEvents.has(item.event) || typeof item.event_id !== "string" || !item.event_id.trim() || !validTimestamp(item.occurred_at) || typeof item.session_id !== "string" || !item.session_id.trim() || !/^\d{6}$/.test(item.workspace) || !/^\d{2}$/.test(item.stage) || !Number.isInteger(item.ordinal) || item.ordinal < 1 || typeof item.actor !== "string" || !item.actor.trim() || !item.data || typeof item.data !== "object" || Array.isArray(item.data)) fail(ERROR_CODES.STORAGE_ERROR, "Invalid session event");
@@ -77,13 +88,22 @@ const validateEventStream = (events) => {
   }
 };
 function validateMetadata(data, kind, workspace, stage = null) {
-  const allowed = kind === "workspace" ? ["schema", "workspace", "title", "status", "created_at", "updated_at", "tracker_links"] : ["schema", "workspace", "stage", "title", "status", "goal", "prompt", "depends_on", "owner", "created_at", "updated_at", "tracker_links", "reopen_history"];
+  const allowed = kind === "workspace" ? ["schema", "workspace", "title", "status", "created_at", "updated_at", "tracker_links", "reopen_history"] : ["schema", "workspace", "stage", "title", "status", "goal", "prompt", "depends_on", "owner", "created_at", "updated_at", "tracker_links", "reopen_history", "archive_history"];
   if (Object.keys(data).some((key) => !allowed.includes(key)) || data.schema !== 1 || !requiredString(data, "workspace") || !/^\d{6}$/.test(data.workspace) || data.workspace !== workspace) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
   if (!requiredString(data, "title") || !validTimestamp(data.created_at) || !validTimestamp(data.updated_at) || Date.parse(data.updated_at) < Date.parse(data.created_at) || !Array.isArray(data.tracker_links)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
   if (!validTrackerLinks(data.tracker_links) || data.tracker_links.some((link) => !link.provider.trim() || !link.project.trim() || ((link.provider === "gitlab" || link.provider === "github") ? (!Number.isInteger(link.iid) || link.iid < 1) : !link.key?.trim()))) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} tracker links`);
   const statuses = kind === "workspace" ? ["in_progress", "completed", "cancelled"] : ["planned", "in_progress", "completed", "cancelled", "archived"];
   if (!statuses.includes(data.status)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} status`);
-  if (kind === "stage" && (data.stage !== stage || !/^\d{2}$/.test(data.stage) || !requiredString(data, "goal") || (data.prompt !== undefined && !requiredString(data, "prompt")) || !requiredString(data, "owner") || !Array.isArray(data.depends_on) || new Set(data.depends_on).size !== data.depends_on.length || data.depends_on.includes(data.stage) || data.depends_on.some((item) => typeof item !== "string" || !/^\d{2}$/.test(item)) || (data.reopen_history !== undefined && !validReopenHistory(data.reopen_history)))) fail(ERROR_CODES.STORAGE_ERROR, "Invalid stage metadata");
+  const invalidWorkspaceHistory = kind === "workspace" && data.reopen_history !== undefined && !validReopenHistory(data.reopen_history);
+  const invalidStageMetadata = kind === "stage" && (
+    data.stage !== stage || !/^\d{2}$/.test(data.stage) || !requiredString(data, "goal")
+    || (data.prompt !== undefined && !requiredString(data, "prompt")) || !requiredString(data, "owner")
+    || !Array.isArray(data.depends_on) || new Set(data.depends_on).size !== data.depends_on.length
+    || data.depends_on.includes(data.stage) || data.depends_on.some((item) => typeof item !== "string" || !/^\d{2}$/.test(item))
+    || (data.reopen_history !== undefined && !validReopenHistory(data.reopen_history))
+    || (data.archive_history !== undefined && !validArchiveHistory(data.archive_history))
+  );
+  if (invalidWorkspaceHistory || invalidStageMetadata) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
 }
 export function atomicWrite(file, content) {
   ensure(path.dirname(file));

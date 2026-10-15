@@ -32,6 +32,7 @@ export const WORK_CONTEXT_ACTIONS = [
   { value: "workspace.list", title: "Inspect workspace", description: "List one workspace and its stages", category: "Workspace" },
   { value: "workspace.rename", title: "Rename workspace", description: "Change a workspace title", category: "Workspace" },
   { value: "workspace.finish", title: "Finish workspace", description: "Complete a workspace", category: "Workspace" },
+  { value: "workspace.reopen", title: "Reopen workspace", description: "Reopen a completed workspace with a reason", category: "Workspace" },
   { value: "stage.add", title: "Add stage", description: "Create a planned stage with an optional prompt", category: "Stage" },
   { value: "resume", title: "Resume stage", description: "Start or continue work on a stage", category: "Stage" },
   { value: "stage.rename", title: "Rename stage", description: "Change a stage title", category: "Stage" },
@@ -40,6 +41,7 @@ export const WORK_CONTEXT_ACTIONS = [
   { value: "stage.update-result", title: "Update stage result", description: "Replace an existing completion result", category: "Stage" },
   { value: "stage.archive", title: "Archive stage", description: "Archive a non-active stage", category: "Stage" },
   { value: "stage.reopen", title: "Reopen stage", description: "Reopen a completed stage with a reason", category: "Stage" },
+  { value: "stage.restore", title: "Restore stage", description: "Restore an archived stage with a reason", category: "Stage" },
   { value: "stage.handoff", title: "Hand off stage", description: "Close this session and preserve continuation", category: "Stage" },
   { value: "stage.abandon", title: "Abandon stage session", description: "Close this session and keep the stage resumable", category: "Stage" },
   { value: "stage.finish", title: "Finish stage", description: "Complete a stage and review knowledge", category: "Stage" },
@@ -295,6 +297,9 @@ export const buildWorkContextActionCommand = (action, { workspace, stage, value,
   if (!normalizedWorkspace) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Invalid workspace ID" } };
   if (action === "workspace.list") return { ok: true, command: `/wc workspace list ${normalizedWorkspace}` };
   if (action === "workspace.finish") return { ok: true, command: `/wc workspace finish ${normalizedWorkspace}` };
+  if (action === "workspace.reopen") return value?.trim()
+    ? { ok: true, command: `/wc workspace reopen ${normalizedWorkspace} ${quoteWorkContextArgument(value.trim())}` }
+    : { ok: false, error: { code: "INVALID_ARGUMENT", message: "Reason is required" } };
   if (action === "workspace.rename") return value?.trim()
     ? { ok: true, command: `/wc workspace rename ${normalizedWorkspace} ${quoteWorkContextArgument(value.trim())}` }
     : { ok: false, error: { code: "INVALID_ARGUMENT", message: "Title is required" } };
@@ -306,7 +311,7 @@ export const buildWorkContextActionCommand = (action, { workspace, stage, value,
   if (!normalizedStage) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Invalid stage ID" } };
   const commandName = action.replace(".", " ");
   if (["resume", "stage.archive", "stage.handoff", "stage.abandon", "stage.finish"].includes(action)) return { ok: true, command: `/wc ${commandName} ${normalizedWorkspace} ${normalizedStage}` };
-  const inputCommands = { "stage.rename": "title", "stage.update": "description", "stage.update-prompt": "prompt", "stage.update-result": "result", "stage.reopen": "reason" };
+  const inputCommands = { "stage.rename": "title", "stage.update": "description", "stage.update-prompt": "prompt", "stage.update-result": "result", "stage.reopen": "reason", "stage.restore": "reason" };
   if (Object.hasOwn(inputCommands, action)) return value?.trim()
     ? { ok: true, command: `/wc ${commandName} ${normalizedWorkspace} ${normalizedStage} ${quoteWorkContextArgument(value.trim())}` }
     : { ok: false, error: { code: "INVALID_ARGUMENT", message: `${inputCommands[action][0].toUpperCase()}${inputCommands[action].slice(1)} is required` } };
@@ -339,7 +344,7 @@ export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read 
     else if (action === "stage.update") requireValue("Update stage description", "Description", action, context);
     else if (action === "stage.update-prompt") requireValue("Update stage prompt", "Detailed prompt", action, context);
     else if (action === "stage.update-result") requireValue("Update stage result", "Completion result", action, context);
-    else if (action === "stage.reopen") requireValue("Reopen stage", "Reason for reopening", action, context);
+    else if (action === "stage.reopen" || action === "stage.restore") requireValue(action === "stage.restore" ? "Restore stage" : "Reopen stage", action === "stage.restore" ? "Reason for restoring" : "Reason for reopening", action, context);
     else void insert(buildWorkContextActionCommand(action, context));
   };
   const selectStage = (action, workspace, stages) => showSelect("Select stage", stages.map((stage) => ({
@@ -367,6 +372,7 @@ export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read 
     })), (option) => {
       const workspace = option.value;
       if (action === "workspace.list" || action === "workspace.finish") void insert(buildWorkContextActionCommand(action, { workspace: workspace.id }));
+      else if (action === "workspace.reopen") requireValue("Reopen workspace", "Reason for reopening", action, { workspace: workspace.id });
       else if (action === "workspace.rename") requireValue("Rename workspace", "New title", action, { workspace: workspace.id });
       else if (action === "stage.add") addStage(workspace.id);
       else if (!workspace.stages?.length) toast("No stages found");
@@ -381,16 +387,17 @@ export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read 
   };
   const showWorkspaceActions = (workspace) => showSelect(`${workspace.id}  ${workspace.title}`, [
     { title: "Back to workspaces", value: "back", category: "Navigation" },
-    ...WORK_CONTEXT_ACTIONS.filter((action) => ["workspace.list", "stage.add", "workspace.rename", "workspace.finish"].includes(action.value)),
+    ...WORK_CONTEXT_ACTIONS.filter((action) => ["workspace.list", "stage.add", "workspace.rename", "workspace.finish", "workspace.reopen"].includes(action.value)),
   ], (option) => {
     if (option.value === "back") { void browseWorkspaces(); return; }
     if (option.value === "workspace.list" || option.value === "workspace.finish") void insert(buildWorkContextActionCommand(option.value, { workspace: workspace.id }));
+    else if (option.value === "workspace.reopen") requireValue("Reopen workspace", "Reason for reopening", option.value, { workspace: workspace.id });
     else if (option.value === "workspace.rename") requireValue("Rename workspace", "New title", option.value, { workspace: workspace.id });
     else if (option.value === "stage.add") addStage(workspace.id);
   });
   const showStageActions = (workspace, stage, { backTitle = "Back to workspaces", onBack = () => void browseWorkspaces() } = {}) => showSelect(`${workspace.id}/${stage.id}  ${stage.title}`, [
     { title: backTitle, value: "back", category: "Navigation" },
-    ...WORK_CONTEXT_ACTIONS.filter((action) => ["resume", "stage.rename", "stage.update", "stage.update-prompt", "stage.update-result", "stage.archive", "stage.reopen", "stage.handoff", "stage.abandon", "stage.finish"].includes(action.value)),
+    ...WORK_CONTEXT_ACTIONS.filter((action) => ["resume", "stage.rename", "stage.update", "stage.update-prompt", "stage.update-result", "stage.archive", "stage.reopen", "stage.restore", "stage.handoff", "stage.abandon", "stage.finish"].includes(action.value)),
   ], (option) => {
     if (option.value === "back") { onBack(); return; }
     runStageAction(option.value, workspace.id, stage.id);

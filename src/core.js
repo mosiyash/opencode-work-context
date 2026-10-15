@@ -15,11 +15,13 @@ const activeKnowledge = (records) => records
   .map(({ id: knowledgeId, title, kind, text, sources }) => ({ id: knowledgeId, title, kind, text, sources }));
 const body = (title, goal = "", prompt = "") => `# ${title}\n\n${goal ? `## Goal\n\n${goal}\n` : ""}${prompt ? `\n## Prompt\n\n${prompt}\n` : ""}`;
 const stageBody = (record, title, goal, prompt = record.data.prompt || "") => {
-  const result = record.body.match(/\n## Result\s*\n[\s\S]*?(?=\n## Reopen History|$)/)?.[0] || "";
-  const history = record.body.match(/\n## Reopen History[\s\S]*?(?=\n## Result|$)/)?.[0] || "";
-  return `${body(title, goal, prompt).trimEnd()}${result}${history}`;
+  const result = record.body.match(/\n## Result\s*\n[\s\S]*?(?=\n## (?:Reopen|Archive) History|$)/)?.[0] || "";
+  const reopenHistory = record.body.match(/\n## Reopen History[\s\S]*?(?=\n## (?:Result|Archive History)|$)/)?.[0] || "";
+  const archiveHistory = record.body.match(/\n## Archive History[\s\S]*?(?=\n## (?:Result|Reopen History)|$)/)?.[0] || "";
+  return `${body(title, goal, prompt).trimEnd()}${result}${reopenHistory}${archiveHistory}`;
 };
-const stageResult = (record) => record.body.match(/\n## Result\s*\n([\s\S]*?)(?=\n## Reopen History|$)/)?.[1]?.trim() ?? null;
+const stageResult = (record) => record.body.match(/\n## Result\s*\n([\s\S]*?)(?=\n## (?:Reopen|Archive) History|$)/)?.[1]?.trim() ?? null;
+const appendHistory = (bodyText, heading, entry) => `${bodyText.trimEnd()}${bodyText.includes(`\n## ${heading}\n`) ? "" : `\n\n## ${heading}\n`}\n- ${entry}\n`;
 const automaticFinishAllowed = (storage, workspace) => /(?:^|\n)AUTO_STAGE_FINISH:\s*allowed\s*$/mi.test(storage.readStage(workspace, "01").data.prompt || "");
 const assertNoSymlinkPath = (file) => { let current = path.parse(file).root; for (const part of file.slice(current.length).split(path.sep).filter(Boolean)) { current = path.join(current, part); try { if (fs.lstatSync(current).isSymbolicLink()) fail(ERROR_CODES.STORAGE_ERROR, `Symlink path component is not supported: ${current}`); } catch (error) { if (error.code !== "ENOENT") throw error; break; } } };
 
@@ -135,6 +137,23 @@ export class WorkContext {
       this.storage.writeMarkdown(this.storage.workspaceFile(workspace), record.data, record.body);
       generateProjections(this.storage);
       return this.result({ workspace, status: "completed", stages }, [workspace]);
+    });
+  }
+
+  reopenWorkspace(workspace, reason) {
+    workspace = normalizeWorkspaceId(workspace);
+    if (!reason?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Reopen reason is required");
+    return this.transact(`workspace-${workspace}`, () => {
+      const record = this.storage.readWorkspace(workspace);
+      if (record.data.status !== "completed") fail(ERROR_CODES.INVALID_STATE, "Only completed workspaces can be reopened", { status: record.data.status });
+      const reopenedAt = new Date().toISOString();
+      const entry = { at: reopenedAt, reason: reason.trim(), actor: actor(this.options) };
+      record.data.status = "in_progress";
+      record.data.reopen_history = [...(record.data.reopen_history || []), entry];
+      record.data.updated_at = reopenedAt;
+      this.storage.writeMarkdown(this.storage.workspaceFile(workspace), record.data, appendHistory(record.body, "Reopen History", `${reopenedAt}: ${reason.trim()}`));
+      generateProjections(this.storage);
+      return this.result({ workspace, status: "in_progress", reopen: entry }, [workspace]);
     });
   }
 
@@ -365,8 +384,9 @@ export class WorkContext {
       const nextResult = result.trim();
       if (currentResult === nextResult) return this.result({ workspace, stage, result: nextResult }, []);
       record.data.updated_at = new Date().toISOString();
-      const history = record.body.match(/\n## Reopen History[\s\S]*?(?=\n## Result|$)/)?.[0] || "";
-      const nextBody = `${body(record.data.title, record.data.goal, record.data.prompt).trimEnd()}\n\n## Result\n\n${nextResult}${history}`;
+      const history = record.body.match(/\n## Reopen History[\s\S]*?(?=\n## (?:Result|Archive History)|$)/)?.[0] || "";
+      const archiveHistory = record.body.match(/\n## Archive History[\s\S]*?(?=\n## (?:Result|Reopen History)|$)/)?.[0] || "";
+      const nextBody = `${body(record.data.title, record.data.goal, record.data.prompt).trimEnd()}\n\n## Result\n\n${nextResult}${history}${archiveHistory}`;
       this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, nextBody);
       generateProjections(this.storage);
       return this.result({ workspace, stage, result: nextResult }, [workspace, stage]);
@@ -380,11 +400,43 @@ export class WorkContext {
       const record = this.storage.readStage(workspace, stage);
       if (record.data.status === "archived") return this.result({ workspace, stage, status: "archived" }, []);
       if (activeSession(this.storage.readEvents(), workspace, stage)) fail(ERROR_CODES.ACTIVE_SESSION_EXISTS, "Cannot archive a stage with an active session");
+      const archivedAt = new Date().toISOString();
+      const entry = { action: "archived", at: archivedAt, actor: actor(this.options), previous_status: record.data.status };
       record.data.status = "archived";
-      record.data.updated_at = new Date().toISOString();
-      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, record.body);
+      record.data.archive_history = [...(record.data.archive_history || []), entry];
+      record.data.updated_at = archivedAt;
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, appendHistory(record.body, "Archive History", `${archivedAt}: archived from ${entry.previous_status}`));
       generateProjections(this.storage);
       return this.result({ workspace, stage, status: "archived" }, [workspace, stage]);
+    });
+  }
+
+  restoreStage(workspace, stage, reason) {
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
+    if (!reason?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Restore reason is required");
+    return this.transact(`stage-${workspace}-${stage}`, () => {
+      const workspaceRecord = this.storage.readWorkspace(workspace);
+      if (workspaceRecord.data.status === "cancelled") fail(ERROR_CODES.INVALID_STATE, "Cannot restore a stage in a cancelled workspace");
+      const record = this.storage.readStage(workspace, stage);
+      const active = activeSession(this.storage.readEvents(), workspace, stage);
+      if (active) fail(ERROR_CODES.ACTIVE_SESSION_EXISTS, "Cannot restore a stage with an active session", { session_id: active.session_id });
+      if (record.data.status !== "archived") fail(ERROR_CODES.INVALID_STATE, "Only archived stages can be restored", { status: record.data.status });
+      const archived = [...(record.data.archive_history || [])].reverse().find((item) => item.action === "archived");
+      const restoredStatus = archived?.previous_status || "in_progress";
+      const restoredAt = new Date().toISOString();
+      const entry = { action: "restored", at: restoredAt, reason: reason.trim(), actor: actor(this.options), restored_status: restoredStatus };
+      record.data.status = restoredStatus;
+      record.data.archive_history = [...(record.data.archive_history || []), entry];
+      record.data.updated_at = restoredAt;
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, appendHistory(record.body, "Archive History", `${restoredAt}: restored to ${restoredStatus}; ${reason.trim()}`));
+      if (workspaceRecord.data.status === "completed" && ["planned", "in_progress"].includes(restoredStatus)) {
+        workspaceRecord.data.status = "in_progress";
+        workspaceRecord.data.updated_at = restoredAt;
+        this.storage.writeMarkdown(this.storage.workspaceFile(workspace), workspaceRecord.data, workspaceRecord.body);
+      }
+      generateProjections(this.storage);
+      return this.result({ workspace, stage, status: restoredStatus, restore: entry, session_started: false, resume_required: ["planned", "in_progress"].includes(restoredStatus) }, [workspace, stage]);
     });
   }
 
@@ -520,10 +572,11 @@ export class WorkContext {
       record.data.status = "in_progress";
       record.data.reopen_history = [...(record.data.reopen_history || []), entry];
       record.data.updated_at = reopenedAt;
-      const history = record.body.match(/\n## Reopen History[\s\S]*?(?=\n## Result|$)/)?.[0]
+      const history = record.body.match(/\n## Reopen History[\s\S]*?(?=\n## (?:Result|Archive History)|$)/)?.[0]
         || "\n\n## Reopen History\n";
       const priorResult = previousResult ? `\n  Previous result: ${previousResult}` : "";
-      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, `${body(record.data.title, record.data.goal, record.data.prompt).trimEnd()}${history}\n- ${reopenedAt}: ${reason.trim()}${priorResult}\n`);
+      const archiveHistory = record.body.match(/\n## Archive History[\s\S]*?(?=\n## (?:Result|Reopen History)|$)/)?.[0] || "";
+      this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, `${body(record.data.title, record.data.goal, record.data.prompt).trimEnd()}${history}\n- ${reopenedAt}: ${reason.trim()}${priorResult}\n${archiveHistory}`);
       if (workspaceRecord.data.status === "completed") {
         workspaceRecord.data.status = "in_progress";
         workspaceRecord.data.updated_at = reopenedAt;
@@ -574,8 +627,8 @@ export class WorkContext {
   help(command = "") {
     return this.result({
       command,
-      syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage reopen|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
-      note: "stage finish requires an explicit user lifecycle request unless the Planning-stage prompt contains the exact line AUTO_STAGE_FINISH: allowed; stage reopen requires a completed stage and a reason, preserves completion history, does not affect downstream stages, and requires explicit separate-session resume.",
+      syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|workspace reopen|resume|stage add|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
+      note: "stage finish requires an explicit user lifecycle request unless the Planning-stage prompt contains the exact line AUTO_STAGE_FINISH: allowed; stage reopen requires a completed stage and a reason; stage restore requires an archived stage and a reason, returns its saved pre-archive status (or in_progress for legacy archives), and requires explicit separate-session resume when actionable; workspace reopen requires a completed workspace and a reason.",
     }, []);
       return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace and stage are optional for stage rename/update/update-prompt/update-result/archive/handoff/abandon/finish and session rename/close when the current session identifies them; explicit workspace and stage positions accept padded or unpadded positive integer IDs and structured results remain canonical; zero, signs, decimals, whitespace, and overlong identifiers are invalid; stage update-result requires an existing stage result; finish <stage> is a shortcut for stage finish <stage>; when only one numeric identifier is supplied, six digits mean workspace and one or two digits mean stage; stage add accepts an optional local prompt; from an unassociated OpenCode session it also enters the new stage immediately, while an associated session remains on its current stage; resume returns resume.next_action, resume.instruction, and active shared entries in resume.context.workspace_knowledge; implementation may begin only with a non-empty prompt and no unanswered questions; ask focused questions and do not modify application code when next_action is ask_questions; force-close requires a session ID, reason, and exact confirmation FORCE_CLOSE; before stage finish, add, update, or supersede durable findings, or explicitly declare none; stage finish closes only the current stage session and returns downstream stages for informational prompt review without starting one; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }

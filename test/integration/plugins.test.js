@@ -84,6 +84,31 @@ test("structured tools accept unpadded IDs and return canonical IDs", async () =
   }
 });
 
+test("recovery tools require reasons and return canonical recovery results", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Recovery tools", { workspace: "000009", sessionId: "planning" });
+    context.finish("000009", "01", "planning", { knowledgeReview: "none" });
+    context.archiveStage("000009", "01");
+    const executeContext = { directory: fixture.root, worktree: fixture.root, sessionID: "oc-recovery", metadata: async () => {} };
+
+    const missingReason = JSON.parse((await tools.work_context_restore_stage.execute({ workspace: "9", stage: "1", reason: "" }, executeContext)).output);
+    assert.equal(missingReason.ok, false);
+    assert.equal(missingReason.error.code, "INVALID_ARGUMENT");
+    const restored = JSON.parse((await tools.work_context_restore_stage.execute({ workspace: "9", stage: "1", reason: "Recover completed stage" }, executeContext)).output);
+    assert.equal(restored.ok, true);
+    assert.equal(restored.data.workspace, "000009");
+    assert.equal(restored.data.stage, "01");
+
+    context.finishWorkspace("000009");
+    const reopened = JSON.parse((await tools.work_context_reopen_workspace.execute({ workspace: "9", reason: "Resume workspace" }, executeContext)).output);
+    assert.equal(reopened.ok, true);
+    assert.equal(reopened.data.workspace, "000009");
+    assert.equal(reopened.data.status, "in_progress");
+  } finally { fixture.cleanup(); }
+});
+
 test("structured tools return stable errors for malformed and missing shorthand IDs", async () => {
   const fixture = createFixture();
   try {
