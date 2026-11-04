@@ -8,7 +8,7 @@ import { ERROR_CODES, WorkContextError } from "../src/errors.js";
 import { event } from "../src/sessions.js";
 import { renderTitle } from "../src/title.js";
 
-const makeRoot = () => fs.mkdtempSync(path.join("/tmp/opencode", "work-context-test-"));
+const makeRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "work-context-test-"));
 const removeRoot = (root) => fs.rmSync(root, { recursive: true, force: true });
 
 test("create writes canonical metadata, events and projections", () => {

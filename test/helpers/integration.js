@@ -4,7 +4,7 @@ import path from "node:path";
 import { WorkContext } from "../../src/index.js";
 
 export function createFixture() {
-  const root = fs.mkdtempSync(path.join("/tmp/opencode", "work-context-integration-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "work-context-integration-"));
   const context = WorkContext.open(root, { actor: "integration-test" });
   return {
     root,

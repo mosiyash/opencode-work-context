@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createAttentionEngine, createAttentionTuiController, normalizeAttentionEvent, tui } from "../plugin/attention.js";
 import { readTuiState, updateTuiState } from "../plugin/tui-state.js";
 
-const makeRoot = () => fs.mkdtempSync(path.join("/tmp/opencode", "attention-test-"));
+const makeRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "attention-test-"));
 const removeRoot = (root) => fs.rmSync(root, { recursive: true, force: true });
 const status = (sessionID, type, id = `${sessionID}-${type}`) => ({ id, type: "session.status", properties: { sessionID, status: { type } } });
 const idle = (sessionID, id = `${sessionID}-idle`) => ({ id, type: "session.idle", properties: { sessionID } });

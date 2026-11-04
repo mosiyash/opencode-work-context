@@ -13,7 +13,7 @@ import { createStageSwitcherFlow, readStageSwitcherSnapshot, recentStageIds, rem
 import { createWorkspaceSwitcherFlow, selectWorkspaceSession, sortWorkspaceSwitcherEntries, switchToWorkspace } from "../plugin/workspace-switcher.js";
 import { createSessionSwitcherFlow, selectSession, sortSessionSwitcherEntries, switchToSession } from "../plugin/session-switcher.js";
 
-const makeRoot = () => fs.mkdtempSync(path.join("/tmp/opencode", "stages-tui-test-"));
+const makeRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "stages-tui-test-"));
 const removeRoot = (root) => fs.rmSync(root, { recursive: true, force: true });
 const packageManifest = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const tuiSmokeEnabled = process.env.OPENCODE_TUI_SMOKE === "1";

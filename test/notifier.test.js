@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { desktopNotificationsEnabled } from "../plugin/attention.js";
@@ -68,7 +69,7 @@ test("missing executable, nonzero exit, spawn failure, and timeout degrade silen
 });
 
 test("desktop notifications default on and accept only a boolean opt-out", () => {
-  const root = fs.mkdtempSync(path.join("/tmp/opencode", "notifier-config-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "notifier-config-"));
   try {
     assert.equal(desktopNotificationsEnabled(root), true);
     fs.mkdirSync(path.join(root, ".work-context"), { recursive: true });
