@@ -1,4 +1,5 @@
 import { readWorkContextSnapshot } from "../src/work-context-snapshot.js";
+import { acknowledgeNavigation, attentionForSession, attentionReasonText } from "./attention.js";
 
 const SESSION_STATE_RANK = { active: 0, handed_off: 1, abandoned: 2, closed: 3 };
 
@@ -7,10 +8,13 @@ const currentSessionId = (api) => api?.route?.current?.params?.sessionID || api?
 const projectRoot = (api) => api?.state?.path?.worktree || api?.state?.path?.directory;
 const sessionTime = (session) => String(session.updated_at || session.started_at || "");
 
-const compareSessions = (left, right, currentId) => {
+const compareSessions = (left, right, currentId, attention) => {
   const leftCurrent = left.opencode_session_id === currentId;
   const rightCurrent = right.opencode_session_id === currentId;
   if (leftCurrent !== rightCurrent) return leftCurrent ? -1 : 1;
+  const leftAttention = Boolean(attention?.(left.opencode_session_id));
+  const rightAttention = Boolean(attention?.(right.opencode_session_id));
+  if (leftAttention !== rightAttention) return leftAttention ? -1 : 1;
   return (SESSION_STATE_RANK[left.state] ?? 9) - (SESSION_STATE_RANK[right.state] ?? 9)
     || sessionTime(right).localeCompare(sessionTime(left))
     || Number(right.ordinal || 0) - Number(left.ordinal || 0)
@@ -19,14 +23,14 @@ const compareSessions = (left, right, currentId) => {
 };
 
 /** Return one deterministic work-context record for each native OpenCode session. */
-export const sortSessionSwitcherEntries = (entries = [], currentId = null) => {
+export const sortSessionSwitcherEntries = (entries = [], currentId = null, attention) => {
   const selected = new Map();
   for (const entry of entries) {
     const id = entry.session?.opencode_session_id;
-    if (!id || selected.has(id) && compareSessions(selected.get(id).session, entry.session, currentId) <= 0) continue;
+    if (!id || selected.has(id) && compareSessions(selected.get(id).session, entry.session, currentId, attention) <= 0) continue;
     selected.set(id, entry);
   }
-  return [...selected.values()].sort((left, right) => compareSessions(left.session, right.session, currentId));
+  return [...selected.values()].sort((left, right) => compareSessions(left.session, right.session, currentId, attention));
 };
 
 export const selectSession = (entries = [], currentId = null) => sortSessionSwitcherEntries(entries, currentId)[0]?.session || null;
@@ -36,8 +40,10 @@ export const switchToSession = (api, session) => {
   if (!sessionID) return errorResult("SESSION_OPENCODE_ID_MISSING", "This work-context session has no OpenCode session ID", { session_id: session?.session_id });
   if (typeof api?.route?.navigate !== "function") return errorResult("SESSION_SWITCH_UNAVAILABLE", "This OpenCode host cannot switch sessions from a TUI plugin");
   try {
+    const observed = attentionForSession(api, sessionID)?.eventKey;
     api.ui?.dialog?.clear?.();
     api.route.navigate("session", { sessionID });
+    acknowledgeNavigation(api, sessionID, observed);
     return { ok: true, data: { opencode_session_id: sessionID, created: false, navigated: true } };
   } catch (error) {
     return errorResult(error.code || "SESSION_SWITCH_ERROR", error.message || "OpenCode could not open the selected session", { opencode_session_id: sessionID });
@@ -58,7 +64,8 @@ export const createSessionSwitcherFlow = (api, { read = readWorkContextSnapshot 
     const entries = (data.workspaces || []).flatMap((workspace) => (workspace.sessions || []).map((session) => ({ workspace, session })));
     if (!entries.length) { toast("No sessions found"); return result; }
     const currentId = currentSessionId(api);
-    const available = sortSessionSwitcherEntries(entries, currentId);
+    const attention = (id) => attentionForSession(api, id);
+    const available = sortSessionSwitcherEntries(entries, currentId, attention);
     const unavailable = entries.filter(({ session }) => !session.opencode_session_id);
     const labels = { active: "Active", handed_off: "Handed off", abandoned: "Abandoned", closed: "Closed" };
     api.ui.dialog.setSize?.("medium");
@@ -67,8 +74,8 @@ export const createSessionSwitcherFlow = (api, { read = readWorkContextSnapshot 
       placeholder: "Search sessions",
       options: [
         ...available.map(({ workspace, session }) => ({
-          title: `${workspace.id} ${session.stage || "-"}/${String(session.ordinal || 0).padStart(2, "0")}  ${session.summary || "Work session"} · ${workspace.title}`,
-          description: `${session.state || "unknown"} · ${session.session_id || "unknown"}`,
+          title: `${attention(session.opencode_session_id) ? "[ATTN] " : ""}${workspace.id} ${session.stage || "-"}/${String(session.ordinal || 0).padStart(2, "0")}  ${session.summary || "Work session"} · ${workspace.title}`,
+          description: `${attention(session.opencode_session_id) ? `needs attention: ${attentionReasonText(attention(session.opencode_session_id).reason)} · ` : ""}${session.state || "unknown"} · ${session.session_id || "unknown"}`,
           footer: session.opencode_session_id,
           category: session.opencode_session_id === currentId ? "Current" : labels[session.state] || session.state || "Unknown",
           value: session,

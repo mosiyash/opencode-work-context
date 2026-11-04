@@ -17,6 +17,13 @@ const makeRoot = () => fs.mkdtempSync(path.join("/tmp/opencode", "stages-tui-tes
 const removeRoot = (root) => fs.rmSync(root, { recursive: true, force: true });
 const packageManifest = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const tuiSmokeEnabled = process.env.OPENCODE_TUI_SMOKE === "1";
+const renderedText = (value) => {
+  if (value == null || typeof value === "boolean") return "";
+  if (["string", "number"].includes(typeof value)) return String(value);
+  if (typeof value === "function") return renderedText(value());
+  if (Array.isArray(value)) return value.map(renderedText).join(" ");
+  return renderedText(value.props?.children);
+};
 
 test("snapshot is read-only when storage is absent", () => {
   const root = makeRoot();
@@ -214,6 +221,7 @@ test("real TUI loader mounts a live storage update without remount", { skip: !tu
     try {
       await setup.waitForFrame((frame) => frame.includes("02. Initial stage"));
       context.addStage("999978", "Added after mount");
+      await new Promise((resolve) => setTimeout(resolve, 30));
       await setup.waitForFrame((frame) => frame.includes("03. Added after mount"));
     } finally { setup.renderer.destroy(); }
   } finally {
@@ -785,6 +793,16 @@ test("session switcher ranks the current session, deduplicates native IDs, and k
   assert.equal(selectSession(entries, "oc-current").opencode_session_id, "oc-current");
 });
 
+test("session switcher keeps current first and ranks unread native sessions ahead of ordinary lifecycle peers", () => {
+  const entries = [
+    { workspace: { id: "000001" }, session: { opencode_session_id: "oc-active", state: "active" } },
+    { workspace: { id: "000001" }, session: { opencode_session_id: "oc-attention", state: "closed" } },
+    { workspace: { id: "000001" }, session: { opencode_session_id: "oc-current", state: "closed" } },
+  ];
+  const sorted = sortSessionSwitcherEntries(entries, "oc-current", (id) => id === "oc-attention" ? { reason: "question" } : null);
+  assert.deepEqual(sorted.map(({ session }) => session.opencode_session_id), ["oc-current", "oc-attention", "oc-active"]);
+});
+
 test("session switcher navigates read-only and reports host failures", () => {
   const navigated = [];
   const api = { route: { navigate: (...args) => navigated.push(args) }, ui: { dialog: { clear: () => {} } } };
@@ -792,6 +810,42 @@ test("session switcher navigates read-only and reports host failures", () => {
   assert.deepEqual(navigated, [["session", { sessionID: "oc-session" }]]);
   assert.equal(switchToSession(api, { session_id: "internal" }).error.code, "SESSION_OPENCODE_ID_MISSING");
   assert.equal(switchToSession({}, { opencode_session_id: "oc-session" }).error.code, "SESSION_SWITCH_UNAVAILABLE");
+});
+
+test("navigation acknowledges only the observed event after success and preserves newer or failed attention", () => {
+  let attention = { eventKey: "old", reason: "question" };
+  const acknowledged = [];
+  const api = {
+    workContextAttention: {
+      attentionFor: () => attention,
+      acknowledge: (id, key) => { acknowledged.push([id, key]); return attention?.eventKey === key; },
+    },
+    route: { navigate: () => { attention = { eventKey: "new", reason: "permission" }; } },
+    ui: { dialog: { clear: () => {} } },
+  };
+  assert.equal(switchToSession(api, { opencode_session_id: "oc-race" }).ok, true);
+  assert.deepEqual(acknowledged, [["oc-race", "old"]]);
+  assert.equal(attention.eventKey, "new");
+
+  acknowledged.length = 0;
+  api.route.navigate = () => { throw new Error("navigation failed"); };
+  assert.equal(switchToSession(api, { opencode_session_id: "oc-race" }).ok, false);
+  assert.deepEqual(acknowledged, []);
+});
+
+test("session switcher renders a color-independent attention marker and controlled reason", async () => {
+  let current;
+  const api = {
+    workContextAttention: { attentionFor: (id) => id === "oc-unread" ? { eventKey: "q-1", reason: "question" } : null },
+    route: { current: { params: {} }, navigate: () => {} },
+    ui: { DialogSelect: (props) => ({ props }), dialog: { replace: (render) => { current = render(); }, setSize: () => {} }, toast: () => {} },
+  };
+  const flow = createSessionSwitcherFlow(api, { read: async () => ({ ok: true, data: { workspaces: [{ id: "000001", title: "Demo", sessions: [
+    { stage: "01", ordinal: 1, session_id: "internal", opencode_session_id: "oc-unread", state: "active" },
+  ] }] } }) });
+  await flow.open();
+  assert.match(current.props.options[0].title, /^\[ATTN\]/);
+  assert.match(current.props.options[0].description, /needs attention: question/);
 });
 
 test("session switcher exposes current and historical sessions as searchable options", async () => {
@@ -959,10 +1013,32 @@ test("stage switcher exposes successful navigation history in a Recent section",
   assert.deepEqual(recentStageIds(api, "000008"), ["01", "02"]);
 
   await flow.open();
-  assert.equal(current.props.options[0].category, "Recent");
-  assert.equal(current.props.options[0].value.id, "02");
-  assert.equal(current.props.options[0].title.includes("02. Earlier"), true);
+  assert.equal(current.props.options[0].category, "Current");
+  const recent = current.props.options.find((option) => option.category === "Recent");
+  assert.equal(recent.value.id, "02");
+  assert.equal(recent.title.includes("02. Earlier"), true);
   assert.deepEqual(navigated, [["session", { sessionID: "oc-02" }]]);
+});
+
+test("stage switcher keeps current first and puts attention before ordinary destinations", async () => {
+  let current;
+  const api = {
+    workContextAttention: {
+      attentionFor: (id) => id === "oc-03" ? { eventKey: "q-1", reason: "question" } : null,
+      attentionForStage: (workspace, stage) => workspace === "000008" && stage === "03" ? { count: 1, reason: "question" } : null,
+    },
+    ui: { DialogSelect: (props) => ({ props }), dialog: { replace: (render) => { current = render(); }, setSize: () => {} }, toast: () => {} },
+  };
+  const stage = (id, title, isCurrent = false) => ({ id, title, status: "in_progress", current: isCurrent, sessions: [{ opencode_session_id: `oc-${id}` }] });
+  const flow = createStageSwitcherFlow(api, { read: async () => ({ ok: true, data: {
+    workspace: { id: "000008", title: "Attention", status: "in_progress" },
+    currentStage: "01",
+    stages: [stage("01", "Current", true), stage("02", "Ordinary"), stage("03", "Unread")],
+  } }) });
+  await flow.open();
+  assert.deepEqual(current.props.options.slice(0, 2).map((option) => option.category), ["Current", "Needs attention"]);
+  assert.match(current.props.options[1].title, /\[ATTN\].*03\. Unread/);
+  assert.match(current.props.options[1].description, /needs attention: question/);
 });
 
 test("stage switcher restores recent stages from project-local TUI state", () => {
@@ -1002,6 +1078,42 @@ test("workspace switcher selects the best existing session and keeps current wor
   assert.deepEqual(sortWorkspaceSwitcherEntries([
     { id: "000002", status: "planned" }, { id: "000001", status: "in_progress" },
   ], "000002").map((workspace) => workspace.id), ["000002", "000001"]);
+});
+
+test("workspace switcher preserves current priority then ranks attention and selects its native session", () => {
+  const attention = (id) => id === "oc-unread" ? { reason: "error" } : null;
+  assert.equal(selectWorkspaceSession([
+    { state: "active", opencode_session_id: "oc-ordinary" },
+    { state: "closed", opencode_session_id: "oc-unread" },
+  ], attention).opencode_session_id, "oc-unread");
+  assert.deepEqual(sortWorkspaceSwitcherEntries([
+    { id: "000001", status: "planned" },
+    { id: "000002", status: "completed" },
+    { id: "000003", status: "completed" },
+  ], "000001", (id) => id === "000003" ? { count: 1 } : null).map((workspace) => workspace.id), ["000001", "000003", "000002"]);
+});
+
+test("sidebar and modal render attention without theme color support", async () => {
+  const attention = {
+    subscribe: () => () => {},
+    attentionForWorkspace: (id) => id === "000001" ? { count: 1, reason: "permission" } : null,
+    attentionForStage: (workspace, stage) => workspace === "000001" && stage === "02" ? { count: 1, reason: "permission" } : null,
+    attentionFor: (id) => id === "oc-unread" ? { reason: "permission" } : null,
+  };
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const snapshot = { ok: true, data: { currentWorkspace: "000001", workspace: { id: "000001", title: "Demo", status: "in_progress" }, workspaces: [{
+    id: "000001", title: "Demo", status: "in_progress", stages: [{ id: "02", title: "Build", status: "in_progress" }],
+    sessions: [{ stage: "02", session_id: "internal", opencode_session_id: "oc-unread", state: "active" }],
+  }], stages: [{ id: "02", title: "Build", status: "in_progress" }], currentStage: "02" } };
+  assert.match(renderedText(renderStagesElement(snapshot, {}, runtime, attention)), /\[ATTN\].*\[ATTN: permission\]/);
+
+  const controller = createWorkContextModalController({ read: async () => snapshot, attention });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.match(renderedText(renderWorkContextModal(controller, {}, runtime)), /\[ATTN\].*\[ATTN: permission\]/);
+    controller.handleKey({ key: "Enter" });
+    assert.match(renderedText(renderWorkContextModal(controller, {}, runtime)), /\[ATTN: permission\].*internal/);
+  } finally { controller.dispose(); }
 });
 
 test("workspace switcher navigates existing sessions without mutating context", () => {

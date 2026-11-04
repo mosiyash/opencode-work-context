@@ -222,6 +222,41 @@ The shortcut is registered with the public keymap layer. If another plugin or
 terminal reserves `Ctrl+X`, remove or change the conflicting binding, or
 disable this TUI loader; the package does not use an internal keymap fallback.
 
+### Background Attention Notifications
+
+The optional TUI loader tracks linked OpenCode sessions that need attention.
+Questions, permission requests, errors, and a background session becoming idle
+after observed work remain marked with `[ATTN]` until that native session is
+opened. Attention does not change workspace or stage lifecycle state.
+
+On Linux, the loader also sends one best-effort desktop notification for newly
+created background attention when `notify-send` is installed and a desktop DBus
+session is available. Desktop delivery is enabled by default. Disable it while
+retaining in-app attention indicators with:
+
+```yaml
+notifications:
+  desktop: false
+```
+
+The package invokes the fixed `notify-send` executable directly without a shell
+or configurable command. Notification text contains only bounded, sanitized
+workspace and stage IDs/titles plus a controlled reason. It never includes
+prompts, messages, tool output, paths, secrets, or raw provider errors. Missing
+commands, unsupported platforms, unavailable desktop sessions, timeouts, and
+delivery errors are ignored so they cannot interrupt TUI startup or event
+processing. Notifications are not replayed after restart, and clicking one does
+not navigate to its session in this release.
+
+To verify an installed project manually, install the distribution package that
+provides `notify-send` (commonly `libnotify-bin`), ensure `notify-send "Test"`
+appears in the current desktop session, restart OpenCode, start work in a linked
+session, and switch to another native session before the first one finishes or
+asks a question. Expect one desktop notification and a persistent `[ATTN]`
+marker. Open the affected native session to clear the marker. Set
+`notifications.desktop` to `false`, restart OpenCode, and repeat to verify that
+only the marker remains.
+
 Tools are registered by the installed server export and are not copied into the
 project. Core and storage remain in the installed package; projects should not
 copy `src/` or `tools/`. `.work-context` Markdown, JSONL, `INDEX.md`, and

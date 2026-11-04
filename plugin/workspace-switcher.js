@@ -1,4 +1,5 @@
 import { readWorkContextSnapshot } from "../src/work-context-snapshot.js";
+import { acknowledgeNavigation, attentionForSession, attentionReasonText } from "./attention.js";
 
 const SESSION_STATE_RANK = { active: 0, handed_off: 1, abandoned: 2, closed: 3 };
 const WORKSPACE_STATUS_RANK = { in_progress: 0, planned: 1, completed: 2, cancelled: 3 };
@@ -8,15 +9,19 @@ const currentSessionId = (api) => api?.route?.current?.params?.sessionID || api?
 const projectRoot = (api) => api?.state?.path?.worktree || api?.state?.path?.directory;
 
 /** Select the best existing OpenCode session without changing work-context state. */
-export const selectWorkspaceSession = (sessions = []) => sessions
+export const selectWorkspaceSession = (sessions = [], attention) => sessions
   .filter((session) => session.opencode_session_id)
-  .sort((left, right) => (SESSION_STATE_RANK[left.state] ?? 9) - (SESSION_STATE_RANK[right.state] ?? 9)
+  .sort((left, right) => Number(Boolean(attention?.(right.opencode_session_id))) - Number(Boolean(attention?.(left.opencode_session_id)))
+    || (SESSION_STATE_RANK[left.state] ?? 9) - (SESSION_STATE_RANK[right.state] ?? 9)
     || String(right.updated_at || right.started_at || "").localeCompare(String(left.updated_at || left.started_at || ""))
     || Number(right.ordinal || 0) - Number(left.ordinal || 0))[0] || null;
 
-export const sortWorkspaceSwitcherEntries = (workspaces = [], currentWorkspace = null) => [...workspaces].sort((left, right) => {
+export const sortWorkspaceSwitcherEntries = (workspaces = [], currentWorkspace = null, attention) => [...workspaces].sort((left, right) => {
   if (left.id === currentWorkspace) return -1;
   if (right.id === currentWorkspace) return 1;
+  const leftAttention = Boolean(attention?.(left.id));
+  const rightAttention = Boolean(attention?.(right.id));
+  if (leftAttention !== rightAttention) return leftAttention ? -1 : 1;
   return (WORKSPACE_STATUS_RANK[left.status] ?? 9) - (WORKSPACE_STATUS_RANK[right.status] ?? 9)
     || left.id.localeCompare(right.id);
 });
@@ -24,8 +29,10 @@ export const sortWorkspaceSwitcherEntries = (workspaces = [], currentWorkspace =
 const navigateToSession = (api, sessionID) => {
   if (typeof api?.route?.navigate !== "function") return errorResult("SESSION_SWITCH_UNAVAILABLE", "This OpenCode host cannot switch sessions from a TUI plugin");
   try {
+    const observed = attentionForSession(api, sessionID)?.eventKey;
     api.ui?.dialog?.clear?.();
     api.route.navigate("session", { sessionID });
+    acknowledgeNavigation(api, sessionID, observed);
     return { ok: true, data: { opencode_session_id: sessionID, created: false } };
   } catch (error) {
     return errorResult(error.code || "SESSION_SWITCH_ERROR", error.message || "OpenCode could not open the selected session");
@@ -49,8 +56,10 @@ export const createWorkspaceSwitcherFlow = (api, { read = readWorkContextSnapsho
       return result;
     }
     const data = result.data || {};
-    const workspaces = sortWorkspaceSwitcherEntries(data.workspaces || [], data.currentWorkspace)
-      .map((workspace) => ({ ...workspace, selectedSession: selectWorkspaceSession(workspace.sessions) }));
+    const workspaceAttention = (id) => api.workContextAttention?.attentionForWorkspace?.(id);
+    const sessionAttention = (id) => attentionForSession(api, id);
+    const workspaces = sortWorkspaceSwitcherEntries(data.workspaces || [], data.currentWorkspace, workspaceAttention)
+      .map((workspace) => ({ ...workspace, attention: workspaceAttention(workspace.id), selectedSession: selectWorkspaceSession(workspace.sessions, sessionAttention) }));
     if (!workspaces.length) {
       toast("No workspaces found");
       return result;
@@ -60,9 +69,9 @@ export const createWorkspaceSwitcherFlow = (api, { read = readWorkContextSnapsho
       title: "Switch workspace",
       placeholder: "Search workspaces",
       options: workspaces.map((workspace) => ({
-        title: `${workspace.id}  ${workspace.title}${workspace.id === data.currentWorkspace ? " · current" : ""}`,
+        title: `${workspace.attention ? "[ATTN] " : ""}${workspace.id}  ${workspace.title}${workspace.id === data.currentWorkspace ? " · current" : ""}`,
         description: workspace.selectedSession
-          ? `${workspace.status} · ${workspace.selectedSession.state || "unknown"} session`
+          ? `${workspace.attention ? `needs attention: ${attentionReasonText(workspace.attention.reason)} (${workspace.attention.count}) · ` : ""}${workspace.status} · ${workspace.selectedSession.state || "unknown"} session`
           : `${workspace.status} · no OpenCode session available`,
         category: workspace.id === data.currentWorkspace ? "Current" : workspace.status,
         disabled: !workspace.selectedSession,

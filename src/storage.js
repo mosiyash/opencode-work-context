@@ -288,7 +288,7 @@ export class FileStorage {
 
 export function loadConfig(projectRoot, configFile = path.resolve(projectRoot, ".work-context", "config.yaml")) {
   if (!fs.existsSync(configFile)) return {};
-  const data = Object.assign(Object.create(null), { storage: Object.create(null), title: Object.create(null), tracker: Object.create(null) });
+  const data = Object.assign(Object.create(null), { storage: Object.create(null), title: Object.create(null), tracker: Object.create(null), notifications: Object.create(null) });
   let section = null;
   for (const line of fs.readFileSync(configFile, "utf8").split("\n")) {
     if (!line.trim() || line.trim().startsWith("#")) continue;
@@ -296,8 +296,8 @@ export function loadConfig(projectRoot, configFile = path.resolve(projectRoot, "
     if (!match[1]) { section = match[3] ? null : match[2]; if (match[3]) data[match[2]] = scalarConfig(match[3]); else if (!data[match[2]] || typeof data[match[2]] !== "object") data[match[2]] = Object.create(null); continue; }
     if (section && data[section] && typeof data[section] === "object") data[section][match[2]] = scalarConfig(match[3]);
   }
-  if (Object.keys(data).some((key) => !["schema", "storage", "title", "tracker"].includes(key)) || Object.keys(data.storage).some((key) => !["mode", "root", "personal_root"].includes(key)) || Object.keys(data.title).some((key) => key !== "issue_prefix") || Object.keys(data.tracker).some((key) => key !== "provider") || data.schema !== 1 || !data.storage || !["personal", "shared-git", "hybrid"].includes(data.storage.mode) || typeof data.storage.root !== "string" || typeof data.storage.personal_root !== "string" || !data.title || !["none", "short", "full"].includes(data.title.issue_prefix) || !data.tracker || (data.tracker.provider !== null && typeof data.tracker.provider !== "string")) fail(ERROR_CODES.STORAGE_ERROR, "Invalid work-context config");
+  if (Object.keys(data).some((key) => !["schema", "storage", "title", "tracker", "notifications"].includes(key)) || Object.keys(data.storage).some((key) => !["mode", "root", "personal_root"].includes(key)) || Object.keys(data.title).some((key) => key !== "issue_prefix") || Object.keys(data.tracker).some((key) => key !== "provider") || !data.notifications || typeof data.notifications !== "object" || Array.isArray(data.notifications) || Object.keys(data.notifications).some((key) => key !== "desktop") || data.schema !== 1 || !data.storage || !["personal", "shared-git", "hybrid"].includes(data.storage.mode) || typeof data.storage.root !== "string" || typeof data.storage.personal_root !== "string" || !data.title || !["none", "short", "full"].includes(data.title.issue_prefix) || !data.tracker || (data.tracker.provider !== null && typeof data.tracker.provider !== "string") || (data.notifications.desktop !== undefined && typeof data.notifications.desktop !== "boolean")) fail(ERROR_CODES.STORAGE_ERROR, "Invalid work-context config");
   return data;
 }
 const scalarConfig = (value) => value === "null" ? null : value === "[]" ? [] : value === "{}" ? {} : /^(true|false)$/.test(value) ? value === "true" : /^-?\d+(\.\d+)?$/.test(value) ? Number(value) : value;
-export const defaultConfig = () => `schema: 1\nstorage:\n  mode: hybrid\n  root: .work-context\n  personal_root: .work-context/local\ntitle:\n  issue_prefix: short\ntracker:\n  provider: null\n`;
+export const defaultConfig = () => `schema: 1\nstorage:\n  mode: hybrid\n  root: .work-context\n  personal_root: .work-context/local\ntitle:\n  issue_prefix: short\ntracker:\n  provider: null\nnotifications:\n  desktop: true\n`;

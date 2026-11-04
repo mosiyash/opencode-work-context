@@ -1,13 +1,11 @@
-import fs from "node:fs";
-import path from "node:path";
 import { contextFor } from "../src/opencode-adapter.js";
-import { atomicWrite } from "../src/storage.js";
 import { isDependencySatisfied } from "../src/stage-status.js";
+import { readTuiState, updateTuiState } from "./tui-state.js";
+import { acknowledgeNavigation, attentionForSession, attentionReasonText } from "./attention.js";
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "archived"]);
 const SESSION_STATE_RANK = { active: 0, handed_off: 1, abandoned: 2, closed: 3 };
 const RECENT_STAGE_LIMIT = 5;
-const RECENT_STATE_FILE = path.join(".work-context", "local", "tui-state.json");
 const recentStagesByApi = new WeakMap();
 
 const errorResult = (code, message, details = {}) => ({ ok: false, error: { code, message, details } });
@@ -15,24 +13,16 @@ const currentSessionId = (api) => api?.route?.current?.params?.sessionID || api?
 const projectRoot = (api) => api?.state?.path?.worktree || api?.state?.path?.directory;
 
 const readRecentState = (root) => {
-  if (!root) return {};
-  try {
-    const file = path.join(root, RECENT_STATE_FILE);
-    if (!fs.lstatSync(file).isFile()) return {};
-    const state = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (!state || state.schema !== 1 || !state.recent_stages || typeof state.recent_stages !== "object") return {};
-    return Object.fromEntries(Object.entries(state.recent_stages).map(([workspace, stages]) => [
-      workspace,
-      Array.isArray(stages) ? stages.filter((stage) => /^\d{2}$/.test(stage)).slice(0, RECENT_STAGE_LIMIT) : [],
-    ]));
-  } catch { return {}; }
+  const recent = readTuiState(root).recent_stages;
+  if (!recent || typeof recent !== "object" || Array.isArray(recent)) return {};
+  return Object.fromEntries(Object.entries(recent).map(([workspace, stages]) => [
+    workspace,
+    Array.isArray(stages) ? stages.filter((stage) => /^\d{2}$/.test(stage)).slice(0, RECENT_STAGE_LIMIT) : [],
+  ]));
 };
 
 const persistRecentState = (root, store) => {
-  if (!root) return;
-  try {
-    atomicWrite(path.join(root, RECENT_STATE_FILE), `${JSON.stringify({ schema: 1, recent_stages: Object.fromEntries(store) }, null, 2)}\n`);
-  } catch {}
+  updateTuiState(root, (state) => ({ ...state, recent_stages: Object.fromEntries(store) }));
 };
 
 const recentStageStore = (api) => {
@@ -55,9 +45,10 @@ export const rememberRecentStage = (api, workspace, stage) => {
 
 export const recentStageIds = (api, workspace) => [...(recentStageStore(api).get(workspace) || [])];
 
-export const selectStageSession = (sessions = []) => sessions
+export const selectStageSession = (sessions = [], attention) => sessions
   .filter((session) => session.opencode_session_id)
-  .sort((left, right) => (SESSION_STATE_RANK[left.state] ?? 9) - (SESSION_STATE_RANK[right.state] ?? 9)
+  .sort((left, right) => Number(Boolean(attention?.(right.opencode_session_id))) - Number(Boolean(attention?.(left.opencode_session_id)))
+    || (SESSION_STATE_RANK[left.state] ?? 9) - (SESSION_STATE_RANK[right.state] ?? 9)
     || String(right.updated_at || right.started_at || "").localeCompare(String(left.updated_at || left.started_at || ""))
     || Number(right.ordinal || 0) - Number(left.ordinal || 0))[0] || null;
 
@@ -100,8 +91,10 @@ export const readStageSwitcherSnapshot = ({ projectRoot: root, sessionId } = {})
 const navigateToSession = (api, sessionID) => {
   if (typeof api?.route?.navigate !== "function") return errorResult("SESSION_SWITCH_UNAVAILABLE", "This OpenCode host cannot switch sessions from a TUI plugin");
   try {
+    const observed = attentionForSession(api, sessionID)?.eventKey;
     api.ui?.dialog?.clear?.();
     api.route.navigate("session", { sessionID });
+    acknowledgeNavigation(api, sessionID, observed);
     return { ok: true, data: { opencode_session_id: sessionID, created: false } };
   } catch (error) {
     return errorResult(error.code || "SESSION_SWITCH_ERROR", error.message || "OpenCode could not open the selected session");
@@ -176,16 +169,22 @@ export const createStageSwitcherFlow = (api, { read = readStageSwitcherSnapshot,
     catch (error) { result = errorResult(error.code || "STORAGE_ERROR", error.message || "Cannot read work-context storage"); }
     if (!result?.ok) { toast(`${result?.error?.code || "STORAGE_ERROR"}: ${result?.error?.message || "Cannot read work-context storage"}`, "error"); return result; }
     const { workspace, stages } = result.data;
+    const sessionAttention = (id) => attentionForSession(api, id);
+    const stageAttention = (id) => api.workContextAttention?.attentionForStage?.(workspace.id, id);
+    const decorated = stages.map((stage) => ({ ...stage, attention: stageAttention(stage.id), selectedSession: selectStageSession(stage.sessions, sessionAttention) }));
     rememberRecentStage(api, workspace.id, result.data.currentStage);
     const recent = recentStageIds(api, workspace.id)
-      .map((id) => stages.find((stage) => stage.id === id))
+      .map((id) => decorated.find((stage) => stage.id === id))
       .filter((stage) => stage && !stage.current);
+    const current = decorated.filter((stage) => stage.current);
+    const needsAttention = decorated.filter((stage) => !stage.current && stage.attention);
+    const ordinary = decorated.filter((stage) => !stage.current && !stage.attention);
     const optionFor = (stage, category) => {
       const available = (stage.sessions || []).filter((session) => session.opencode_session_id).length;
       const state = stage.blocked ? `blocked by ${stage.blockers.join(", ")}` : stage.status;
       return {
-        title: `${stage.current ? ">" : " "} ${stage.id}. ${stage.title}`,
-        description: `${state} · ${available ? `${available} session${available === 1 ? "" : "s"}` : TERMINAL_STATUSES.has(stage.status) || stage.blocked ? "no session available" : "new session"}`,
+        title: `${stage.current ? ">" : " "} ${stage.attention ? "[ATTN] " : ""}${stage.id}. ${stage.title}`,
+        description: `${stage.attention ? `needs attention: ${attentionReasonText(stage.attention.reason)} (${stage.attention.count}) · ` : ""}${state} · ${available ? `${available} session${available === 1 ? "" : "s"}` : TERMINAL_STATUSES.has(stage.status) || stage.blocked ? "no session available" : "new session"}`,
         category,
         disabled: (TERMINAL_STATUSES.has(stage.status) || stage.blocked) && !available,
         value: stage,
@@ -196,8 +195,10 @@ export const createStageSwitcherFlow = (api, { read = readStageSwitcherSnapshot,
       title: `Switch stage · ${workspace.id}  ${workspace.title}`,
       placeholder: "Search stages",
       options: [
-        ...recent.map((stage) => optionFor(stage, "Recent")),
-        ...stages.map((stage) => optionFor(stage, stage.current ? "Current" : stage.status)),
+        ...current.map((stage) => optionFor(stage, "Current")),
+        ...needsAttention.map((stage) => optionFor(stage, "Needs attention")),
+        ...recent.filter((stage) => !stage.attention).map((stage) => optionFor(stage, "Recent")),
+        ...ordinary.map((stage) => optionFor(stage, stage.status)),
       ],
       onSelect: (option) => void (async () => {
         const switched = await switchToStage(api, option.value, { workspace: workspace.id, currentStage: result.data.currentStage, start });

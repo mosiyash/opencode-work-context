@@ -4,6 +4,7 @@ import { readStagesSnapshot } from "../src/stages-snapshot.js";
 import { renderStagesPanel } from "../src/stages-renderer.js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createSignal } from "solid-js";
+import { attentionReasonText } from "./attention.js";
 
 const DEBOUNCE_MS = 150;
 const POLL_MS = 1000;
@@ -24,7 +25,7 @@ export { readStagesSnapshot, renderStagesPanel };
 
 const defaultRuntime = { jsx };
 
-const renderStagesContent = (result, theme, runtime = defaultRuntime) => !result?.ok || !result.data?.workspace
+const renderStagesContent = (result, theme, runtime = defaultRuntime, attention) => !result?.ok || !result.data?.workspace
   ? [
     runtime.jsx("text", { children: runtime.jsx("b", { children: "Stages" }) }),
     ...renderStagesPanel(result).split("\n").slice(1).map((line) => runtime.jsx("text", { children: line })),
@@ -32,7 +33,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime) => !result
   : [
     runtime.jsx("box", {
       marginBottom: 1,
-      children: runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: result.data.workspace.title }) }),
+      children: runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: `${attention?.attentionForWorkspace?.(result.data.workspace.id) ? "[ATTN] " : ""}${result.data.workspace.title}` }) }),
     }),
     runtime.jsx("box", {
       flexDirection: "row",
@@ -41,19 +42,22 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime) => !result
         runtime.jsx("text", { fg: theme?.current?.textMuted, children: ` · ${result.data.workspace.status}` }),
       ],
     }),
-    ...result.data.stages.map((stage) => runtime.jsx("box", {
-      flexDirection: "row",
-      children: [
-        runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
-        runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: `${stage.id}. ${stage.title}` }),
-      ],
-    })),
+    ...result.data.stages.map((stage) => {
+      const unread = attention?.attentionForStage?.(result.data.workspace.id, stage.id);
+      return runtime.jsx("box", {
+        flexDirection: "row",
+        children: [
+          runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
+          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: `${stage.id}. ${stage.title}${unread ? ` [ATTN: ${attentionReasonText(unread.reason)}${unread.count > 1 ? ` x${unread.count}` : ""}]` : ""}` }),
+        ],
+      });
+    }),
   ];
 
-export const renderStagesElement = (result, theme, runtime = defaultRuntime) => {
+export const renderStagesElement = (result, theme, runtime = defaultRuntime, attention) => {
   return runtime.jsx("box", {
   flexDirection: "column",
-  children: () => renderStagesContent(typeof result === "function" ? result() : result, theme, runtime),
+  children: () => renderStagesContent(typeof result === "function" ? result() : result, theme, runtime, attention),
   });
 };
 
@@ -89,13 +93,14 @@ const disposeRegistration = (registration) => {
   else registration?.dispose?.();
 };
 
-export const createStagesTuiController = ({ projectRoot, read = readStagesSnapshot, debounceMs = DEBOUNCE_MS, pollMs = POLL_MS, createSignal: makeSignal = createSignal } = {}) => {
+export const createStagesTuiController = ({ projectRoot, read = readStagesSnapshot, debounceMs = DEBOUNCE_MS, pollMs = POLL_MS, createSignal: makeSignal = createSignal, attention } = {}) => {
   const snapshots = new Map();
   const generations = new Map();
   const timers = new Map();
   const pollers = new Map();
   const [version, setVersion] = makeSignal(0);
   let disposed = false;
+  const unsubscribeAttention = attention?.subscribe?.(() => setVersion((value) => value + 1));
 
   const readSnapshot = async (sessionId) => {
     if (disposed || !sessionId) return;
@@ -164,6 +169,7 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
       for (const poller of pollers.values()) clearInterval(poller);
       pollers.clear();
       snapshots.clear();
+      unsubscribeAttention?.();
     },
   };
 };
@@ -191,9 +197,9 @@ export const resolveProjectRoot = async (api, { timeoutMs = PATH_TIMEOUT_MS, pol
   return null;
 };
 
-const renderStagesSlot = (controller, theme, sessionId, runtime = defaultRuntime) => runtime.jsx("box", {
+const renderStagesSlot = (controller, theme, sessionId, runtime = defaultRuntime, attention) => runtime.jsx("box", {
   flexDirection: "column",
-  children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime),
+  children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime, attention),
 });
 
 const ACTIVE_WORKSPACE_SESSION = "__active_" + "work" + "_context_workspace__";
@@ -215,6 +221,7 @@ export const tui = async (api, options = {}) => {
     debounceMs: options.debounceMs,
     pollMs: options.pollMs,
     createSignal: options.runtime?.createSignal,
+    attention: api.workContextAttention,
   });
   await controller.load(initialSessionId);
   let currentSessionId = initialSessionId;
@@ -234,7 +241,7 @@ export const tui = async (api, options = {}) => {
       sidebar_content: (slotContext = {}, slotState = {}) => {
         const sessionId = sessionIdForSlot(api, initialSessionId, slotContext, slotState) || ACTIVE_WORKSPACE_SESSION;
         currentSessionId = sessionId;
-        return renderStagesSlot(controller, api.theme, sessionId, options.runtime);
+        return renderStagesSlot(controller, api.theme, sessionId, options.runtime, api.workContextAttention);
       },
     },
   });

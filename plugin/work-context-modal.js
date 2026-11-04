@@ -7,6 +7,7 @@ import { createSignal } from "solid-js";
 import { openStageSwitcher } from "./stage-switcher.js";
 import { openWorkspaceSwitcher } from "./workspace-switcher.js";
 import { openSessionSwitcher } from "./session-switcher.js";
+import { attentionForSession, attentionReasonText } from "./attention.js";
 
 const COMMAND_NAME = "work_context.open";
 const ACTIONS_COMMAND_NAME = "work_context.actions";
@@ -115,6 +116,7 @@ export const createWorkContextModalController = ({
   createSignal: makeSignal = createSignal,
   onClose = () => {},
   onCommand = () => {},
+  attention,
 } = {}) => {
   const [version, setVersion] = makeSignal(0);
   const [query, setQuery] = makeSignal("");
@@ -127,6 +129,7 @@ export const createWorkContextModalController = ({
   let poller;
   let disposed = false;
   let onSelectionChange = () => {};
+  const unsubscribeAttention = attention?.subscribe?.(() => setVersion((value) => value + 1));
 
   const refresh = async () => {
     if (disposed) return;
@@ -149,7 +152,17 @@ export const createWorkContextModalController = ({
     timer = setTimeout(() => { timer = undefined; void refresh(); }, debounceMs);
   };
   const snapshot = () => { version(); return result; };
-  const workspaces = () => filterWorkspaces(snapshot()?.data?.workspaces || [], query());
+  const workspaces = () => {
+    const data = snapshot()?.data || {};
+    return filterWorkspaces(data.workspaces || [], query())
+      .map((workspace) => ({
+        ...workspace,
+        stages: [...(workspace.stages || [])].sort((left, right) => Number(Boolean(right.current)) - Number(Boolean(left.current))
+          || Number(Boolean(attention?.attentionForStage?.(workspace.id, right.id))) - Number(Boolean(attention?.attentionForStage?.(workspace.id, left.id)))),
+      }))
+      .sort((left, right) => Number(right.id === data.currentWorkspace) - Number(left.id === data.currentWorkspace)
+        || Number(Boolean(attention?.attentionForWorkspace?.(right.id))) - Number(Boolean(attention?.attentionForWorkspace?.(left.id))));
+  };
   const selectedWorkspace = () => workspaces()[Math.min(workspaceIndex(), Math.max(0, workspaces().length - 1))] || null;
   const selectedStage = () => selectedWorkspace()?.stages?.[Math.min(stageIndex(), Math.max(0, (selectedWorkspace()?.stages || []).length - 1))] || null;
   const [preparedCommand, setPreparedCommand] = makeSignal(null);
@@ -200,9 +213,9 @@ export const createWorkContextModalController = ({
   void refresh();
   if (pollMs) poller = setInterval(scheduleRefresh, pollMs);
   return {
-    snapshot, query, setQuery, workspaces, selectedWorkspace, selectedStage, details, preparedCommand, prepareCommand, insertCommand, handleKey, scheduleRefresh,
+    snapshot, query, setQuery, workspaces, selectedWorkspace, selectedStage, details, preparedCommand, prepareCommand, insertCommand, handleKey, scheduleRefresh, attention,
     onSelectionChange: (handler) => { onSelectionChange = typeof handler === "function" ? handler : () => {}; },
-    dispose: () => { disposed = true; clearTimeout(timer); clearInterval(poller); },
+    dispose: () => { disposed = true; clearTimeout(timer); clearInterval(poller); unsubscribeAttention?.(); },
   };
 };
 
@@ -228,19 +241,25 @@ export const renderWorkContextModal = (controller, theme, runtime = { jsx }, { m
     const muted = theme?.current?.textMuted;
     const selectedWorkspaceIndex = selected ? workspaces.indexOf(selected) : -1;
     const selectedStageIndex = stage && selected ? (selected.stages || []).indexOf(stage) : -1;
-    const workspaceItems = workspaces.map((workspace, index) => runtime.jsx("box", {
-      id: `workspace-${workspace.id}`, flexDirection: "row", gap: 1, children: [
-        line(runtime, index === selectedWorkspaceIndex ? ">" : " ", { flexShrink: 0, marginRight: 1, fg: index === selectedWorkspaceIndex ? theme?.current?.text : muted }),
-        line(runtime, `${workspace.id}  ${workspace.title}`, { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: workspace.id === data?.currentWorkspace ? theme?.current?.warning : theme?.current?.text }),
-        line(runtime, workspace.status, { flexShrink: 0, fg: muted }),
-      ],
-    }));
-    const stageItems = selected ? (selected.stages || []).map((item, index) => runtime.jsx("box", {
-      id: `stage-${item.id}`, flexDirection: "row", children: [
-        line(runtime, index === selectedStageIndex ? ">" : " ", { flexShrink: 0, marginRight: 1, fg: index === selectedStageIndex ? theme?.current?.text : muted }),
-        line(runtime, `${marker(item.status)} ${item.id}. ${item.title}${item.current ? " · current" : ""}`, { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: item.current ? theme?.current?.warning : theme?.current?.text }),
-      ],
-    })) : [];
+    const workspaceItems = workspaces.map((workspace, index) => {
+      const unread = controller.attention?.attentionForWorkspace?.(workspace.id);
+      return runtime.jsx("box", {
+        id: `workspace-${workspace.id}`, flexDirection: "row", gap: 1, children: [
+          line(runtime, index === selectedWorkspaceIndex ? ">" : " ", { flexShrink: 0, marginRight: 1, fg: index === selectedWorkspaceIndex ? theme?.current?.text : muted }),
+          line(runtime, `${unread ? "[ATTN] " : ""}${workspace.id}  ${workspace.title}`, { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: workspace.id === data?.currentWorkspace ? theme?.current?.warning : theme?.current?.text }),
+          line(runtime, workspace.status, { flexShrink: 0, fg: muted }),
+        ],
+      });
+    });
+    const stageItems = selected ? (selected.stages || []).map((item, index) => {
+      const unread = controller.attention?.attentionForStage?.(selected.id, item.id);
+      return runtime.jsx("box", {
+        id: `stage-${item.id}`, flexDirection: "row", children: [
+          line(runtime, index === selectedStageIndex ? ">" : " ", { flexShrink: 0, marginRight: 1, fg: index === selectedStageIndex ? theme?.current?.text : muted }),
+          line(runtime, `${marker(item.status)} ${item.id}. ${item.title}${item.current ? " · current" : ""}${unread ? ` [ATTN: ${attentionReasonText(unread.reason)}${unread.count > 1 ? ` x${unread.count}` : ""}]` : ""}`, { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: item.current ? theme?.current?.warning : theme?.current?.text }),
+        ],
+      });
+    }) : [];
     const children = [runtime.jsx("box", {
       flexDirection: "row", justifyContent: "space-between", paddingLeft: 2, paddingRight: 2,
       children: [
@@ -270,7 +289,10 @@ export const renderWorkContextModal = (controller, theme, runtime = { jsx }, { m
             line(runtime, "Details", { marginTop: 1, fg: muted }),
             line(runtime, stage.description || "No description.", { wrapMode: "word", fg: theme?.current?.text }),
             line(runtime, `Sessions  ${(selected.sessions || []).length}`, { fg: muted }),
-            ...(selected.sessions || []).map((session) => line(runtime, `${session.state || "unknown"}  ${session.session_id || "unknown"}  stage ${session.stage || "-"}`, { wrapMode: "word", fg: muted })),
+            ...(selected.sessions || []).map((session) => {
+              const unread = controller.attention?.attentionFor?.(session.opencode_session_id);
+              return line(runtime, `${unread ? `[ATTN: ${attentionReasonText(unread.reason)}]  ` : ""}${session.state || "unknown"}  ${session.session_id || "unknown"}  stage ${session.stage || "-"}`, { wrapMode: "word", fg: muted });
+            }),
           ] : []),
         ] }),
       ],
@@ -409,10 +431,14 @@ export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read 
     const workspaces = [...loaded.workspaces].sort((left, right) => {
       if (left.id === loaded.currentWorkspace) return -1;
       if (right.id === loaded.currentWorkspace) return 1;
+      const leftAttention = api.workContextAttention?.attentionForWorkspace?.(left.id);
+      const rightAttention = api.workContextAttention?.attentionForWorkspace?.(right.id);
+      if (Boolean(leftAttention) !== Boolean(rightAttention)) return leftAttention ? -1 : 1;
       return (rank[left.status] ?? 9) - (rank[right.status] ?? 9) || left.id.localeCompare(right.id);
     });
     const options = workspaces.flatMap((workspace) => {
-      const category = `${workspace.id} · ${workspace.title} · ${workspace.status}`;
+      const unread = api.workContextAttention?.attentionForWorkspace?.(workspace.id);
+      const category = `${unread ? "[ATTN] " : ""}${workspace.id} · ${workspace.title} · ${workspace.status}`;
       return [
         { title: "Overview", description: workspace.status, footer: progress(workspace), category, value: { type: "workspace", workspace } },
         ...(workspace.stages || []).map((stage) => ({
@@ -437,17 +463,23 @@ export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read 
     entries.sort((left, right) => {
       if (left.stage.current) return -1;
       if (right.stage.current) return 1;
+      const leftAttention = api.workContextAttention?.attentionForStage?.(left.workspace.id, left.stage.id);
+      const rightAttention = api.workContextAttention?.attentionForStage?.(right.workspace.id, right.stage.id);
+      if (Boolean(leftAttention) !== Boolean(rightAttention)) return leftAttention ? -1 : 1;
       return (rank[left.stage.status] ?? 9) - (rank[right.stage.status] ?? 9)
         || left.workspace.id.localeCompare(right.workspace.id)
         || Number(left.stage.id) - Number(right.stage.id);
     });
     const labels = { in_progress: "In progress", planned: "Planned", completed: "Completed", cancelled: "Cancelled" };
-    showSelect("Stages", entries.map(({ workspace, stage }) => ({
-      title: `${marker(stage.status)} ${workspace.id}/${stage.id}  ${stage.title} · ${workspace.title}`,
-      description: stage.description || stage.status,
-      category: stage.current ? "Current" : labels[stage.status] || stage.status,
-      value: { workspace, stage },
-    })), (option) => showStageActions(option.value.workspace, option.value.stage, { backTitle: "Back to stages", onBack: () => void browseStages() }));
+    showSelect("Stages", entries.map(({ workspace, stage }) => {
+      const unread = api.workContextAttention?.attentionForStage?.(workspace.id, stage.id);
+      return {
+        title: `${marker(stage.status)} ${unread ? "[ATTN] " : ""}${workspace.id}/${stage.id}  ${stage.title} · ${workspace.title}`,
+        description: unread ? `Needs attention: ${attentionReasonText(unread.reason)} (${unread.count}) · ${stage.description || stage.status}` : stage.description || stage.status,
+        category: stage.current ? "Current" : labels[stage.status] || stage.status,
+        value: { workspace, stage },
+      };
+    }), (option) => showStageActions(option.value.workspace, option.value.stage, { backTitle: "Back to stages", onBack: () => void browseStages() }));
   };
   const sessionOrdinal = (session) => String(session.ordinal).includes("/")
     ? String(session.ordinal)
@@ -482,15 +514,19 @@ export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read 
       const rightCurrent = right.session.opencode_session_id === sessionId || right.session.session_id === sessionId;
       if (leftCurrent) return -1;
       if (rightCurrent) return 1;
+      const leftAttention = attentionForSession(api, left.session.opencode_session_id);
+      const rightAttention = attentionForSession(api, right.session.opencode_session_id);
+      if (Boolean(leftAttention) !== Boolean(rightAttention)) return leftAttention ? -1 : 1;
       return (rank[left.session.state] ?? 9) - (rank[right.session.state] ?? 9)
         || String(right.session.updated_at || "").localeCompare(String(left.session.updated_at || ""));
     });
     const labels = { active: "Active", handed_off: "Handed off", abandoned: "Abandoned", closed: "Closed" };
     showSelect("Sessions", entries.map(({ workspace, session }) => {
       const current = session.opencode_session_id === sessionId || session.session_id === sessionId;
+      const unread = attentionForSession(api, session.opencode_session_id);
       return {
-        title: `${workspace.id} ${sessionOrdinal(session)}  ${session.summary || "Work session"} · ${workspace.title}`,
-        description: `${session.state || "unknown"} · ${session.session_id}`,
+        title: `${unread ? "[ATTN] " : ""}${workspace.id} ${sessionOrdinal(session)}  ${session.summary || "Work session"} · ${workspace.title}`,
+        description: `${unread ? `needs attention: ${attentionReasonText(unread.reason)} · ` : ""}${session.state || "unknown"} · ${session.session_id}`,
         footer: session.updated_at || session.started_at,
         category: current ? "Current" : labels[session.state] || session.state || "Unknown",
         value: { workspace, session },
@@ -541,7 +577,7 @@ export const openCompatibilityDialog = (api, runtime = {}, options = {}) => {
     watcher?.close();
     closeDialog(api);
   };
-  const controller = createWorkContextModalController({ projectRoot, sessionId, read: options.read || readWorkContextSnapshot, createSignal: runtime.createSignal, onClose: close, onCommand: (command) => insertPromptCommand(api, command) });
+  const controller = createWorkContextModalController({ projectRoot, sessionId, read: options.read || readWorkContextSnapshot, createSignal: runtime.createSignal, attention: api.workContextAttention, onClose: close, onCommand: (command) => insertPromptCommand(api, command) });
   try { watcher = projectRoot && fs.watch(path.join(projectRoot, ".work-context"), { recursive: true }, () => controller.scheduleRefresh?.()); } catch {}
   const maxListHeight = Math.max(8, Math.floor((api.renderer?.height || 60) / 2) - 6);
   const render = () => renderWorkContextModal(controller, api.theme, runtime, { maxListHeight });
