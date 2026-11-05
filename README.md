@@ -268,7 +268,9 @@ owned by an OpenCode instance other than the most recently active live instance.
 Each instance refreshes its lease independently, so a crashed process expires
 without holding ownership. If the global channel is unavailable, focus falls
 back to OpenTUI's renderer events and unknown focus is conservatively treated as
-foreground.
+foreground. Attention indicators omit the native session already open in the
+current route; retained background state is acknowledged when that session
+receives focus or keyboard activity.
 
 To verify cross-project delivery, install and load the TUI integration in two
 projects, start work in linked session A, then interact with OpenCode B before A

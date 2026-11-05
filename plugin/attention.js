@@ -78,7 +78,9 @@ export const globalAttentionToast = (event) => {
     duration: 5000,
   };
 };
-export const attentionForSession = (api, sessionId) => api?.workContextAttention?.attentionFor?.(sessionId) || null;
+export const attentionForSession = (api, sessionId) => sessionId === currentSessionId(api)
+  ? null
+  : api?.workContextAttention?.attentionFor?.(sessionId) || null;
 export const acknowledgeNavigation = (api, sessionId, observedEventKey) => {
   if (!sessionId || !observedEventKey) return false;
   return api?.workContextAttention?.acknowledge?.(sessionId, observedEventKey) === true;
@@ -306,7 +308,9 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
   const acknowledge = (sessionId, observedEventKey) => engine.acknowledge(sessionId, observedEventKey);
   const aggregate = (matches) => {
     const bySession = new Map();
+    const current = currentSessionId(api);
     for (const attention of engine.list()) {
+      if (attention.sessionId === current) continue;
       const records = (snapshot?.workspaces || []).flatMap((workspace) => (workspace.sessions || [])
         .filter((session) => session.opencode_session_id === attention.sessionId)
         .map((session) => ({ workspace, session })));

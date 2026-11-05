@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createAttentionEngine, createAttentionTuiController, globalAttentionToast, normalizeAttentionEvent, tui } from "../plugin/attention.js";
+import { attentionForSession, createAttentionEngine, createAttentionTuiController, globalAttentionToast, normalizeAttentionEvent, tui } from "../plugin/attention.js";
 import { createGlobalAttentionChannel } from "../plugin/global-attention.js";
 import { createTuiFocusTracker } from "../plugin/tui-focus.js";
 import { readTuiState, updateTuiState } from "../plugin/tui-state.js";
@@ -201,13 +201,20 @@ test("terminal blur makes the current native session background until focus retu
   const controller = createAttentionTuiController({
     api,
     projectRoot: root,
-    read: async () => snapshot("oc-linked"),
+    read: async () => ({ ok: true, data: { workspaces: [{
+      id: "000001",
+      sessions: [{ stage: "04", opencode_session_id: "oc-linked" }],
+    }] } }),
     isFocused: () => focused,
     onAttention: () => { notifications += 1; },
   });
   try {
     await controller.handle(request("question.asked", "oc-linked", "q-blurred"));
     assert.equal(controller.attentionFor("oc-linked").reason, "question");
+    api.workContextAttention = controller;
+    assert.equal(attentionForSession(api, "oc-linked"), null);
+    assert.equal(controller.attentionForStage("000001", "04"), null);
+    assert.equal(controller.attentionForWorkspace("000001"), null);
     assert.equal(notifications, 1);
     focused = true;
     await controller.refresh();
