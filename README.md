@@ -244,10 +244,12 @@ titles plus a controlled reason. Prompts, messages, tool output, secrets, raw
 provider errors, and full project paths are never published. No daemon, socket,
 terminal multiplexer integration, or arbitrary command is required.
 
-If the runtime channel or in-TUI toast API is unavailable, Linux falls back to
-one best-effort desktop notification when `notify-send` and a desktop DBus
-session are available. Desktop fallback is enabled by default. Disable it while
-retaining project-local attention indicators with:
+On Linux, each newly created background attention also requests one best-effort
+desktop notification when `notify-send` and a desktop DBus session are
+available. This delivery is independent of the in-TUI toast, so cross-project
+attention can appear both inside active OpenCode B and in the system notification
+center. Desktop delivery is enabled by default. Disable it while retaining
+in-TUI toasts and project-local attention indicators with:
 
 ```yaml
 notifications:
@@ -257,8 +259,9 @@ notifications:
 The package invokes the fixed `notify-send` executable directly without a shell
 or configurable command. Missing commands, unsupported platforms, unavailable
 desktop sessions, timeouts, and delivery errors are ignored so they cannot
-interrupt TUI startup or event processing. Clicking a notification does not
-navigate to its session in this release.
+interrupt TUI startup or event processing. If the runtime channel is unavailable,
+desktop delivery remains a best-effort fallback. Clicking a notification does
+not navigate to its session in this release.
 
 Background includes a linked native session that is not selected and any session
 owned by an OpenCode instance other than the most recently active live instance.
@@ -269,10 +272,11 @@ foreground.
 
 To verify cross-project delivery, install and load the TUI integration in two
 projects, start work in linked session A, then interact with OpenCode B before A
-finishes or asks a question. Expect a `Work Context` toast inside B and a
-persistent `[ATTN]` marker in A. Stop B or use an environment without a valid
-private `XDG_RUNTIME_DIR` to test the Linux desktop fallback. Open A's affected
-native session to clear its marker.
+finishes or asks a question. Expect a `Work Context` toast inside B, one system
+notification, and a persistent `[ATTN]` marker in A. Open A's affected native
+session to clear its marker. Set `notifications.desktop` to `false`, restart
+OpenCode, and repeat to verify that the toast and marker remain without the
+system notification.
 
 Tools are registered by the installed server export and are not copied into the
 project. Core and storage remain in the installed package; projects should not

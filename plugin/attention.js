@@ -367,14 +367,14 @@ export const tui = async (api, options = {}) => {
       try { options.onAttention?.(change); } catch {}
       const context = change.contexts?.[0];
       if (!context) return;
-      const published = globalDelivery && globalChannel.publish({
+      if (globalDelivery) globalChannel.publish({
         dedupeKey: `${projectRoot}\0${change.sessionId}\0${change.attention.eventKey}`,
         reason: context.reason,
         projectTitle: path.basename(projectRoot),
         workspaceTitle: context.workspaceTitle,
         stageTitle: context.stageTitle,
       });
-      if (!published) void Promise.resolve(desktopNotifier.notify(context)).catch(() => {});
+      void Promise.resolve(desktopNotifier.notify(context)).catch(() => {});
     },
     now: options.now,
   });

@@ -421,7 +421,13 @@ test("attention from project A is shown as a toast in active project B", async (
       variant: "warning",
       duration: 5000,
     }]);
-    assert.deepEqual(desktop, []);
+    assert.deepEqual(desktop, [{
+      workspaceId: "000012",
+      workspaceTitle: "Cross project",
+      stageId: "05",
+      stageTitle: "Route attention",
+      reason: "question",
+    }]);
     assert.equal(apiA.workContextAttention.attentionFor("oc-a").reason, "question");
     apiB.renderer.emit("blur");
     assert.equal(channelB.hasActiveInstance(), false);

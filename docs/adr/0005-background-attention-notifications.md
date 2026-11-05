@@ -37,12 +37,14 @@ does not copy A's state, acknowledge A's marker, or attempt navigation to A's
 server. Restored state and duplicate host events do not publish new events. If
 the channel is unavailable, foreground detection falls back to renderer state.
 
-A dependency-free notifier boundary remains as fallback when global publication
-or the in-TUI toast API is unavailable. The Linux adapter invokes the fixed
-`notify-send` executable with an argument array, no shell, and a short timeout.
-Desktop fallback is enabled by default and may be disabled only with the
-validated boolean `notifications.desktop` setting. There is no arbitrary
-executable or command configuration.
+A dependency-free notifier boundary delivers independently from the in-TUI
+channel, allowing attention to appear both in active OpenCode and in the system
+notification center. It also remains a fallback when global publication or the
+toast API is unavailable. The Linux adapter invokes the fixed `notify-send`
+executable with an argument array, no shell, and a short timeout. Desktop
+delivery is enabled by default and may be disabled only with the validated
+boolean `notifications.desktop` setting. There is no arbitrary executable or
+command configuration.
 
 The notifier receives an approved data object rather than a host event or raw
 snapshot. It can render only workspace ID/title, stage ID/title, and a controlled
@@ -56,6 +58,6 @@ valid per-user runtime directory. Delivery is transient and at-least-once until
 the active instance confirms the event; stale events expire after a bounded
 interval. Unsupported runtime environments, malformed channel data, filesystem
 failures, or missing toast APIs silently retain project-local attention and may
-use desktop fallback. Linux systems need `notify-send` and a working desktop
-DBus session only for that fallback. Cross-server navigation and notification
-click-to-open remain unsupported.
+still use desktop delivery. Linux systems need `notify-send` and a working
+desktop DBus session for system notifications. Cross-server navigation and
+notification click-to-open remain unsupported.
