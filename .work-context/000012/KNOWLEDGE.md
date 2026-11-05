@@ -29,3 +29,13 @@ Own attention tracking in the TUI plugin, not the server plugin, because TUI has
 - Sources: ["User decisions in workspace 000012 Planning"]
 
 Implement Linux OS notifications first through notify-send, behind a portable dependency-free notifier boundary. Enable OS notifications by default when notify-send is available; absence or failure degrades silently to in-app attention indicators. Invoke fixed executables with argument arrays and no shell interpolation or arbitrary configured commands. Notification click-to-open is explicitly out of scope for the first release; attention sessions should instead be visibly marked and prioritized in Work Context switchers.
+
+## KC-0004: Cross-project attention routing
+
+- Kind: decision
+- Status: active
+- Created: 2026-11-05T16:07:14.836Z
+- Updated: 2026-11-05T16:07:14.836Z
+- Sources: ["plugin/global-attention.js","plugin/attention.js","docs/adr/0005-background-attention-notifications.md","test/global-attention.test.js"]
+
+Independent OpenCode TUIs coordinate transient attention through a dependency-free per-user channel under a validated private XDG_RUNTIME_DIR. Each instance owns only its lease with heartbeat and last activity; OpenTUI focus and keyboard activity elect the active instance, while blur relinquishes ownership. Background attention is published as a bounded immutable versioned event file and atomically claimed by the active consumer, which displays api.ui.toast. Project-local attention remains authoritative and is not acknowledged or navigated from another server. Strict ownership/type/size/schema checks, sanitization, TTL/cap cleanup, stale lease/claim recovery, and desktop fallback isolate failures without tmux or daemon dependencies.

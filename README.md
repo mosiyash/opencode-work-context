@@ -229,10 +229,25 @@ Questions, permission requests, errors, and a background session becoming idle
 after observed work remain marked with `[ATTN]` until that native session is
 opened. Attention does not change workspace or stage lifecycle state.
 
-On Linux, the loader also sends one best-effort desktop notification for newly
-created background attention when `notify-send` is installed and a desktop DBus
-session is available. Desktop delivery is enabled by default. Disable it while
-retaining in-app attention indicators with:
+Every loaded TUI instance registers a short-lived user-level activity lease.
+Focus and keyboard activity select the active OpenCode instance independently
+of its project directory. When a session in project A needs attention while the
+user works in project B, A publishes a bounded event under
+`$XDG_RUNTIME_DIR/opencode-work-context/attention-v1` and active B displays a
+native `Work Context` toast. The persistent `[ATTN]` marker remains in project A;
+the toast does not import A's state or enable cross-server navigation.
+
+The channel uses private directories, atomic immutable event files, strict
+schemas, ownership/type/size checks, short event expiry, stale-lease cleanup,
+and bounded retention. It contains only sanitized project, workspace, and stage
+titles plus a controlled reason. Prompts, messages, tool output, secrets, raw
+provider errors, and full project paths are never published. No daemon, socket,
+terminal multiplexer integration, or arbitrary command is required.
+
+If the runtime channel or in-TUI toast API is unavailable, Linux falls back to
+one best-effort desktop notification when `notify-send` and a desktop DBus
+session are available. Desktop fallback is enabled by default. Disable it while
+retaining project-local attention indicators with:
 
 ```yaml
 notifications:
@@ -240,32 +255,24 @@ notifications:
 ```
 
 The package invokes the fixed `notify-send` executable directly without a shell
-or configurable command. Notification text contains only bounded, sanitized
-workspace and stage IDs/titles plus a controlled reason. It never includes
-prompts, messages, tool output, paths, secrets, or raw provider errors. Missing
-commands, unsupported platforms, unavailable desktop sessions, timeouts, and
-delivery errors are ignored so they cannot interrupt TUI startup or event
-processing. Notifications are not replayed after restart, and clicking one does
-not navigate to its session in this release.
+or configurable command. Missing commands, unsupported platforms, unavailable
+desktop sessions, timeouts, and delivery errors are ignored so they cannot
+interrupt TUI startup or event processing. Clicking a notification does not
+navigate to its session in this release.
 
-Background includes a linked native session that is not selected and a current
-session in an OpenCode process whose terminal has emitted a standard blur event.
-The latter allows notifications when switching between independent OpenCode
-processes in different terminal windows, tabs, or focus-aware multiplexer panes.
-Focus is tracked through OpenTUI's public renderer events rather than by querying
-the operating system or a specific terminal multiplexer. Until the terminal
-reports focus or blur, the process is conservatively treated as focused. A
-terminal or multiplexer that does not forward focus events retains session-only
-background detection.
+Background includes a linked native session that is not selected and any session
+owned by an OpenCode instance other than the most recently active live instance.
+Each instance refreshes its lease independently, so a crashed process expires
+without holding ownership. If the global channel is unavailable, focus falls
+back to OpenTUI's renderer events and unknown focus is conservatively treated as
+foreground.
 
-To verify an installed project manually, install the distribution package that
-provides `notify-send` (commonly `libnotify-bin`), ensure `notify-send "Test"`
-appears in the current desktop session, restart OpenCode, start work in a linked
-session, and switch to another native session before the first one finishes or
-asks a question. Expect one desktop notification and a persistent `[ATTN]`
-marker. Open the affected native session to clear the marker. Set
-`notifications.desktop` to `false`, restart OpenCode, and repeat to verify that
-only the marker remains.
+To verify cross-project delivery, install and load the TUI integration in two
+projects, start work in linked session A, then interact with OpenCode B before A
+finishes or asks a question. Expect a `Work Context` toast inside B and a
+persistent `[ATTN]` marker in A. Stop B or use an environment without a valid
+private `XDG_RUNTIME_DIR` to test the Linux desktop fallback. Open A's affected
+native session to clear its marker.
 
 Tools are registered by the installed server export and are not copied into the
 project. Core and storage remain in the installed package; projects should not

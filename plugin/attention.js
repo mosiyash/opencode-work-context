@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { loadConfig } from "../src/storage.js";
 import { readWorkContextSnapshot } from "../src/work-context-snapshot.js";
+import { createGlobalAttentionChannel } from "./global-attention.js";
 import { createDesktopNotifier } from "./notifier.js";
 import { createTuiFocusTracker } from "./tui-focus.js";
 import { readTuiState, updateTuiState } from "./tui-state.js";
@@ -67,6 +69,15 @@ export const normalizeAttentionEvent = (event, cycle = 0) => {
 };
 
 export const attentionReasonText = (reason) => REASON_TEXT[reason] || "attention";
+export const globalAttentionToast = (event) => {
+  const context = [event?.projectTitle, event?.workspaceTitle, event?.stageTitle].filter(Boolean).join(" / ");
+  return {
+    title: "Work Context",
+    message: `${context || "Background session"}: ${attentionReasonText(event?.reason)}`,
+    variant: event?.reason === "error" ? "error" : ["permission", "question"].includes(event?.reason) ? "warning" : "info",
+    duration: 5000,
+  };
+};
 export const attentionForSession = (api, sessionId) => api?.workContextAttention?.attentionFor?.(sessionId) || null;
 export const acknowledgeNavigation = (api, sessionId, observedEventKey) => {
   if (!sessionId || !observedEventKey) return false;
@@ -327,19 +338,43 @@ export const tui = async (api, options = {}) => {
   if (!projectRoot) return;
   const desktopNotifier = options.desktopNotifier || createDesktopNotifier({ enabled: desktopNotificationsEnabled(projectRoot), ...options.notifierOptions });
   let controller;
+  const globalChannel = options.globalAttentionChannel === false
+    ? null
+    : options.globalAttentionChannel || (typeof api.ui?.toast === "function" ? createGlobalAttentionChannel(options.globalAttentionOptions) : null);
+  const globalDelivery = globalChannel?.available === true && globalChannel.start((event) => {
+    api.ui.toast(globalAttentionToast(event));
+    try { options.onGlobalAttention?.(event); } catch {}
+    return true;
+  });
   const focus = options.tuiFocus || createTuiFocusTracker({
     renderer: api.renderer,
     onFocus: () => { void controller?.refresh(); },
+    onActivity: () => {
+      globalChannel?.activity?.();
+      const sessionId = currentSessionId(api);
+      if (sessionId) controller?.acknowledge(sessionId);
+    },
+    onBlur: () => { globalChannel?.deactivate?.(); },
   });
   controller = createAttentionTuiController({
     api,
     projectRoot,
     read: api.attentionSnapshotProvider || readWorkContextSnapshot,
-    isFocused: options.isTuiFocused || (() => focus.isFocused()),
+    isFocused: options.isTuiFocused || (globalDelivery
+      ? () => globalChannel.hasActiveInstance() ? globalChannel.isActive() && focus.isFocused() : focus.isFocused()
+      : () => focus.isFocused()),
     onAttention: (change) => {
       try { options.onAttention?.(change); } catch {}
       const context = change.contexts?.[0];
-      if (context) void Promise.resolve(desktopNotifier.notify(context)).catch(() => {});
+      if (!context) return;
+      const published = globalDelivery && globalChannel.publish({
+        dedupeKey: `${projectRoot}\0${change.sessionId}\0${change.attention.eventKey}`,
+        reason: context.reason,
+        projectTitle: path.basename(projectRoot),
+        workspaceTitle: context.workspaceTitle,
+        stageTitle: context.stageTitle,
+      });
+      if (!published) void Promise.resolve(desktopNotifier.notify(context)).catch(() => {});
     },
     now: options.now,
   });
@@ -357,6 +392,7 @@ export const tui = async (api, options = {}) => {
     cleaned = true;
     controller.dispose();
     focus.dispose?.();
+    globalChannel?.dispose?.();
     for (const registration of registrations) disposeRegistration(registration);
     if (activeControllers.get(api) === cleanup) activeControllers.delete(api);
     if (api[ACTIVE_ATTENTION_KEY] === cleanup) delete api[ACTIVE_ATTENTION_KEY];

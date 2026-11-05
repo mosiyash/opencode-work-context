@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createAttentionEngine, createAttentionTuiController, normalizeAttentionEvent, tui } from "../plugin/attention.js";
+import { createAttentionEngine, createAttentionTuiController, globalAttentionToast, normalizeAttentionEvent, tui } from "../plugin/attention.js";
+import { createGlobalAttentionChannel } from "../plugin/global-attention.js";
 import { createTuiFocusTracker } from "../plugin/tui-focus.js";
 import { readTuiState, updateTuiState } from "../plugin/tui-state.js";
 
@@ -218,20 +219,42 @@ test("terminal blur makes the current native session background until focus retu
 
 test("TUI focus tracker is fail-safe, observes blur and focus, and disposes listeners", () => {
   const renderer = new EventEmitter();
+  renderer.keyInput = new EventEmitter();
   let focused = 0;
-  const tracker = createTuiFocusTracker({ renderer, onFocus: () => { focused += 1; } });
+  let activity = 0;
+  let blurred = 0;
+  const tracker = createTuiFocusTracker({ renderer, onFocus: () => { focused += 1; }, onActivity: () => { activity += 1; }, onBlur: () => { blurred += 1; } });
   assert.equal(tracker.state(), "unknown");
   assert.equal(tracker.isFocused(), true);
   renderer.emit("blur");
+  assert.equal(blurred, 1);
   assert.equal(tracker.state(), "blurred");
   assert.equal(tracker.isFocused(), false);
   renderer.emit("focus");
   assert.equal(tracker.state(), "focused");
   assert.equal(tracker.isFocused(), true);
   assert.equal(focused, 1);
+  assert.equal(activity, 1);
+  renderer.emit("blur");
+  assert.equal(blurred, 2);
+  renderer.keyInput.emit("keypress");
+  assert.equal(tracker.state(), "focused");
+  assert.equal(activity, 2);
   tracker.dispose();
   renderer.emit("blur");
+  renderer.keyInput.emit("keypress");
   assert.equal(tracker.state(), "focused");
+  assert.equal(activity, 2);
+  assert.equal(blurred, 2);
+});
+
+test("global attention toast uses only controlled context and reason text", () => {
+  assert.deepEqual(globalAttentionToast({ projectTitle: "project-a", workspaceTitle: "Delivery", stageTitle: "Notify", reason: "permission" }), {
+    title: "Work Context",
+    message: "project-a / Delivery / Notify: permission",
+    variant: "warning",
+    duration: 5000,
+  });
 });
 
 test("TUI attention subscriptions dispose once and duplicate loading is prevented", async () => {
@@ -338,5 +361,75 @@ test("TUI renderer blur notifies for the current session across OpenCode process
     assert.equal(renderer.listenerCount("focus"), 0);
     assert.equal(renderer.listenerCount("blur"), 0);
     removeRoot(root);
+  }
+});
+
+test("attention from project A is shown as a toast in active project B", async () => {
+  const runtime = makeRoot();
+  const projectA = makeRoot();
+  const projectB = makeRoot();
+  const clock = { value: 1000 };
+  const handlersA = new Map();
+  const toastsA = [];
+  const toastsB = [];
+  const desktop = [];
+  const channelOptions = (instanceId) => ({
+    root: path.join(runtime, "channel"),
+    instanceId,
+    now: () => clock.value,
+    pollMs: 0,
+    heartbeatMs: 0,
+    activityThrottleMs: 0,
+  });
+  const channelA = createGlobalAttentionChannel(channelOptions("00000000-0000-4000-8000-000000000001"));
+  const channelB = createGlobalAttentionChannel(channelOptions("00000000-0000-4000-8000-000000000002"));
+  const apiA = {
+    state: { path: { worktree: projectA } },
+    route: { current: { name: "session", params: { sessionID: "oc-a" } } },
+    renderer: Object.assign(new EventEmitter(), { keyInput: new EventEmitter() }),
+    ui: { toast: (value) => { toastsA.push(value); } },
+    event: { on: (type, handler) => { handlersA.set(type, handler); return () => {}; } },
+    attentionSnapshotProvider: async () => ({ ok: true, data: { workspaces: [{
+      id: "000012",
+      title: "Cross project",
+      stages: [{ id: "05", title: "Route attention" }],
+      sessions: [{ stage: "05", opencode_session_id: "oc-a" }],
+    }] } }),
+  };
+  const apiB = {
+    state: { path: { worktree: projectB } },
+    route: { current: { name: "home" } },
+    renderer: Object.assign(new EventEmitter(), { keyInput: new EventEmitter() }),
+    ui: { toast: (value) => { toastsB.push(value); } },
+    event: { on: () => () => {} },
+    attentionSnapshotProvider: async () => snapshot(),
+  };
+  let cleanupA;
+  let cleanupB;
+  try {
+    cleanupA = await tui(apiA, { globalAttentionChannel: channelA, desktopNotifier: { notify: async (value) => { desktop.push(value); return true; } } });
+    clock.value = 1100;
+    cleanupB = await tui(apiB, { globalAttentionChannel: channelB, desktopNotifier: { notify: async () => true } });
+    apiB.renderer.keyInput.emit("keypress");
+    handlersA.get("question.asked")(request("question.asked", "oc-a", "q-cross-project"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(channelB.scan(), 1);
+    assert.deepEqual(toastsA, []);
+    assert.deepEqual(toastsB, [{
+      title: "Work Context",
+      message: `${path.basename(projectA)} / Cross project / Route attention: question`,
+      variant: "warning",
+      duration: 5000,
+    }]);
+    assert.deepEqual(desktop, []);
+    assert.equal(apiA.workContextAttention.attentionFor("oc-a").reason, "question");
+    apiB.renderer.emit("blur");
+    assert.equal(channelB.hasActiveInstance(), false);
+  } finally {
+    cleanupB?.();
+    cleanupA?.();
+    removeRoot(projectB);
+    removeRoot(projectA);
+    removeRoot(runtime);
   }
 });
