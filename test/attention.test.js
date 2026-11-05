@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createAttentionEngine, createAttentionTuiController, normalizeAttentionEvent, tui } from "../plugin/attention.js";
+import { createTuiFocusTracker } from "../plugin/tui-focus.js";
 import { readTuiState, updateTuiState } from "../plugin/tui-state.js";
 
 const makeRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "attention-test-"));
@@ -190,6 +192,48 @@ test("controller ignores unlinked sessions and acknowledges a visible linked ses
   } finally { controller.dispose(); removeRoot(root); }
 });
 
+test("terminal blur makes the current native session background until focus returns", async () => {
+  const root = makeRoot();
+  let focused = false;
+  let notifications = 0;
+  const api = { route: { current: { name: "session", params: { sessionID: "oc-linked" } } } };
+  const controller = createAttentionTuiController({
+    api,
+    projectRoot: root,
+    read: async () => snapshot("oc-linked"),
+    isFocused: () => focused,
+    onAttention: () => { notifications += 1; },
+  });
+  try {
+    await controller.handle(request("question.asked", "oc-linked", "q-blurred"));
+    assert.equal(controller.attentionFor("oc-linked").reason, "question");
+    assert.equal(notifications, 1);
+    focused = true;
+    await controller.refresh();
+    assert.equal(controller.attentionFor("oc-linked"), null);
+    await controller.handle(request("permission.asked", "oc-linked", "p-focused"));
+    assert.equal(notifications, 1);
+  } finally { controller.dispose(); removeRoot(root); }
+});
+
+test("TUI focus tracker is fail-safe, observes blur and focus, and disposes listeners", () => {
+  const renderer = new EventEmitter();
+  let focused = 0;
+  const tracker = createTuiFocusTracker({ renderer, onFocus: () => { focused += 1; } });
+  assert.equal(tracker.state(), "unknown");
+  assert.equal(tracker.isFocused(), true);
+  renderer.emit("blur");
+  assert.equal(tracker.state(), "blurred");
+  assert.equal(tracker.isFocused(), false);
+  renderer.emit("focus");
+  assert.equal(tracker.state(), "focused");
+  assert.equal(tracker.isFocused(), true);
+  assert.equal(focused, 1);
+  tracker.dispose();
+  renderer.emit("blur");
+  assert.equal(tracker.state(), "focused");
+});
+
 test("TUI attention subscriptions dispose once and duplicate loading is prevented", async () => {
   const root = makeRoot();
   const handlers = new Map();
@@ -260,4 +304,39 @@ test("TUI notifies once for new background attention and never replays restored 
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(delivered.length, 1);
   } finally { restartedCleanup(); removeRoot(root); }
+});
+
+test("TUI renderer blur notifies for the current session across OpenCode processes", async () => {
+  const root = makeRoot();
+  const handlers = new Map();
+  const renderer = new EventEmitter();
+  const delivered = [];
+  const api = {
+    state: { path: { worktree: root } },
+    route: { current: { name: "session", params: { sessionID: "oc-current" } } },
+    renderer,
+    event: { on: (type, handler) => { handlers.set(type, handler); return () => {}; } },
+    attentionSnapshotProvider: async () => ({ ok: true, data: { workspaces: [{
+      id: "000012",
+      title: "Process focus",
+      stages: [{ id: "05", title: "Track terminal blur" }],
+      sessions: [{ stage: "05", opencode_session_id: "oc-current" }],
+    }] } }),
+  };
+  const cleanup = await tui(api, { desktopNotifier: { notify: async (value) => { delivered.push(value); return true; } } });
+  try {
+    renderer.emit("blur");
+    handlers.get("question.asked")(request("question.asked", "oc-current", "q-blurred-process"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(delivered.length, 1);
+    assert.equal(api.workContextAttention.attentionFor("oc-current").reason, "question");
+    renderer.emit("focus");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(api.workContextAttention.attentionFor("oc-current"), null);
+  } finally {
+    cleanup();
+    assert.equal(renderer.listenerCount("focus"), 0);
+    assert.equal(renderer.listenerCount("blur"), 0);
+    removeRoot(root);
+  }
 });

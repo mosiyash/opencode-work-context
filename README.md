@@ -248,6 +248,16 @@ delivery errors are ignored so they cannot interrupt TUI startup or event
 processing. Notifications are not replayed after restart, and clicking one does
 not navigate to its session in this release.
 
+Background includes a linked native session that is not selected and a current
+session in an OpenCode process whose terminal has emitted a standard blur event.
+The latter allows notifications when switching between independent OpenCode
+processes in different terminal windows, tabs, or focus-aware multiplexer panes.
+Focus is tracked through OpenTUI's public renderer events rather than by querying
+the operating system or a specific terminal multiplexer. Until the terminal
+reports focus or blur, the process is conservatively treated as focused. A
+terminal or multiplexer that does not forward focus events retains session-only
+background detection.
+
 To verify an installed project manually, install the distribution package that
 provides `notify-send` (commonly `libnotify-bin`), ensure `notify-send "Test"`
 appears in the current desktop session, restart OpenCode, start work in a linked

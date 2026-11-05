@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { loadConfig } from "../src/storage.js";
 import { readWorkContextSnapshot } from "../src/work-context-snapshot.js";
 import { createDesktopNotifier } from "./notifier.js";
+import { createTuiFocusTracker } from "./tui-focus.js";
 import { readTuiState, updateTuiState } from "./tui-state.js";
 
 const ATTENTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -245,7 +246,7 @@ export const desktopNotificationsEnabled = (projectRoot) => {
   try { return loadConfig(projectRoot).notifications?.desktop !== false; } catch { return false; }
 };
 
-export const createAttentionTuiController = ({ api, projectRoot, read = readWorkContextSnapshot, onAttention, now } = {}) => {
+export const createAttentionTuiController = ({ api, projectRoot, read = readWorkContextSnapshot, onAttention, isFocused = () => true, now } = {}) => {
   const persisted = readTuiState(projectRoot).attention;
   const engine = createAttentionEngine({
     persisted,
@@ -263,7 +264,7 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
         linked = linkedSessionIds(result);
         snapshot = result.data;
         const current = currentSessionId(api);
-        if (current && linked.has(current)) engine.acknowledge(current);
+        if (isFocused() !== false && current && linked.has(current)) engine.acknowledge(current);
       }
     } catch {}
     return linked;
@@ -274,7 +275,7 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
     if (!sessionId) return { changed: false, ignored: true };
     await refresh();
     if (!linked.has(sessionId)) return { changed: false, unlinked: true };
-    const foreground = currentSessionId(api);
+    const foreground = isFocused() !== false ? currentSessionId(api) : undefined;
     if (foreground === sessionId) engine.acknowledge(sessionId);
     const result = engine.apply(event, { foreground });
     if (result.changed) onAttention?.({
@@ -325,10 +326,16 @@ export const tui = async (api, options = {}) => {
   const projectRoot = api.state?.path?.worktree || api.state?.path?.directory;
   if (!projectRoot) return;
   const desktopNotifier = options.desktopNotifier || createDesktopNotifier({ enabled: desktopNotificationsEnabled(projectRoot), ...options.notifierOptions });
-  const controller = createAttentionTuiController({
+  let controller;
+  const focus = options.tuiFocus || createTuiFocusTracker({
+    renderer: api.renderer,
+    onFocus: () => { void controller?.refresh(); },
+  });
+  controller = createAttentionTuiController({
     api,
     projectRoot,
     read: api.attentionSnapshotProvider || readWorkContextSnapshot,
+    isFocused: options.isTuiFocused || (() => focus.isFocused()),
     onAttention: (change) => {
       try { options.onAttention?.(change); } catch {}
       const context = change.contexts?.[0];
@@ -349,6 +356,7 @@ export const tui = async (api, options = {}) => {
     if (cleaned) return;
     cleaned = true;
     controller.dispose();
+    focus.dispose?.();
     for (const registration of registrations) disposeRegistration(registration);
     if (activeControllers.get(api) === cleanup) activeControllers.delete(api);
     if (api[ACTIVE_ATTENTION_KEY] === cleanup) delete api[ACTIVE_ATTENTION_KEY];

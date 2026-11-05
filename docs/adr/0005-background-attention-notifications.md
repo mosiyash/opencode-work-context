@@ -15,8 +15,12 @@ tool content and must never make TUI event handling depend on an OS facility.
 
 The TUI attention controller owns notification delivery because it can identify
 the foreground native session and already emits deduplicated changes only for
-new background attention. Restored state, duplicate host events, and foreground
-events do not request delivery.
+new background attention. It combines route identity with OpenTUI's public
+renderer focus/blur events so a current session in a blurred OpenCode process is
+also background. This works across independent processes without OS-window or
+terminal-multiplexer-specific inspection. Unknown focus remains foreground to
+avoid false notifications. Restored state, duplicate host events, and truly
+foreground events do not request delivery.
 
 A dependency-free notifier boundary supports platform adapters. The first
 adapter supports Linux by invoking the fixed `notify-send` executable with an
