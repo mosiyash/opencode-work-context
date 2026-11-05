@@ -1,8 +1,11 @@
-import { tool } from "@opencode-ai/plugin";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { contextFor, titleFor } from "../src/opencode-adapter.js";
 import { fail, ERROR_CODES } from "../src/errors.js";
 import { normalizeStageId, normalizeWorkspaceId } from "../src/identifiers.js";
+
+// OpenCode tool definitions are plain descriptors with Zod schemas.
+const tool = Object.assign((definition) => definition, { schema: z });
 
 const run = (fn) => async (args, context) => {
   try {
