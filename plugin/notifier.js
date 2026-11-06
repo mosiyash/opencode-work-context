@@ -35,9 +35,10 @@ export const buildNotification = ({ workspaceId, workspaceTitle, stageId, stageT
   };
 };
 
-export const notifySendArguments = (notification) => [
+export const notifySendArguments = (notification, actionable = false, expireTimeMs = 0) => [
   "--app-name=OpenCode Work Context",
   "--urgency=normal",
+  ...(actionable ? ["--action=default=Open session", `--expire-time=${expireTimeMs}`] : []),
   "--",
   notification.title,
   notification.body,
@@ -48,36 +49,73 @@ export const createDesktopNotifier = ({
   platform = process.platform,
   spawn = nodeSpawn,
   timeoutMs = 3000,
-} = {}) => ({
-  async notify(context) {
-    const notification = buildNotification(context);
-    if (!enabled || platform !== "linux" || !notification) return false;
-    return new Promise((resolve) => {
-      let child;
-      let timer;
-      let settled = false;
-      const finish = (delivered) => {
-        if (settled) return;
-        settled = true;
-        if (timer) clearTimeout(timer);
-        resolve(delivered);
-      };
-      try {
-        child = spawn("notify-send", notifySendArguments(notification), {
-          shell: false,
-          stdio: "ignore",
-          windowsHide: true,
-        });
-        child.once("error", () => finish(false));
-        child.once("exit", (code) => finish(code === 0));
-        timer = setTimeout(() => {
+  actionTimeoutMs = 5 * 60 * 1000,
+} = {}) => {
+  const children = new Map();
+  let disposed = false;
+  const send = (notification, { onOpen, actionable }) => new Promise((resolve) => {
+    let child;
+    let output = "";
+    let timer;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (child) children.delete(child);
+      resolve(result);
+    };
+    try {
+      child = spawn("notify-send", notifySendArguments(notification, actionable, actionTimeoutMs), {
+        shell: false,
+        stdio: actionable ? ["ignore", "pipe", "ignore"] : "ignore",
+        windowsHide: true,
+      });
+      children.set(child, finish);
+      child.stdout?.on("data", (chunk) => {
+        const text = String(chunk);
+        const remaining = 32 - output.length;
+        output += text.slice(0, Math.max(0, remaining));
+        if (text.length > remaining) {
           try { child.kill(); } catch {}
-          finish(false);
-        }, timeoutMs);
-        timer.unref?.();
-      } catch {
-        finish(false);
+          finish({ delivered: false, retry: false });
+        }
+      });
+      child.stdout?.once("error", () => finish({ delivered: false, retry: false }));
+      child.once("error", () => finish({ delivered: false, retry: false }));
+      child.once("exit", (code) => {
+        if (settled) return;
+        if (code === 0 && actionable && output.trim() === "default") {
+          try { void Promise.resolve(onOpen()).catch(() => {}); } catch {}
+        }
+        finish({ delivered: code === 0, retry: actionable && code !== 0 });
+      });
+      timer = setTimeout(() => {
+        try { child.kill(); } catch {}
+        finish({ delivered: false, retry: false });
+      }, actionable ? actionTimeoutMs + 1000 : timeoutMs);
+      timer.unref?.();
+    } catch {
+      finish({ delivered: false, retry: false });
+    }
+  });
+  const notify = async (context, { onOpen } = {}) => {
+    const notification = buildNotification(context);
+    if (disposed || !enabled || platform !== "linux" || !notification) return false;
+    const actionable = typeof onOpen === "function";
+    const result = await send(notification, { onOpen, actionable });
+    if (result.retry && !disposed) return (await send(notification, { actionable: false })).delivered;
+    return result.delivered;
+  };
+  return {
+    notify,
+    dispose: () => {
+      disposed = true;
+      for (const [child, finish] of children) {
+        try { child.kill(); } catch {}
+        finish({ delivered: false, retry: false });
       }
-    });
-  },
-});
+      children.clear();
+    },
+  };
+};

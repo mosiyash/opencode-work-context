@@ -260,8 +260,17 @@ The package invokes the fixed `notify-send` executable directly without a shell
 or configurable command. Missing commands, unsupported platforms, unavailable
 desktop sessions, timeouts, and delivery errors are ignored so they cannot
 interrupt TUI startup or event processing. If the runtime channel is unavailable,
-desktop delivery remains a best-effort fallback. Clicking a notification does
-not navigate to its session in this release.
+desktop delivery remains a best-effort fallback.
+
+On Linux notification servers that support actions, `Open session` routes the
+originating OpenCode process to the affected native session. If that process
+runs in tmux, its validated `TMUX_PANE` is selected with fixed `tmux` arguments.
+On X11, the loader records the active window with `xprop` and raises it with
+`wmctrl` when those optional tools are available. Each step is independent and
+best-effort: navigation can still succeed if pane or window activation fails.
+Wayland focus restrictions and terminal tabs without a public activation API
+may require the user to foreground the terminal manually. Session and window
+identifiers never appear in notification text or configurable commands.
 
 Background includes a linked native session that is not selected and any session
 owned by an OpenCode instance other than the most recently active live instance.

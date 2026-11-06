@@ -3,6 +3,7 @@ import path from "node:path";
 import { loadConfig } from "../src/storage.js";
 import { readWorkContextSnapshot } from "../src/work-context-snapshot.js";
 import { createGlobalAttentionChannel } from "./global-attention.js";
+import { createAttentionActivator } from "./attention-activation.js";
 import { createDesktopNotifier } from "./notifier.js";
 import { createTuiFocusTracker } from "./tui-focus.js";
 import { readTuiState, updateTuiState } from "./tui-state.js";
@@ -340,7 +341,10 @@ export const tui = async (api, options = {}) => {
   if (activeControllers.has(api) || api[ACTIVE_ATTENTION_KEY]) return activeControllers.get(api) || api[ACTIVE_ATTENTION_KEY];
   const projectRoot = api.state?.path?.worktree || api.state?.path?.directory;
   if (!projectRoot) return;
+  const ownsDesktopNotifier = !options.desktopNotifier;
   const desktopNotifier = options.desktopNotifier || createDesktopNotifier({ enabled: desktopNotificationsEnabled(projectRoot), ...options.notifierOptions });
+  const activator = options.attentionActivator
+    || (typeof api.route?.navigate === "function" ? createAttentionActivator({ api, ...options.activatorOptions }) : null);
   let controller;
   const globalChannel = options.globalAttentionChannel === false
     ? null
@@ -355,10 +359,14 @@ export const tui = async (api, options = {}) => {
     onFocus: () => { void controller?.refresh(); },
     onActivity: () => {
       globalChannel?.activity?.();
+      void activator?.capture?.();
       const sessionId = currentSessionId(api);
       if (sessionId) controller?.acknowledge(sessionId);
     },
-    onBlur: () => { globalChannel?.deactivate?.(); },
+    onBlur: () => {
+      globalChannel?.deactivate?.();
+      activator?.blur?.();
+    },
   });
   controller = createAttentionTuiController({
     api,
@@ -378,7 +386,8 @@ export const tui = async (api, options = {}) => {
         workspaceTitle: context.workspaceTitle,
         stageTitle: context.stageTitle,
       });
-      void Promise.resolve(desktopNotifier.notify(context)).catch(() => {});
+      const onOpen = activator?.available ? () => activator.activate(change.sessionId) : undefined;
+      void Promise.resolve(desktopNotifier.notify(context, { onOpen })).catch(() => {});
     },
     now: options.now,
   });
@@ -396,6 +405,8 @@ export const tui = async (api, options = {}) => {
     cleaned = true;
     controller.dispose();
     focus.dispose?.();
+    activator?.dispose?.();
+    if (ownsDesktopNotifier) desktopNotifier.dispose?.();
     globalChannel?.dispose?.();
     for (const registration of registrations) disposeRegistration(registration);
     if (activeControllers.get(api) === cleanup) activeControllers.delete(api);

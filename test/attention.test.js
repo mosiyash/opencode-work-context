@@ -380,6 +380,8 @@ test("attention from project A is shown as a toast in active project B", async (
   const toastsA = [];
   const toastsB = [];
   const desktop = [];
+  const activated = [];
+  let openNotification;
   const channelOptions = (instanceId) => ({
     root: path.join(runtime, "channel"),
     instanceId,
@@ -414,7 +416,16 @@ test("attention from project A is shown as a toast in active project B", async (
   let cleanupA;
   let cleanupB;
   try {
-    cleanupA = await tui(apiA, { globalAttentionChannel: channelA, desktopNotifier: { notify: async (value) => { desktop.push(value); return true; } } });
+    cleanupA = await tui(apiA, {
+      globalAttentionChannel: channelA,
+      attentionActivator: {
+        available: true,
+        capture: async () => null,
+        activate: async (sessionId) => { activated.push(sessionId); return true; },
+        dispose: () => {},
+      },
+      desktopNotifier: { notify: async (value, options) => { desktop.push(value); openNotification = options.onOpen; return true; } },
+    });
     clock.value = 1100;
     cleanupB = await tui(apiB, { globalAttentionChannel: channelB, desktopNotifier: { notify: async () => true } });
     apiB.renderer.keyInput.emit("keypress");
@@ -435,6 +446,9 @@ test("attention from project A is shown as a toast in active project B", async (
       stageTitle: "Route attention",
       reason: "question",
     }]);
+    assert.equal(typeof openNotification, "function");
+    await openNotification();
+    assert.deepEqual(activated, ["oc-a"]);
     assert.equal(apiA.workContextAttention.attentionFor("oc-a").reason, "question");
     apiB.renderer.emit("blur");
     assert.equal(channelB.hasActiveInstance(), false);

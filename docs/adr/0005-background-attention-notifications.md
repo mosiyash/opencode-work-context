@@ -51,6 +51,14 @@ snapshot. It can render only workspace ID/title, stage ID/title, and a controlle
 attention reason. Text is stripped of control characters and bounded before it
 is passed to the operating system.
 
+When the notification server supports actions, the fixed `Open session` action
+is handled by the originating TUI process. The process navigates through the
+public OpenCode route API. Optional activation adapters may then select a
+validated `TMUX_PANE` with fixed tmux arguments and raise a captured X11 window
+with fixed `xprop` and `wmctrl` invocations. No shell, user command, or identifier
+from notification text is evaluated. Missing tools and adapter failures do not
+prevent the remaining activation steps.
+
 ## Consequences
 
 All participating OpenCode processes must load the TUI integration and share a
@@ -60,4 +68,6 @@ interval. Unsupported runtime environments, malformed channel data, filesystem
 failures, or missing toast APIs silently retain project-local attention and may
 still use desktop delivery. Linux systems need `notify-send` and a working
 desktop DBus session for system notifications. Cross-server navigation and
-notification click-to-open remain unsupported.
+portable window activation remain unsupported. Linux action support depends on
+the notification daemon; Wayland and terminal tabs may not permit programmatic
+focus even when source-side session navigation succeeds.
