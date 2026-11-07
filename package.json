@@ -1,7 +1,7 @@
 {
   "name": "opencode-work-context",
   "type": "module",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Filesystem work-context core and OpenCode adapter",
   "license": "MIT",
   "author": {
