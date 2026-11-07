@@ -57,6 +57,13 @@ const assertIntegration = (root) => {
   }
 };
 
+test("checked-in slash command matches the packaged source", () => {
+  assert.equal(
+    fs.readFileSync(path.join(packageRoot, ".opencode", "commands", "wc.md"), "utf8"),
+    fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8"),
+  );
+});
+
 test("installer keeps standalone npm files at project root", () => {
   const root = makeRoot();
   const bin = installMock(root);
@@ -121,6 +128,28 @@ test("repeated init is idempotent and conflicts require force", () => {
     assert.match(conflict.stderr, /--force/);
     assert.equal(runInit(root, { bin }, ["init", "--force"]).status, 0);
   } finally { removeRoot(root); removeRoot(bin); }
+});
+
+test("sync-command refreshes only the generated slash command", () => {
+  const root = makeRoot();
+  try {
+    fs.mkdirSync(path.join(root, ".opencode", "commands"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".opencode", "commands", "wc.md"), "stale command\n");
+    fs.writeFileSync(path.join(root, ".opencode", "sentinel"), "preserve\n");
+
+    const refused = runInit(root, { bin: "" }, ["sync-command"]);
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /--force/);
+    assert.equal(fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"), "stale command\n");
+
+    const result = runInit(root, { bin: "" }, ["sync-command", "--force"]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"), fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8"));
+    assert.equal(fs.readFileSync(path.join(root, ".opencode", "sentinel"), "utf8"), "preserve\n");
+    assert.equal(fs.existsSync(path.join(root, "package.json")), false);
+    assert.match(result.stdout, /Updated \.opencode\/commands\/wc\.md/);
+  } finally { removeRoot(root); }
 });
 
 test("npm failure rolls back dependency and integration files", () => {

@@ -74,10 +74,31 @@ const hasSymlinkParent = (file) => {
 };
 
 function parseArgs(args) {
-  if (args[0] !== "init") return fail("usage: opencode-work-context init [--force]");
+  if (args[0] === "sync-command") {
+    const unknown = args.slice(1).filter((arg) => arg !== "--force");
+    if (unknown.length) return fail(`unknown option: ${unknown[0]}`);
+    return { syncCommand: true, force: args.includes("--force") };
+  }
+  if (args[0] !== "init") return fail("usage: opencode-work-context init [--force] | sync-command");
   const unknown = args.slice(1).filter((arg) => arg !== "--force");
   if (unknown.length) return fail(`unknown option: ${unknown[0]}`);
   return { force: args.includes("--force") };
+}
+
+function syncCommandProjection(force) {
+  const relative = ".opencode/commands/wc.md";
+  const file = path.join(projectRoot, relative);
+  if (hasSymlinkParent(file) || (exists(file) && (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink()))) {
+    fail(`refusing to overwrite non-regular file: ${relative}`);
+    return false;
+  }
+  if (exists(file) && fs.readFileSync(file, "utf8") !== command && !force) {
+    fail(`refusing to overwrite existing file: ${relative}; rerun with --force`);
+    return false;
+  }
+  writeAtomic(file, command);
+  console.log(`Updated ${relative} from opencode-work-context ${packageManifest.version}.`);
+  return true;
 }
 
 function ensurePackageJson() {
@@ -272,7 +293,15 @@ function writeGenerated() {
 }
 
 const options = parseArgs(process.argv.slice(2));
-if (options) {
+if (options?.syncCommand) {
+  const initLock = acquireInitLock();
+  if (initLock.failed) process.exitCode = 1;
+  else {
+    try { syncCommandProjection(options.force); }
+    catch (error) { fail(`command sync failed: ${error.message}`); }
+    finally { releaseInitLock(initLock); }
+  }
+} else if (options) {
   const initLock = acquireInitLock();
   if (initLock.failed) process.exitCode = 1;
   else if (checkConflicts(options.force) && checkPackageConflict(options.force)) {

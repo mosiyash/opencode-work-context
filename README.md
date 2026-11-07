@@ -84,11 +84,28 @@ When you return later, continue from the active stage. A stage must have a
 non-empty prompt before implementation begins; if the prompt is missing or
 ambiguous, `/wc resume` instructs the agent to ask focused questions first.
 Before working, the agent reports the stage essence, the previous session's
-result or stopping point, and what it will do now. On subsequent resumes, it
-only reports that context and waits for explicit confirmation before continuing:
+result or stopping point, and what it will do now. The summary uses a
+plain-language goal and, for a larger stage with explicit scope, a short
+`In this stage we will` list of expected outcomes. Raw IDs and operation metadata
+are omitted. The agent then continues immediately instead of asking for generic
+confirmation. A stage can explicitly require confirmation with this standalone
+prompt line:
+
+```text
+RESUME_CONFIRMATION: required
+```
+
+Resume a stage with:
 
 ```text
 /wc resume 000001 02
+```
+
+After updating the npm package, refresh the generated slash-command contract
+without touching project configuration or loaders:
+
+```bash
+npx opencode-work-context sync-command --force
 ```
 
 Useful commands:

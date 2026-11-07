@@ -5,8 +5,9 @@ subtask: false
 
 Interpret `/wc $ARGUMENTS` as an explicit work-context operation. Use the matching
 `work_context_*` custom tool registered by the installed package plugin with structured arguments. Never edit work-context
-Markdown, JSONL, INDEX, or SESSIONS projections directly. For mutating operations,
-report the structured result and stable error code. Use `work_context_help` when
+Markdown, JSONL, INDEX, or SESSIONS projections directly. For mutating operations
+other than `resume`, report the structured result and stable error code. For
+`resume`, follow its human-oriented presentation rules instead. Use `work_context_help` when
 the syntax is missing or ambiguous.
 
 For `workspace list <workspace>` (or `<workspace> list`), report the workspace
@@ -19,9 +20,12 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `workspace list <workspace>` or `<workspace> list` -> `work_context_workspace_list`
 - `workspace rename <workspace> "title"` -> `work_context_rename_workspace`
 - `workspace finish <workspace>` -> `work_context_workspace_finish`
+- `workspace reopen <workspace> "reason"` -> `work_context_reopen_workspace`
 - `resume <workspace> <stage>` -> `work_context_start_session`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE` -> `work_context_force_close_session`
-- `stage add [<workspace>] ...` -> `work_context_add_stage` (optional `prompt`; detailed prompt is expected for stages created from planning)
+- `stage add [<workspace>] ...` -> `work_context_add_stage` (optional `prompt`; a detailed local prompt is expected for stages created from planning, while shared context belongs in workspace knowledge)
+- `stage reopen <workspace> <stage> "reason"` -> `work_context_reopen_stage`
+- `stage restore <workspace> <stage> "reason"` -> `work_context_restore_stage`
 - `stage rename [<workspace>] [<stage>] "title"` -> `work_context_rename_stage`
 - `stage update [<workspace>] [<stage>] "description"` -> `work_context_update_stage`
 - `stage update-prompt [<workspace>] [<stage>] "prompt"` -> `work_context_update_stage_prompt`
@@ -39,9 +43,12 @@ Supported syntax:
 - `workspace list <workspace>`
 - `workspace rename <workspace> "title"`
 - `workspace finish <workspace>`
+- `workspace reopen <workspace> "reason"`
 - `resume <workspace> <stage>`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE`
 - `stage add [<workspace>] "title" ["prompt"]`
+- `stage reopen <workspace> <stage> "reason"`
+- `stage restore <workspace> <stage> "reason"`
 - `stage rename [<workspace>] [<stage>] "title"`
 - `stage update [<workspace>] [<stage>] "description"`
 - `stage update-prompt [<workspace>] [<stage>] "prompt"`
@@ -59,10 +66,25 @@ Supported syntax:
 - explicit workspace and stage positions accept canonical padded IDs or unpadded positive integers (`1..999999` and `1..99`); results and generated commands remain padded
 - zero, signs, decimals, whitespace, overlong values, and other non-digit identifier forms are invalid; a lone unpadded workspace ID is not reinterpreted under the one-identifier rule
 - `stage update-result` replaces an existing result and does not create a result for an unfinished stage
-- `stage add` only creates a planned stage; it never starts, resumes, or binds the current OpenCode session to that stage
-- entering an added stage requires a separate OpenCode session and an explicit `resume <workspace> <stage>` operation; do not invoke `resume` automatically after creation
-- `resume` returns an actionable `resume.next_action` and `resume.instruction`; begin or continue the work immediately from that structured context
-- `stage finish` closes only the current stage session and returns downstream unfinished stages for informational prompt review; it never starts or resumes one, and downstream work requires a separate session with an explicit `resume`
+- `resume` returns `resume.presentation` and `resume.context`; before doing any work, report a concise human-oriented summary in the user's language with the stage title, a plain-language Goal, previous progress when useful, and the immediate next action
+- when the saved prompt contains several clear deliverables, add `In this stage we will` with 2-5 short outcome-oriented bullets derived only from the prompt, previous result, and workspace knowledge; do not invent scope, and omit this block for a small stage
+- do not expose raw workspace/stage/session identifiers, ordinals, `ok` flags, or absent error codes in the user-facing resume summary
+- `resume.context.workspace_knowledge` contains every active durable knowledge entry for the workspace; treat it as established shared context, and do not repeat earlier analysis unless an entry is incomplete, contradicted, or needs verification
+- after presenting the summary, continue work immediately when `resume.next_action` is `start_work`; do not ask for generic confirmation
+- a stage may require confirmation only with an exact standalone `RESUME_CONFIRMATION: required` line in its saved prompt; when `resume.next_action` is `await_confirmation`, present the summary and wait before inspecting or modifying application code
+- `create` enters the new workspace's Planning stage in the current OpenCode session only when that session is not yet in a workspace; otherwise it only creates the workspace and its planning session
+- `stage add` creates a stage; when the current OpenCode session is not associated with a workspace, it also enters the new stage in that session
+- when `stage add` is invoked from an associated session, it only creates a planned stage and leaves the current stage unchanged; enter it later with an explicit `resume <workspace> <stage>` in a separate OpenCode session
+- `resume` returns `resume.next_action` and `resume.instruction`; begin or continue implementation when the stage prompt is non-empty unless it explicitly requires confirmation or contains an unresolved decision that genuinely blocks progress
+- when `resume.next_action` is `ask_questions`, do not inspect or modify application code and ask the user focused questions needed to make the prompt actionable
+- before `stage finish`, review durable findings: add new knowledge, update changed knowledge, supersede obsolete knowledge, or explicitly use `knowledgeReview=none` when the stage produced no durable findings; use `knowledgeReview=added` after ledger changes
+- invoke `stage finish` only when the user explicitly requests that lifecycle command; do not infer the request from completed work, tests, or a final report
+- automatic completion is allowed only when the current workspace's Planning-stage prompt contains an exact standalone line `AUTO_STAGE_FINISH: allowed`; otherwise leave the stage in progress and report that the work is ready for the user's lifecycle decision
+- `stage finish` closes and completes only the current stage session; it never starts, resumes, or binds the same OpenCode session to a downstream stage
+- `stage finish` always validates the Knowledge Base and returns total and active entry counts plus downstream unfinished stages for informational prompt review; do not begin a downstream stage until the user explicitly resumes it in a separate OpenCode session
+- `stage reopen <workspace> <stage> "reason"` applies only to a completed stage, preserves its result and completion history, records the reason, changes it to `in_progress`, and does not start a session or affect downstream stages; use an explicit separate-session `resume` to work on it again
+- `stage restore <workspace> <stage> "reason"` applies only to an archived stage and restores its saved pre-archive status. New archives preserve that status; legacy archives restore to `in_progress`. It records the reason, preserves stage content and results, does not start a session, and requires explicit separate-session `resume` when restored to `planned` or `in_progress`.
+- `workspace reopen <workspace> "reason"` applies only to a completed workspace, changes it to `in_progress`, and records durable recovery history. Cancelled workspaces cannot be reopened.
 - `knowledge list|add|update|supersede <workspace> ...`
 
 Arguments: $ARGUMENTS

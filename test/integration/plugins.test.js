@@ -50,7 +50,12 @@ test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
     assert.equal(result.data.prompt, "Start by inspecting the existing tests, then implement the change.");
     assert.equal(result.data.resume.first, true);
     assert.equal(result.data.resume.next_action, "start_work");
+    assert.equal(result.data.resume.presentation.workspace_title, "Prompt integration workspace");
+    assert.equal(result.data.resume.presentation.stage_title, "Prompted stage");
+    assert.equal(result.data.resume.presentation.scope, "Start by inspecting the existing tests, then implement the change.");
     assert.match(result.data.resume.instruction, /Start by inspecting the existing tests, then implement the change/);
+    assert.match(result.data.resume.instruction, /Do not ask for generic confirmation/);
+    assert.match(result.data.resume.instruction, /without reporting workspace IDs, stage IDs, session UUIDs/);
     assert.match(result.data.resume.instruction, /Do not invoke stage finish unless the user explicitly requests/);
     assert.equal(result.data.resume.context.workspace_knowledge[0].text, "Preserve the structured tool contract.");
   } finally {

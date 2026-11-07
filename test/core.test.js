@@ -159,6 +159,7 @@ test("resume returns the saved prompt and a continuation summary", () => {
     context.createWorkspace("Resume workspace", { workspace: "999985", sessionId: "session-1" });
     context.handoff("999985", "01", "session-1");
     context.addStage("999985", "Implementation", {
+      goal: "Ship a reliable user-facing feature",
       prompt: "Implement the feature and add regression coverage.",
     });
 
@@ -167,10 +168,22 @@ test("resume returns the saved prompt and a continuation summary", () => {
     assert.equal(first.data.prompt, "Implement the feature and add regression coverage.");
     assert.equal(first.data.resume.next_action, "start_work");
     assert.match(first.data.resume.instruction, /Implement the feature and add regression coverage/);
+    assert.match(first.data.resume.instruction, /Use the user's language/);
+    assert.match(first.data.resume.instruction, /plain, non-technical language/);
+    assert.match(first.data.resume.instruction, /In this stage we will/);
+    assert.match(first.data.resume.instruction, /Do not ask for generic confirmation/);
     assert.match(first.data.resume.instruction, /Do not invoke stage finish unless the user explicitly requests/);
+    assert.deepEqual(first.data.resume.presentation, {
+      workspace_title: "Resume workspace",
+      stage_title: "Implementation",
+      goal: "Ship a reliable user-facing feature",
+      scope: "Implement the feature and add regression coverage.",
+      previous_result: null,
+      previous_session_summary: null,
+    });
     assert.deepEqual(first.data.resume.context, {
-      essence: "Implementation",
-      previous: "The previous session did not save a result; the stopping point needs to be clarified.",
+      essence: "Ship a reliable user-facing feature",
+      previous: "No previous progress was recorded.",
       now: "Implement the feature and add regression coverage.",
       workspace_knowledge: [],
       lifecycle: { automatic_finish_allowed: false },
@@ -180,11 +193,12 @@ test("resume returns the saved prompt and a continuation summary", () => {
     context.handoff("999985", "02", "session-2");
     const second = context.startSession("999985", "02", { sessionId: "session-3" });
     assert.equal(second.data.resume.first, false);
-    assert.equal(second.data.resume.next_action, "await_confirmation");
+    assert.equal(second.data.resume.next_action, "start_work");
     assert.match(second.data.resume.summary, /verification remains/);
     assert.equal(second.data.resume.last_session_summary, "Implemented the main logic; verification remains.");
     assert.equal(second.data.resume.context.previous, "Implemented the main logic; verification remains.");
-    assert.match(second.data.resume.instruction, /wait for the user's confirmation/);
+    assert.doesNotMatch(second.data.resume.instruction, /wait for the user's confirmation/);
+    assert.match(second.data.resume.instruction, /continue with the work immediately/);
   } finally {
     removeRoot(root);
   }
@@ -203,7 +217,7 @@ test("resume accepts archived dependencies and continues a handed-off stage", ()
     context.handoff("999968", "02", "session-2");
     const resumed = context.startSession("999968", "2", { sessionId: "session-3" });
 
-    assert.equal(resumed.data.resume.next_action, "await_confirmation");
+    assert.equal(resumed.data.resume.next_action, "start_work");
     assert.equal(resumed.data.ordinal, "02/02");
   } finally {
     removeRoot(root);
@@ -229,6 +243,51 @@ test("resume permits completed dependencies and blocks unfinished dependencies",
   }
 });
 
+test("resume waits only for an explicit confirmation directive", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Confirmation workspace", { workspace: "999978", sessionId: "session-1" });
+    context.handoff("999978", "01", "session-1");
+    context.addStage("999978", "Approval gate", {
+      prompt: "Prepare the migration plan.\nRESUME_CONFIRMATION: required",
+    });
+
+    const result = context.startSession("999978", "02", { sessionId: "session-2" });
+
+    assert.equal(result.data.resume.next_action, "await_confirmation");
+    assert.match(result.data.resume.instruction, /Ask for the explicitly required confirmation/);
+
+    context.addStage("999978", "Lowercase is not a directive", {
+      prompt: "Prepare the migration plan.\nresume_confirmation: required",
+    });
+    context.addStage("999978", "Extra spacing is not a directive", {
+      prompt: "Prepare the migration plan.\nRESUME_CONFIRMATION:  required",
+    });
+    assert.equal(context.startSession("999978", "03", { sessionId: "session-3" }).data.resume.next_action, "start_work");
+    assert.equal(context.startSession("999978", "04", { sessionId: "session-4" }).data.resume.next_action, "start_work");
+  } finally { removeRoot(root); }
+});
+
+test("resume exposes a preserved stage result as previous progress", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Result workspace", { workspace: "999979", sessionId: "session-1" });
+    context.handoff("999979", "01", "session-1");
+    context.addStage("999979", "Implementation", { prompt: "Complete the remaining verification." });
+    context.startSession("999979", "02", { sessionId: "session-2" });
+    context.finish("999979", "02", "session-2", { result: "Core implementation is complete; browser verification remains.", knowledgeReview: "none" });
+    context.reopenStage("999979", "02", "Verification was incomplete");
+
+    const resumed = context.startSession("999979", "02", { sessionId: "session-3" });
+
+    assert.equal(resumed.data.resume.presentation.previous_result, "Core implementation is complete; browser verification remains.");
+    assert.equal(resumed.data.resume.presentation.previous_session_summary, null);
+    assert.equal(resumed.data.resume.context.previous, "Core implementation is complete; browser verification remains.");
+  } finally { removeRoot(root); }
+});
+
 test("resume blocks implementation when a stage has no prompt", () => {
   const root = makeRoot();
   try {
@@ -240,7 +299,7 @@ test("resume blocks implementation when a stage has no prompt", () => {
     const result = context.startSession("999977", "02", { sessionId: "session-2" });
 
     assert.equal(result.data.resume.next_action, "ask_questions");
-    assert.match(result.data.resume.instruction, /Do not start implementation/);
+    assert.match(result.data.resume.instruction, /Do not inspect or modify application code/);
   } finally {
     removeRoot(root);
   }

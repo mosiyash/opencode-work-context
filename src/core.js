@@ -21,8 +21,20 @@ const stageBody = (record, title, goal, prompt = record.data.prompt || "") => {
   return `${body(title, goal, prompt).trimEnd()}${result}${reopenHistory}${archiveHistory}`;
 };
 const stageResult = (record) => record.body.match(/\n## Result\s*\n([\s\S]*?)(?=\n## (?:Reopen|Archive) History|$)/)?.[1]?.trim() ?? null;
+const preservedStageResult = (record) => stageResult(record)
+  || [...(record.data.reopen_history || [])].reverse().find((entry) => entry.previous_result)?.previous_result
+  || null;
 const appendHistory = (bodyText, heading, entry) => `${bodyText.trimEnd()}${bodyText.includes(`\n## ${heading}\n`) ? "" : `\n\n## ${heading}\n`}\n- ${entry}\n`;
 const automaticFinishAllowed = (storage, workspace) => /(?:^|\n)AUTO_STAGE_FINISH:\s*allowed\s*$/mi.test(storage.readStage(workspace, "01").data.prompt || "");
+const resumeConfirmationRequired = (prompt) => /(?:^|\r?\n)RESUME_CONFIRMATION: required(?=\r?\n|$)/.test(prompt || "");
+const resumePresentationInstruction = ({ confirmationRequired }) => `Before doing any work, give the user a concise context summary:
+- Use the user's language.
+- Name the stage without reporting workspace IDs, stage IDs, session UUIDs, ordinals, ok flags, or absent error codes.
+- Add a short "Goal" section that restates presentation.goal in plain, non-technical language.
+- When presentation.scope contains several clear deliverables, add "In this stage we will" with 2-5 short outcome-oriented bullets. Derive them only from the saved prompt, previous result, and workspace knowledge; do not invent scope. Omit this block for a small stage.
+- Mention previous progress only when presentation.previous_result or presentation.previous_session_summary contains useful information.
+- State the immediate next action in one sentence.
+${confirmationRequired ? "- Ask for the explicitly required confirmation and wait before inspecting or changing application code." : "- Then continue with the work immediately. Do not ask for generic confirmation; ask a focused question only when an unresolved decision genuinely blocks progress."}`;
 const assertNoSymlinkPath = (file) => { let current = path.parse(file).root; for (const part of file.slice(current.length).split(path.sep).filter(Boolean)) { current = path.join(current, part); try { if (fs.lstatSync(current).isSymbolicLink()) fail(ERROR_CODES.STORAGE_ERROR, `Symlink path component is not supported: ${current}`); } catch (error) { if (error.code !== "ENOENT") throw error; break; } } };
 
 function parseIssue(url) {
@@ -266,8 +278,14 @@ export class WorkContext {
        this.writeEvents([event("session.started", workspace, stage, ordinal, sessionId, actor(this.options), { summary: options.summary || "continued work", opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
       generateProjections(this.storage);
       const previousSession = previous.at(-1) || null;
+      const previousSessionSummary = previousSession?.summary && previousSession.summary !== "continued work"
+        ? previousSession.summary
+        : null;
       const firstResume = previous.length === 0;
       const hasPrompt = Boolean(stageRecord.data.prompt?.trim());
+      const confirmationRequired = hasPrompt && resumeConfirmationRequired(stageRecord.data.prompt);
+      const previousResult = preservedStageResult(stageRecord);
+      const workspaceTitle = this.storage.readWorkspace(workspace).data.title;
       const workspaceKnowledge = activeKnowledge(this.listKnowledge(workspace).data);
       const automaticFinish = automaticFinishAllowed(this.storage, workspace);
       return this.result({
@@ -282,22 +300,27 @@ export class WorkContext {
           first: firstResume,
           summary: firstResume
              ? `Starting work on stage ${stage}: ${stageRecord.data.title}.`
-             : `Continuing work on stage ${stage}: ${stageRecord.data.title}. Last recorded summary: ${previousSession?.summary || "no saved report"}.`,
+             : `Continuing work on stage ${stage}: ${stageRecord.data.title}. Last recorded summary: ${previousSessionSummary || previousResult || "no saved report"}.`,
           last_session_summary: previousSession?.summary || null,
+          presentation: {
+            workspace_title: workspaceTitle,
+            stage_title: stageRecord.data.title,
+            goal: stageRecord.data.goal || stageRecord.data.title,
+            scope: stageRecord.data.prompt || null,
+            previous_result: previousResult,
+            previous_session_summary: previousSessionSummary,
+          },
           context: {
             essence: stageRecord.data.goal || stageRecord.data.title,
-            previous: previousSession?.summary || "The previous session did not save a result; the stopping point needs to be clarified.",
+            previous: previousSessionSummary || previousResult || "No previous progress was recorded.",
             now: hasPrompt ? stageRecord.data.prompt : "First clarify the task and work plan with the user.",
             workspace_knowledge: workspaceKnowledge,
             lifecycle: { automatic_finish_allowed: automaticFinish },
           },
-          next_action: hasPrompt ? (firstResume ? "start_work" : "await_confirmation") : "ask_questions",
+          next_action: hasPrompt ? confirmationRequired ? "await_confirmation" : "start_work" : "ask_questions",
           instruction: `${hasPrompt
-            ? firstResume
-              ? stageRecord.data.prompt
-                || `Review stage ${stage}: ${stageRecord.data.title} and begin work only after confirming there are no unanswered questions.`
-              : `Stage ${stage}: ${stageRecord.data.title} was resumed before. Report the context and wait for the user's confirmation before continuing work.`
-            : `Stage ${stage}: ${stageRecord.data.title} has no non-empty prompt. Do not start implementation; ask the user the questions needed to define the work.`}\n\nDo not invoke stage finish unless the user explicitly requests the lifecycle command. Automatic completion is permitted only when lifecycle.automatic_finish_allowed is true, which requires the exact AUTO_STAGE_FINISH: allowed line in this workspace's Planning-stage prompt.`,
+            ? `${resumePresentationInstruction({ confirmationRequired })}\n\nSaved working prompt:\n${stageRecord.data.prompt}`
+            : `This stage has no non-empty prompt. Give the user a concise plain-language summary of the stage title and goal, then ask focused questions needed to define the intended outcome and scope. Do not inspect or modify application code yet. Do not report raw operation metadata or identifiers.`}\n\nDo not invoke stage finish unless the user explicitly requests the lifecycle command. Automatic completion is permitted only when lifecycle.automatic_finish_allowed is true, which requires the exact AUTO_STAGE_FINISH: allowed line in this workspace's Planning-stage prompt.`,
         },
       }, [workspace, stage]);
     });

@@ -5,8 +5,9 @@ subtask: false
 
 Interpret `/wc $ARGUMENTS` as an explicit work-context operation. Use the matching
 `work_context_*` custom tool registered by the installed package plugin with structured arguments. Never edit work-context
-Markdown, JSONL, INDEX, or SESSIONS projections directly. For mutating operations,
-report the structured result and stable error code. Use `work_context_help` when
+Markdown, JSONL, INDEX, or SESSIONS projections directly. For mutating operations
+other than `resume`, report the structured result and stable error code. For
+`resume`, follow its human-oriented presentation rules instead. Use `work_context_help` when
 the syntax is missing or ambiguous.
 
 For `workspace list <workspace>` (or `<workspace> list`), report the workspace
@@ -65,14 +66,16 @@ Supported syntax:
 - explicit workspace and stage positions accept canonical padded IDs or unpadded positive integers (`1..999999` and `1..99`); results and generated commands remain padded
 - zero, signs, decimals, whitespace, overlong values, and other non-digit identifier forms are invalid; a lone unpadded workspace ID is not reinterpreted under the one-identifier rule
 - `stage update-result` replaces an existing result and does not create a result for an unfinished stage
-- `resume` returns `resume.context` with the stage essence, the previous session's result/stopping point, and the current plan; report this concise context to the user before doing any work
+- `resume` returns `resume.presentation` and `resume.context`; before doing any work, report a concise human-oriented summary in the user's language with the stage title, a plain-language Goal, previous progress when useful, and the immediate next action
+- when the saved prompt contains several clear deliverables, add `In this stage we will` with 2-5 short outcome-oriented bullets derived only from the prompt, previous result, and workspace knowledge; do not invent scope, and omit this block for a small stage
+- do not expose raw workspace/stage/session identifiers, ordinals, `ok` flags, or absent error codes in the user-facing resume summary
 - `resume.context.workspace_knowledge` contains every active durable knowledge entry for the workspace; treat it as established shared context, and do not repeat earlier analysis unless an entry is incomplete, contradicted, or needs verification
-- on every subsequent resume, report the context and wait for explicit user confirmation; do not automatically continue implementation
-- when `resume.next_action` is `await_confirmation`, do not inspect or modify application code until the user confirms
+- after presenting the summary, continue work immediately when `resume.next_action` is `start_work`; do not ask for generic confirmation
+- a stage may require confirmation only with an exact standalone `RESUME_CONFIRMATION: required` line in its saved prompt; when `resume.next_action` is `await_confirmation`, present the summary and wait before inspecting or modifying application code
 - `create` enters the new workspace's Planning stage in the current OpenCode session only when that session is not yet in a workspace; otherwise it only creates the workspace and its planning session
 - `stage add` creates a stage; when the current OpenCode session is not associated with a workspace, it also enters the new stage in that session
 - when `stage add` is invoked from an associated session, it only creates a planned stage and leaves the current stage unchanged; enter it later with an explicit `resume <workspace> <stage>` in a separate OpenCode session
-- `resume` returns `resume.next_action` and `resume.instruction`; begin or continue implementation only when the stage prompt is non-empty and, after reviewing it, there are no unanswered questions
+- `resume` returns `resume.next_action` and `resume.instruction`; begin or continue implementation when the stage prompt is non-empty unless it explicitly requires confirmation or contains an unresolved decision that genuinely blocks progress
 - when `resume.next_action` is `ask_questions`, do not inspect or modify application code and ask the user focused questions needed to make the prompt actionable
 - before `stage finish`, review durable findings: add new knowledge, update changed knowledge, supersede obsolete knowledge, or explicitly use `knowledgeReview=none` when the stage produced no durable findings; use `knowledgeReview=added` after ledger changes
 - invoke `stage finish` only when the user explicitly requests that lifecycle command; do not infer the request from completed work, tests, or a final report
