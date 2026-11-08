@@ -86,6 +86,49 @@ export const acknowledgeNavigation = (api, sessionId, observedEventKey) => {
   if (!sessionId || !observedEventKey) return false;
   return api?.workContextAttention?.acknowledge?.(sessionId, observedEventKey) === true;
 };
+export const createPendingNavigationTracker = () => {
+  const counts = new Map();
+  let total = 0;
+  return {
+    set(sessionId, pending) {
+      if (!sessionId) return;
+      const current = counts.get(sessionId) || 0;
+      if (pending) {
+        counts.set(sessionId, current + 1);
+        total += 1;
+      } else if (current > 0) {
+        if (current === 1) counts.delete(sessionId);
+        else counts.set(sessionId, current - 1);
+        total -= 1;
+      }
+    },
+    hasAny: () => total > 0,
+    has: (sessionId) => (counts.get(sessionId) || 0) > 0,
+  };
+};
+export const openAttentionDestination = async ({ api, activator, controller, sessionId, eventKey, setNavigationPending } = {}) => {
+  try { setNavigationPending?.(sessionId, true); } catch {}
+  try {
+    let result;
+    try { result = await activator?.activate?.(sessionId); } catch { result = null; }
+    const opened = result?.ok === true && result?.verified === true;
+    if (opened) {
+      controller?.acknowledge?.(sessionId, eventKey);
+      return true;
+    }
+    try {
+      api?.ui?.toast?.({
+        title: "Work Context",
+        message: "The target session could not be opened. Attention remains unread.",
+        variant: "warning",
+        duration: 5000,
+      });
+    } catch {}
+    return false;
+  } finally {
+    try { setNavigationPending?.(sessionId, false); } catch {}
+  }
+};
 
 const validAttention = (value) => value
   && typeof value === "object"
@@ -260,7 +303,7 @@ export const desktopNotificationsEnabled = (projectRoot) => {
   try { return loadConfig(projectRoot).notifications?.desktop !== false; } catch { return false; }
 };
 
-export const createAttentionTuiController = ({ api, projectRoot, read = readWorkContextSnapshot, onAttention, isFocused = () => true, now } = {}) => {
+export const createAttentionTuiController = ({ api, projectRoot, read = readWorkContextSnapshot, onAttention, isFocused = () => true, shouldAcknowledge = () => true, now } = {}) => {
   const persisted = readTuiState(projectRoot).attention;
   const engine = createAttentionEngine({
     persisted,
@@ -271,6 +314,10 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
   let snapshot = null;
   let disposed = false;
   let pending = Promise.resolve();
+  const acknowledgeObserved = (sessionId) => {
+    const observedEventKey = engine.attentionFor(sessionId)?.eventKey;
+    return observedEventKey ? engine.acknowledge(sessionId, observedEventKey) : false;
+  };
   const refresh = async () => {
     try {
       const result = await read({ projectRoot, sessionId: currentSessionId(api) });
@@ -278,7 +325,7 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
         linked = linkedSessionIds(result);
         snapshot = result.data;
         const current = currentSessionId(api);
-        if (isFocused() !== false && current && linked.has(current)) engine.acknowledge(current);
+        if (isFocused() !== false && current && linked.has(current) && shouldAcknowledge(current) !== false) acknowledgeObserved(current);
       }
     } catch {}
     return linked;
@@ -290,7 +337,7 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
     await refresh();
     if (!linked.has(sessionId)) return { changed: false, unlinked: true };
     const foreground = isFocused() !== false ? currentSessionId(api) : undefined;
-    if (foreground === sessionId) engine.acknowledge(sessionId);
+    if (foreground === sessionId && shouldAcknowledge(sessionId) !== false) acknowledgeObserved(sessionId);
     const result = engine.apply(event, { foreground });
     if (result.changed) onAttention?.({
       sessionId,
@@ -306,7 +353,7 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
     pending = result.catch(() => {});
     return result;
   };
-  const acknowledge = (sessionId, observedEventKey) => engine.acknowledge(sessionId, observedEventKey);
+  const acknowledge = (sessionId, observedEventKey) => disposed ? false : engine.acknowledge(sessionId, observedEventKey);
   const aggregate = (matches) => {
     const bySession = new Map();
     const current = currentSessionId(api);
@@ -346,6 +393,8 @@ export const tui = async (api, options = {}) => {
   const activator = options.attentionActivator
     || (typeof api.route?.navigate === "function" ? createAttentionActivator({ api, ...options.activatorOptions }) : null);
   let controller;
+  const notificationNavigations = createPendingNavigationTracker();
+  const setNavigationPending = (sessionId, pending) => notificationNavigations.set(sessionId, pending);
   const globalChannel = options.globalAttentionChannel === false
     ? null
     : options.globalAttentionChannel || (typeof api.ui?.toast === "function" ? createGlobalAttentionChannel(options.globalAttentionOptions) : null);
@@ -361,7 +410,8 @@ export const tui = async (api, options = {}) => {
       globalChannel?.activity?.();
       void activator?.capture?.();
       const sessionId = currentSessionId(api);
-      if (sessionId) controller?.acknowledge(sessionId);
+      const observedEventKey = sessionId && !notificationNavigations.hasAny() ? controller?.attentionFor(sessionId)?.eventKey : null;
+      if (observedEventKey) controller?.acknowledge(sessionId, observedEventKey);
     },
     onBlur: () => {
       globalChannel?.deactivate?.();
@@ -375,6 +425,7 @@ export const tui = async (api, options = {}) => {
     isFocused: options.isTuiFocused || (globalDelivery
       ? () => globalChannel.hasActiveInstance() ? globalChannel.isActive() && focus.isFocused() : focus.isFocused()
       : () => focus.isFocused()),
+    shouldAcknowledge: () => !notificationNavigations.hasAny(),
     onAttention: (change) => {
       try { options.onAttention?.(change); } catch {}
       const context = change.contexts?.[0];
@@ -386,7 +437,14 @@ export const tui = async (api, options = {}) => {
         workspaceTitle: context.workspaceTitle,
         stageTitle: context.stageTitle,
       });
-      const onOpen = activator?.available ? () => activator.activate(change.sessionId) : undefined;
+      const onOpen = activator?.available ? () => openAttentionDestination({
+        api,
+        activator,
+        controller,
+        sessionId: change.sessionId,
+        eventKey: change.attention.eventKey,
+        setNavigationPending,
+      }) : undefined;
       void Promise.resolve(desktopNotifier.notify(context, { onOpen })).catch(() => {});
     },
     now: options.now,
@@ -396,7 +454,8 @@ export const tui = async (api, options = {}) => {
   registrations.push(api.event.on("tui.session.select", (event) => {
     queueMicrotask(() => {
       const sessionId = currentSessionId(api);
-      if (sessionId) controller.acknowledge(sessionId);
+      const observedEventKey = sessionId && !notificationNavigations.hasAny() ? controller.attentionFor(sessionId)?.eventKey : null;
+      if (observedEventKey) controller.acknowledge(sessionId, observedEventKey);
     });
   }));
   let cleaned = false;

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { attentionForSession, createAttentionEngine, createAttentionTuiController, globalAttentionToast, normalizeAttentionEvent, tui } from "../plugin/attention.js";
+import { attentionForSession, createAttentionEngine, createAttentionTuiController, createPendingNavigationTracker, globalAttentionToast, normalizeAttentionEvent, openAttentionDestination, tui } from "../plugin/attention.js";
 import { createGlobalAttentionChannel } from "../plugin/global-attention.js";
 import { createTuiFocusTracker } from "../plugin/tui-focus.js";
 import { readTuiState, updateTuiState } from "../plugin/tui-state.js";
@@ -224,6 +224,50 @@ test("terminal blur makes the current native session background until focus retu
   } finally { controller.dispose(); removeRoot(root); }
 });
 
+test("controller defers automatic acknowledgement during notification navigation", async () => {
+  const root = makeRoot();
+  let focused = false;
+  let allowAcknowledgement = true;
+  const api = { route: { current: { name: "session", params: { sessionID: "oc-linked" } } } };
+  const controller = createAttentionTuiController({
+    api,
+    projectRoot: root,
+    read: async () => snapshot("oc-linked"),
+    isFocused: () => focused,
+    shouldAcknowledge: () => allowAcknowledgement,
+  });
+  try {
+    await controller.refresh();
+    await controller.handle(request("question.asked", "oc-linked", "q-pending-navigation"));
+    assert.equal(controller.attentionFor("oc-linked").reason, "question");
+    focused = true;
+    allowAcknowledgement = false;
+    await controller.refresh();
+    assert.equal(controller.attentionFor("oc-linked").reason, "question");
+    await controller.handle(request("session.error", "oc-linked", "e-during-navigation"));
+    assert.equal(controller.attentionFor("oc-linked").reason, "question");
+    allowAcknowledgement = true;
+    await controller.refresh();
+    assert.equal(controller.attentionFor("oc-linked"), null);
+  } finally { controller.dispose(); removeRoot(root); }
+});
+
+test("pending notification navigation tracking is global and reentrant", () => {
+  const tracker = createPendingNavigationTracker();
+  tracker.set("oc-target", true);
+  tracker.set("oc-target", true);
+  tracker.set("oc-other", true);
+  assert.equal(tracker.hasAny(), true);
+  assert.equal(tracker.has("oc-target"), true);
+  tracker.set("oc-target", false);
+  assert.equal(tracker.has("oc-target"), true);
+  tracker.set("oc-target", false);
+  assert.equal(tracker.has("oc-target"), false);
+  assert.equal(tracker.hasAny(), true);
+  tracker.set("oc-other", false);
+  assert.equal(tracker.hasAny(), false);
+});
+
 test("TUI focus tracker is fail-safe, observes blur and focus, and disposes listeners", () => {
   const renderer = new EventEmitter();
   renderer.keyInput = new EventEmitter();
@@ -262,6 +306,64 @@ test("global attention toast uses only controlled context and reason text", () =
     variant: "warning",
     duration: 5000,
   });
+});
+
+test("notification navigation acknowledges only a verified destination", async () => {
+  const acknowledgements = [];
+  const toasts = [];
+  const pendingStates = [];
+  const api = { ui: { toast: (value) => { toasts.push(value); } } };
+  const controller = { acknowledge: (...args) => { acknowledgements.push(args); return true; } };
+  assert.equal(await openAttentionDestination({
+    api,
+    activator: { activate: async () => ({ ok: true, activated: true, navigated: true, verified: true }) },
+    controller,
+    sessionId: "oc-target",
+    eventKey: "question:q-1",
+    setNavigationPending: (...args) => { pendingStates.push(args); },
+  }), true);
+  assert.deepEqual(acknowledgements, [["oc-target", "question:q-1"]]);
+  assert.deepEqual(toasts, []);
+  assert.deepEqual(pendingStates, [["oc-target", true], ["oc-target", false]]);
+
+  assert.equal(await openAttentionDestination({
+    api,
+    activator: { activate: async () => true },
+    controller,
+    sessionId: "oc-other",
+    eventKey: "idle:turn-2",
+  }), false);
+  assert.deepEqual(acknowledgements, [["oc-target", "question:q-1"]]);
+  assert.deepEqual(toasts, [{
+    title: "Work Context",
+    message: "The target session could not be opened. Attention remains unread.",
+    variant: "warning",
+    duration: 5000,
+  }]);
+});
+
+test("notification navigation cannot acknowledge a newer event", async () => {
+  let currentEventKey = "question:q-old";
+  let resolveActivation;
+  const activation = new Promise((resolve) => { resolveActivation = resolve; });
+  const controller = {
+    acknowledge: (_sessionId, eventKey) => {
+      if (eventKey !== currentEventKey) return false;
+      currentEventKey = null;
+      return true;
+    },
+  };
+  const opening = openAttentionDestination({
+    api: {},
+    activator: { activate: () => activation },
+    controller,
+    sessionId: "oc-target",
+    eventKey: "question:q-old",
+  });
+  currentEventKey = "error:e-new";
+  resolveActivation({ ok: true, activated: true, navigated: true, verified: true });
+  assert.equal(await opening, true);
+  assert.equal(currentEventKey, "error:e-new");
 });
 
 test("TUI attention subscriptions dispose once and duplicate loading is prevented", async () => {
@@ -421,7 +523,13 @@ test("attention from project A is shown as a toast in active project B", async (
       attentionActivator: {
         available: true,
         capture: async () => null,
-        activate: async (sessionId) => { activated.push(sessionId); return true; },
+        activate: async (sessionId) => {
+          activated.push(sessionId);
+          apiA.route.current.params.sessionID = sessionId;
+          handlersA.get("tui.session.select")?.({ type: "tui.session.select" });
+          await Promise.resolve();
+          return { ok: true, activated: true, navigated: true, verified: true };
+        },
         dispose: () => {},
       },
       desktopNotifier: { notify: async (value, options) => { desktop.push(value); openNotification = options.onOpen; return true; } },
@@ -447,9 +555,10 @@ test("attention from project A is shown as a toast in active project B", async (
       reason: "question",
     }]);
     assert.equal(typeof openNotification, "function");
+    assert.equal(apiA.workContextAttention.attentionFor("oc-a").reason, "question");
     await openNotification();
     assert.deepEqual(activated, ["oc-a"]);
-    assert.equal(apiA.workContextAttention.attentionFor("oc-a").reason, "question");
+    assert.equal(apiA.workContextAttention.attentionFor("oc-a"), null);
     apiB.renderer.emit("blur");
     assert.equal(channelB.hasActiveInstance(), false);
   } finally {

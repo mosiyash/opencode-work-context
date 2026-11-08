@@ -52,12 +52,14 @@ attention reason. Text is stripped of control characters and bounded before it
 is passed to the operating system.
 
 When the notification server supports actions, the fixed `Open session` action
-is handled by the originating TUI process. The process navigates through the
-public OpenCode route API. Optional activation adapters may then select a
-validated `TMUX_PANE` with fixed tmux arguments and raise a captured X11 window
-with fixed `xprop` and `wmctrl` invocations. No shell, user command, or identifier
-from notification text is evaluated. Missing tools and adapter failures do not
-prevent the remaining activation steps.
+is handled by the originating TUI process. Optional activation adapters first
+select a validated `TMUX_PANE` with fixed tmux arguments and raise a captured X11
+window with fixed `xprop` and `wmctrl` invocations. After a short activation
+boundary, the process navigates through the public OpenCode route API and verifies
+the destination route. Only verified navigation acknowledges attention; failure
+leaves it unread and reports an in-TUI warning. No shell, user command, or
+identifier from notification text is evaluated. Missing tools and adapter
+failures do not prevent the remaining activation steps.
 
 ## Consequences
 

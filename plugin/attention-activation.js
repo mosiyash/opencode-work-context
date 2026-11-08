@@ -2,6 +2,10 @@ import { spawn as nodeSpawn } from "node:child_process";
 
 const WINDOW_ID = /^0x[0-9a-f]+$/i;
 const MAX_OUTPUT = 128;
+const routeSessionId = (api) => api?.route?.current?.name === "session"
+  ? api.route.current.params?.sessionID || api.route.current.params?.sessionId || api.route.current.params?.session_id || null
+  : null;
+const wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs));
 
 const run = ({ executable, args, spawn, timeoutMs, capture = false, children }) => new Promise((resolve) => {
   let child;
@@ -69,6 +73,8 @@ export const createAttentionActivator = ({
   timeoutMs = 1000,
   captureThrottleMs = 1000,
   navigationTimeoutMs = 2000,
+  routeVerificationMs = 500,
+  activationDelayMs = 50,
   now = () => Date.now(),
 } = {}) => {
   const paneId = env.TMUX && /^%\d+$/.test(env.TMUX_PANE || "") ? env.TMUX_PANE : null;
@@ -122,22 +128,40 @@ export const createAttentionActivator = ({
     }
   };
 
+  const verifyRoute = async (sessionId) => {
+    if (!("current" in (api?.route || {})) || disposed) return false;
+    const deadline = Date.now() + routeVerificationMs;
+    do {
+      if (!disposed && routeSessionId(api) === sessionId) return true;
+      if (routeVerificationMs <= 0) break;
+      await wait(Math.min(25, Math.max(1, deadline - Date.now())));
+    } while (!disposed && Date.now() < deadline);
+    return !disposed && routeSessionId(api) === sessionId;
+  };
+
   const activate = async (sessionId) => {
-    if (disposed || typeof sessionId !== "string" || !sessionId || sessionId.length > 256) return false;
-    let activated = await navigate(sessionId);
-    if (disposed) return activated;
+    if (disposed || typeof sessionId !== "string" || !sessionId || sessionId.length > 256) {
+      return { ok: false, activated: false, navigated: false, verified: false };
+    }
+    let activated = false;
     if (paneId) {
       const selectedWindow = await run({ executable: "tmux", args: ["select-window", "-t", paneId], spawn, timeoutMs, children });
-      if (disposed) return activated;
+      if (disposed) return { ok: false, activated, navigated: false, verified: false };
       const selectedPane = await run({ executable: "tmux", args: ["select-pane", "-t", paneId], spawn, timeoutMs, children });
-      activated = selectedWindow.ok && selectedPane.ok || activated;
+      activated = selectedWindow.ok && selectedPane.ok;
     }
-    if (disposed) return activated;
+    if (disposed) return { ok: false, activated, navigated: false, verified: false };
     if (windowId && canCaptureWindow) {
       const raised = await run({ executable: "wmctrl", args: ["-ia", windowId], spawn, timeoutMs, children });
       activated = raised.ok || activated;
     }
-    return activated;
+    if (disposed) return { ok: false, activated, navigated: false, verified: false };
+    if (activated && activationDelayMs > 0) await wait(activationDelayMs);
+    if (disposed) return { ok: false, activated, navigated: false, verified: false };
+    const navigated = await navigate(sessionId);
+    if (disposed) return { ok: false, activated, navigated, verified: false };
+    const verified = navigated && await verifyRoute(sessionId);
+    return { ok: verified, activated, navigated, verified };
   };
 
   return {

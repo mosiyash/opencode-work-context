@@ -283,8 +283,11 @@ On Linux notification servers that support actions, `Open session` routes the
 originating OpenCode process to the affected native session. If that process
 runs in tmux, its validated `TMUX_PANE` is selected with fixed `tmux` arguments.
 On X11, the loader records the active window with `xprop` and raises it with
-`wmctrl` when those optional tools are available. Each step is independent and
-best-effort: navigation can still succeed if pane or window activation fails.
+`wmctrl` when those optional tools are available. Pane/window activation happens
+before session navigation so a hidden TUI can process the route change. Attention
+is acknowledged only after the destination route is verified; failed navigation
+leaves it unread and shows an in-TUI warning. Each activation step is independent
+and best-effort: navigation can still succeed if pane or window activation fails.
 Wayland focus restrictions and terminal tabs without a public activation API
 may require the user to foreground the terminal manually. Session and window
 identifiers never appear in notification text or configurable commands.
