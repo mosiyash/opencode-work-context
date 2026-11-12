@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readStagesSnapshot } from "../src/stages-snapshot.js";
-import { renderStagesPanel } from "../src/stages-renderer.js";
+import { renderDependencyTree, renderStagesPanel } from "../src/stages-renderer.js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createSignal } from "solid-js";
 import { attentionReasonText } from "./attention.js";
+import { readTuiState, updateTuiState } from "./tui-state.js";
 
 const DEBOUNCE_MS = 150;
 const POLL_MS = 1000;
@@ -13,6 +14,10 @@ const PATH_POLL_MS = 25;
 const WORK_CONTEXT_PREFIX = "work" + "_" + "context_";
 const activeTuiInstances = new WeakMap();
 const ACTIVE_TUI_KEY = Symbol.for("opencode-work-context.stages-tui");
+const DEPENDENCIES_COMMAND = "work_context.toggle_dependencies";
+const DEPENDENCIES_SHORTCUT = "<leader>d";
+const TREE_COMMAND = "work_context.show_dependency_tree";
+const TREE_SHORTCUT = "<leader>t";
 const statusMarker = (status) => ({
   planned: "[ ]",
   in_progress: "[•]",
@@ -25,7 +30,7 @@ export { readStagesSnapshot, renderStagesPanel };
 
 const defaultRuntime = { jsx };
 
-const renderStagesContent = (result, theme, runtime = defaultRuntime, attention) => !result?.ok || !result.data?.workspace
+const renderStagesContent = (result, theme, runtime = defaultRuntime, attention, showDependencies = true) => !result?.ok || !result.data?.workspace
   ? [
     runtime.jsx("text", { children: runtime.jsx("b", { children: "Stages" }) }),
     ...renderStagesPanel(result).split("\n").slice(1).map((line) => runtime.jsx("text", { children: line })),
@@ -48,16 +53,16 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention)
         flexDirection: "row",
         children: [
           runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
-          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: `${stage.id}. ${stage.title}${unread ? ` [ATTN: ${attentionReasonText(unread.reason)}${unread.count > 1 ? ` x${unread.count}` : ""}]` : ""}` }),
+          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: `${stage.id}. ${stage.title}${showDependencies && stage.depends_on?.length ? `\nDeps: ${stage.depends_on.join(", ")}` : ""}${unread ? ` [ATTN: ${attentionReasonText(unread.reason)}${unread.count > 1 ? ` x${unread.count}` : ""}]` : ""}` }),
         ],
       });
     }),
   ];
 
-export const renderStagesElement = (result, theme, runtime = defaultRuntime, attention) => {
+export const renderStagesElement = (result, theme, runtime = defaultRuntime, attention, showDependencies = true) => {
   return runtime.jsx("box", {
-  flexDirection: "column",
-  children: () => renderStagesContent(typeof result === "function" ? result() : result, theme, runtime, attention),
+   flexDirection: "column",
+   children: () => renderStagesContent(typeof result === "function" ? result() : result, theme, runtime, attention, typeof showDependencies === "function" ? showDependencies() : showDependencies),
   });
 };
 
@@ -99,6 +104,7 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
   const timers = new Map();
   const pollers = new Map();
   const [version, setVersion] = makeSignal(0);
+  const [showDependencies, setShowDependencies] = makeSignal(readTuiState(projectRoot).sidebar_dependencies === true);
   let disposed = false;
   const unsubscribeAttention = attention?.subscribe?.(() => setVersion((value) => value + 1));
 
@@ -160,6 +166,13 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
     load: readSnapshot,
     scheduleRefresh,
     resultFor,
+    showDependencies,
+    toggleDependencies: () => {
+      const visible = !showDependencies();
+      setShowDependencies(visible);
+      updateTuiState(projectRoot, (state) => ({ ...state, sidebar_dependencies: visible }));
+      return visible;
+    },
     dispose: () => {
       if (disposed) return;
       disposed = true;
@@ -199,8 +212,71 @@ export const resolveProjectRoot = async (api, { timeoutMs = PATH_TIMEOUT_MS, pol
 
 const renderStagesSlot = (controller, theme, sessionId, runtime = defaultRuntime, attention) => runtime.jsx("box", {
   flexDirection: "column",
-  children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime, attention),
+  children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime, attention, controller.showDependencies),
 });
+
+const registerDependencyToggle = (api, controller) => {
+  if (typeof api?.keymap?.registerLayer !== "function") return () => {};
+  const command = {
+    name: DEPENDENCIES_COMMAND,
+    title: "Toggle sidebar dependencies",
+    desc: "Show or hide dependency IDs in the stages sidebar",
+    category: "Work Context",
+    namespace: "palette",
+    run: () => controller.toggleDependencies(),
+  };
+  return api.keymap.registerLayer({
+    commands: [command],
+    bindings: [{ key: DEPENDENCIES_SHORTCUT, cmd: DEPENDENCIES_COMMAND, desc: command.title }],
+  });
+};
+
+export const dependencyTreeOptions = (stages, width = 80) => {
+  const narrow = width < 50;
+  const tree = renderDependencyTree(stages, {
+    compact: narrow,
+    maxTitleLength: narrow ? Math.max(12, width - 18) : undefined,
+  });
+  return [
+    { title: "Close", value: "close", category: "Dependency tree" },
+    ...tree.split("\n").map((line) => ({ title: line, value: line, category: "Dependency tree" })),
+  ];
+};
+
+export const openDependencyTreeDialog = (api, result) => {
+  if (typeof api?.ui?.DialogSelect !== "function" || typeof api?.ui?.dialog?.replace !== "function") return false;
+  if (!result?.ok || !result.data?.workspace) {
+    api.ui?.toast?.({ message: "No work-context stages are available", variant: "warning" });
+    return false;
+  }
+  const width = api.renderer?.width || 80;
+  api.ui.dialog.setSize?.(width < 50 ? "small" : "large");
+  api.ui.dialog.replace(() => api.ui.DialogSelect({
+    title: `Dependency tree · ${result.data.workspace.title}`,
+    placeholder: "Dependency tree",
+    options: dependencyTreeOptions(result.data.stages, width),
+    onSelect: (option) => {
+      if (option.value === "close") api.ui.dialog.clear?.();
+    },
+  }));
+  return true;
+};
+
+const registerDependencyTree = (api, controller, sessionId) => {
+  if (typeof api?.keymap?.registerLayer !== "function") return () => {};
+  const command = {
+    name: TREE_COMMAND,
+    title: "Show dependency tree",
+    desc: "Open the full work-context dependency tree",
+    category: "Work Context",
+    namespace: "palette",
+    run: () => openDependencyTreeDialog(api, controller.resultFor(sessionId())),
+  };
+  return api.keymap.registerLayer({
+    commands: [command],
+    bindings: [{ key: TREE_SHORTCUT, cmd: TREE_COMMAND, desc: command.title }],
+  });
+};
 
 const ACTIVE_WORKSPACE_SESSION = "__active_" + "work" + "_context_workspace__";
 
@@ -223,8 +299,10 @@ export const tui = async (api, options = {}) => {
     createSignal: options.runtime?.createSignal,
     attention: api.workContextAttention,
   });
-  await controller.load(initialSessionId);
+  const unregisterDependencyToggle = registerDependencyToggle(api, controller);
   let currentSessionId = initialSessionId;
+  const unregisterDependencyTree = registerDependencyTree(api, controller, () => currentSessionId || ACTIVE_WORKSPACE_SESSION);
+  await controller.load(initialSessionId);
   let storageWatcher;
   try {
     storageWatcher = fs.watch(path.join(projectRoot, ".work-context"), { recursive: true }, () => {
@@ -263,6 +341,8 @@ export const tui = async (api, options = {}) => {
     disposeRegistration(unsubscribe);
     disposeRegistration(unsubscribeTool);
     disposeRegistration(unregisterSlot);
+    disposeRegistration(unregisterDependencyToggle);
+    disposeRegistration(unregisterDependencyTree);
   };
   api[ACTIVE_TUI_KEY] = cleanup;
   activeTuiInstances.set(api, cleanup);

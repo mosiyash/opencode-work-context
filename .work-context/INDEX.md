@@ -3,6 +3,7 @@
 | Workspace | Title | Status | Updated |
 |---|---|---|---|
 | 000005 | Autocomplete and action modal for /wc | in_progress | 2026-09-02T03:02:33.340Z |
+| 000013 | Stages tree | in_progress | 2026-11-12T03:37:26.963Z |
 | 000003 | Fix error: `Session event timestamps are not ordered` | completed | 2026-08-31T08:05:29.609Z |
 | 000008 | Functionality optimization | in_progress | 2026-09-03T07:23:25.522Z |
 | 000001 | Research persistent TUI stages panel | completed | 2026-08-30T04:39:36.617Z |

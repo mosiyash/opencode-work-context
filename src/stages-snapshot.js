@@ -42,6 +42,7 @@ export function readStagesSnapshot({ projectRoot, sessionId }) {
         title: stage.title,
         status: stage.status,
         description: stage.description,
+        depends_on: stage.depends_on,
         current: stage.stage === session.stage,
       }));
     const currentStage = stages.some((stage) => stage.current) ? session.stage : null;

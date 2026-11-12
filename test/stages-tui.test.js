@@ -5,8 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { testRender } from "@opentui/solid";
 import { createSignal } from "solid-js";
-import { WorkContext, readStagesSnapshot, readWorkContextSnapshot, renderStagesPanel } from "../src/index.js";
-import tuiModule, { createStagesTuiController, renderStagesElement, sessionIdForSlot } from "../plugin/stages-tui.js";
+import { WorkContext, readStagesSnapshot, readWorkContextSnapshot, renderDependencyTree, renderStagesPanel } from "../src/index.js";
+import tuiModule, { createStagesTuiController, dependencyTreeOptions, openDependencyTreeDialog, renderStagesElement, sessionIdForSlot } from "../plugin/stages-tui.js";
 import realTuiLoader from "../.opencode/tui-plugins/work-context-stages.js";
 import { appendPromptCommand, buildWorkContextActionCommand, createWorkContextActionFlow, createWorkContextModalController, filterWorkspaces, insertPromptCommand, prepareWorkContextCommand, registerWorkContextModal, renderWorkContextModal, WORK_CONTEXT_ACTIONS } from "../plugin/work-context-modal.js";
 import { createStageSwitcherFlow, readStageSwitcherSnapshot, recentStageIds, rememberRecentStage, selectStageSession, startStageSession, switchToStage } from "../plugin/stage-switcher.js";
@@ -50,7 +50,7 @@ test("work-context snapshot includes stages and session metadata for all workspa
     const context = WorkContext.open(root, { actor: "test" });
     context.createWorkspace("First workspace", { workspace: "999970", sessionId: "oc-first" });
     context.createWorkspace("Second workspace", { workspace: "999971", sessionId: "oc-second" });
-    context.addStage("999970", "Implementation", { goal: "Build the read model" });
+    context.addStage("999970", "Implementation", { goal: "Build the read model", dependsOn: ["01"] });
     const result = readWorkContextSnapshot({ projectRoot: root, sessionId: "oc-first" });
     assert.equal(result.ok, true);
     assert.deepEqual(result.data.workspaces.map((workspace) => workspace.id), ["999970", "999971"]);
@@ -58,6 +58,7 @@ test("work-context snapshot includes stages and session metadata for all workspa
     assert.equal(result.data.workspaces[0].currentStage, "01");
     assert.equal(result.data.workspaces[0].activeSession.session_id, "oc-first");
     assert.equal(result.data.workspaces[0].stages[1].description, "Build the read model");
+    assert.deepEqual(result.data.workspaces[0].stages.map((stage) => stage.depends_on), [[], ["01"]]);
   } finally { removeRoot(root); }
 });
 
@@ -75,8 +76,8 @@ test("snapshot selects workspace and current stage by OpenCode session ID", () =
     assert.deepEqual(result.data.workspace, { id: "999987", title: "Panel workspace", status: "in_progress" });
     assert.equal(result.data.currentStage, "02");
     assert.deepEqual(result.data.stages, [
-      { id: "01", title: "Planning", status: "in_progress", description: "Clarify the work goal and constraints", current: false },
-      { id: "02", title: "Implementation", status: "in_progress", description: "Build the panel", current: true },
+      { id: "01", title: "Planning", status: "in_progress", description: "Clarify the work goal and constraints", depends_on: [], current: false },
+      { id: "02", title: "Implementation", status: "in_progress", description: "Build the panel", depends_on: [], current: true },
     ]);
     assert.equal(typeof result.data.generatedAt, "string");
   } finally { removeRoot(root); }
@@ -173,6 +174,72 @@ test("renderer uses todo-style markers for stage statuses", () => {
   assert.match(output, /\[-\] 05\. Archived/);
 });
 
+test("dependency tree renders branches in stage ID order", () => {
+  const output = renderDependencyTree([
+    { id: "03", title: "Second branch", status: "planned", depends_on: ["01"] },
+    { id: "01", title: "Plan", status: "completed", depends_on: [] },
+    { id: "02", title: "First branch", status: "in_progress", depends_on: ["01"] },
+  ]);
+
+  assert.equal(output, "[✓] 01. Plan\n├─ [•] 02. First branch\n└─ [ ] 03. Second branch");
+});
+
+test("dependency tree repeats joins for distinct DAG paths", () => {
+  const output = renderDependencyTree([
+    { id: "01", title: "Plan", status: "completed", depends_on: [] },
+    { id: "02", title: "Client", status: "planned", depends_on: ["01"] },
+    { id: "03", title: "Server", status: "planned", depends_on: ["01"] },
+    { id: "04", title: "Release", status: "planned", depends_on: ["02", "03"] },
+  ]);
+
+  assert.equal(output, "[✓] 01. Plan\n├─ [ ] 02. Client\n│  └─ [ ] 04. Release\n└─ [ ] 03. Server\n   └─ [ ] 04. Release");
+});
+
+test("dependency tree stops an invalid cyclic path", () => {
+  const output = renderDependencyTree([
+    { id: "01", title: "First", status: "planned", depends_on: ["02"] },
+    { id: "02", title: "Second", status: "planned", depends_on: ["01"] },
+  ]);
+
+  assert.equal(output, "[ ] 01. First\n└─ [ ] 02. Second\n   └─ [ ] 01. First [cycle]");
+});
+
+test("dependency tree renders compact ASCII branches for narrow TUI dialogs", () => {
+  const options = dependencyTreeOptions([
+    { id: "01", title: "Planning", status: "completed", depends_on: [] },
+    { id: "02", title: "Implementation with a deliberately long title", status: "planned", depends_on: ["01"] },
+  ], 30);
+
+  assert.equal(options[0].title, "Close");
+  assert.equal(options[1].title, "[✓] 01. Planning");
+  assert.match(options[2].title, /^\\- \[ \] 02\. Implement\.\.\.$/);
+  assert.equal(options[2].disabled, undefined);
+});
+
+test("dependency tree opens the complete current snapshot in a native dialog", () => {
+  let dialog;
+  let size;
+  const api = {
+    renderer: { width: 80 },
+    ui: {
+      DialogSelect: (props) => ({ type: "select", props }),
+      dialog: { setSize: (value) => { size = value; }, replace: (render) => { dialog = render(); }, clear: () => {} },
+    },
+  };
+  const opened = openDependencyTreeDialog(api, { ok: true, data: {
+    workspace: { title: "Demo" },
+    stages: [
+      { id: "01", title: "Planning", status: "completed", depends_on: [] },
+      { id: "02", title: "Build", status: "planned", depends_on: ["01"] },
+    ],
+  } });
+
+  assert.equal(opened, true);
+  assert.equal(size, "large");
+  assert.equal(dialog.props.title, "Dependency tree · Demo");
+  assert.deepEqual(dialog.props.options.map((option) => option.title), ["Close", "[✓] 01. Planning", "└─ [ ] 02. Build"]);
+});
+
 test("mounted stages panel updates without remount", { skip: !tuiSmokeEnabled }, async () => {
   const stages = (last) => Array.from({ length: last }, (_, index) => ({
     id: String(index + 1).padStart(2, "0"),
@@ -238,6 +305,78 @@ test("renderer keeps workspace context separate and lets long titles wrap", () =
   assert.match(output, /^A workspace title that is deliberately much too long\n\nStages/);
   assert.match(output, /\[ \] 01\. A stage title that is deliberately much too long/);
   assert.doesNotMatch(output, /A description that is deliberately/);
+});
+
+test("sidebar lists direct dependencies on a separate line", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const output = renderedText(renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress" },
+    stages: [
+      { id: "01", title: "Planning", status: "completed", depends_on: [] },
+      { id: "02", title: "Build", status: "planned", depends_on: ["01"] },
+      { id: "03", title: "Release", status: "planned", depends_on: ["01", "02"] },
+    ],
+  } }, {}, runtime));
+
+  assert.match(output, /01\. Planning/);
+  assert.doesNotMatch(output, /01\. Planning\nDeps:/);
+  assert.match(output, /02\. Build\nDeps: 01/);
+  assert.match(output, /03\. Release\nDeps: 01, 02/);
+});
+
+test("sidebar dependency visibility toggles and persists locally", () => {
+  const root = makeRoot();
+  try {
+    const controller = createStagesTuiController({ projectRoot: root, pollMs: 0 });
+    assert.equal(controller.showDependencies(), false);
+    assert.equal(controller.toggleDependencies(), true);
+    assert.equal(controller.showDependencies(), true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, ".work-context", "local", "tui-state.json"), "utf8")).sidebar_dependencies, true);
+    controller.dispose();
+    const restored = createStagesTuiController({ projectRoot: root, pollMs: 0 });
+    assert.equal(restored.showDependencies(), true);
+    restored.dispose();
+  } finally { removeRoot(root); }
+});
+
+test("TUI registers a hotkey to toggle sidebar dependencies", async () => {
+  const root = makeRoot();
+  const layers = [];
+  let dispose;
+  const api = {
+    state: { path: { worktree: root } },
+    slots: { register: () => () => {} },
+    keymap: { registerLayer: (layer) => { layers.push(layer); return () => {}; } },
+    lifecycle: { onDispose: (callback) => { dispose = callback; return () => {}; } },
+  };
+  try {
+    await tuiModule.tui(api, { pollMs: 0 });
+    assert.deepEqual(layers[0].bindings, [{ key: "<leader>d", cmd: "work_context.toggle_dependencies", desc: "Toggle sidebar dependencies" }]);
+    assert.equal(layers[0].commands[0].run(), true);
+  } finally {
+    dispose?.();
+    removeRoot(root);
+  }
+});
+
+test("TUI registers a hotkey to show the dependency tree", async () => {
+  const root = makeRoot();
+  const layers = [];
+  let dispose;
+  const api = {
+    state: { path: { worktree: root } },
+    slots: { register: () => () => {} },
+    keymap: { registerLayer: (layer) => { layers.push(layer); return () => {}; } },
+    lifecycle: { onDispose: (callback) => { dispose = callback; return () => {}; } },
+  };
+  try {
+    await tuiModule.tui(api, { pollMs: 0 });
+    const treeLayer = layers.find((layer) => layer.commands[0].name === "work_context.show_dependency_tree");
+    assert.deepEqual(treeLayer.bindings, [{ key: "<leader>t", cmd: "work_context.show_dependency_tree", desc: "Show dependency tree" }]);
+  } finally {
+    dispose?.();
+    removeRoot(root);
+  }
 });
 
 test("missing workspace and storage errors become safe panel states", () => {
