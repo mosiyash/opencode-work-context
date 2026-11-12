@@ -5,6 +5,7 @@ import { renderDependencyTree, renderStagesPanel } from "../src/stages-renderer.
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createSignal } from "solid-js";
 import { attentionReasonText } from "./attention.js";
+import { createStageSwitcherFlow } from "./stage-switcher.js";
 import { readTuiState, updateTuiState } from "./tui-state.js";
 
 const DEBOUNCE_MS = 150;
@@ -30,7 +31,7 @@ export { readStagesSnapshot, renderStagesPanel };
 
 const defaultRuntime = { jsx };
 
-const renderStagesContent = (result, theme, runtime = defaultRuntime, attention, showDependencies = true) => !result?.ok || !result.data?.workspace
+const renderStagesContent = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect) => !result?.ok || !result.data?.workspace
   ? [
     runtime.jsx("text", { children: runtime.jsx("b", { children: "Stages" }) }),
     ...renderStagesPanel(result).split("\n").slice(1).map((line) => runtime.jsx("text", { children: line })),
@@ -51,6 +52,10 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
       const unread = attention?.attentionForStage?.(result.data.workspace.id, stage.id);
       return runtime.jsx("box", {
         flexDirection: "row",
+        onMouseDown: (event) => {
+          if (event?.button != null && event.button !== 0) return;
+          return onStageSelect?.(stage);
+        },
         children: [
           runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
           runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: `${stage.id}. ${stage.title}${showDependencies && stage.depends_on?.length ? `\nDeps: ${stage.depends_on.join(", ")}` : ""}${unread ? ` [ATTN: ${attentionReasonText(unread.reason)}${unread.count > 1 ? ` x${unread.count}` : ""}]` : ""}` }),
@@ -59,10 +64,10 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
     }),
   ];
 
-export const renderStagesElement = (result, theme, runtime = defaultRuntime, attention, showDependencies = true) => {
+export const renderStagesElement = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect) => {
   return runtime.jsx("box", {
    flexDirection: "column",
-   children: () => renderStagesContent(typeof result === "function" ? result() : result, theme, runtime, attention, typeof showDependencies === "function" ? showDependencies() : showDependencies),
+    children: () => renderStagesContent(typeof result === "function" ? result() : result, theme, runtime, attention, typeof showDependencies === "function" ? showDependencies() : showDependencies, onStageSelect),
   });
 };
 
@@ -210,9 +215,9 @@ export const resolveProjectRoot = async (api, { timeoutMs = PATH_TIMEOUT_MS, pol
   return null;
 };
 
-const renderStagesSlot = (controller, theme, sessionId, runtime = defaultRuntime, attention) => runtime.jsx("box", {
+const renderStagesSlot = (controller, theme, sessionId, runtime = defaultRuntime, attention, onStageSelect) => runtime.jsx("box", {
   flexDirection: "column",
-  children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime, attention, controller.showDependencies),
+  children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime, attention, controller.showDependencies, onStageSelect),
 });
 
 const registerDependencyToggle = (api, controller) => {
@@ -299,6 +304,7 @@ export const tui = async (api, options = {}) => {
     createSignal: options.runtime?.createSignal,
     attention: api.workContextAttention,
   });
+  const stageSwitcher = createStageSwitcherFlow(api);
   const unregisterDependencyToggle = registerDependencyToggle(api, controller);
   let currentSessionId = initialSessionId;
   const unregisterDependencyTree = registerDependencyTree(api, controller, () => currentSessionId || ACTIVE_WORKSPACE_SESSION);
@@ -319,7 +325,7 @@ export const tui = async (api, options = {}) => {
       sidebar_content: (slotContext = {}, slotState = {}) => {
         const sessionId = sessionIdForSlot(api, initialSessionId, slotContext, slotState) || ACTIVE_WORKSPACE_SESSION;
         currentSessionId = sessionId;
-        return renderStagesSlot(controller, api.theme, sessionId, options.runtime, api.workContextAttention);
+        return renderStagesSlot(controller, api.theme, sessionId, options.runtime, api.workContextAttention, (stage) => stageSwitcher.select(stage.id));
       },
     },
   });

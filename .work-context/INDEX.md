@@ -11,6 +11,7 @@
 | 000009 | Restore default leader key | completed | 2026-09-04T04:17:47.879Z |
 | 000007 | Test workspace 1 | in_progress | 2026-09-01T16:33:36.677Z |
 | 000006 | Implement fast read-only Work Context TUI modal | completed | 2026-09-02T03:42:48.234Z |
+| 000014 | TUI sidebar click navigation | completed | 2026-11-12T11:59:37.593Z |
 | 000002 | Add CSV export to analytics report | completed | 2026-08-30T04:28:38.240Z |
 | 000004 | Stages fail to load in other projects | completed | 2026-08-31T10:23:15.456Z |
 | 000011 | Fixes | in_progress | 2026-10-14T02:39:34.801Z |

@@ -163,6 +163,30 @@ export const switchToStage = async (api, stage, options = {}) => {
 
 export const createStageSwitcherFlow = (api, { read = readStageSwitcherSnapshot, start = startStageSession } = {}) => {
   const toast = (message, variant = "warning") => api?.ui?.toast?.({ message, variant });
+  const select = async (stageId) => {
+    let result;
+    try { result = await read({ projectRoot: projectRoot(api), sessionId: currentSessionId(api) }); }
+    catch (error) { result = errorResult(error.code || "STORAGE_ERROR", error.message || "Cannot read work-context storage"); }
+    if (!result?.ok) {
+      toast(`${result?.error?.code || "STORAGE_ERROR"}: ${result?.error?.message || "Cannot read work-context storage"}`, "error");
+      return result;
+    }
+    const stage = result.data.stages.find((item) => item.id === stageId);
+    if (!stage) {
+      const missing = errorResult("NOT_FOUND", "The selected work-context stage no longer exists");
+      toast(`${missing.error.code}: ${missing.error.message}`, "error");
+      return missing;
+    }
+    const selected = {
+      ...stage,
+      attention: api.workContextAttention?.attentionForStage?.(result.data.workspace.id, stage.id),
+      selectedSession: selectStageSession(stage.sessions, (id) => attentionForSession(api, id)),
+    };
+    const switched = await switchToStage(api, selected, { workspace: result.data.workspace.id, currentStage: result.data.currentStage, start });
+    if (!switched.ok) toast(`${switched.error.code}: ${switched.error.message}`, "error");
+    else toast(switched.data.created ? "Stage session created" : "Stage session opened", "success");
+    return switched;
+  };
   const open = async () => {
     let result;
     try { result = await read({ projectRoot: projectRoot(api), sessionId: currentSessionId(api) }); }
@@ -201,14 +225,12 @@ export const createStageSwitcherFlow = (api, { read = readStageSwitcherSnapshot,
         ...ordinary.map((stage) => optionFor(stage, stage.status)),
       ],
       onSelect: (option) => void (async () => {
-        const switched = await switchToStage(api, option.value, { workspace: workspace.id, currentStage: result.data.currentStage, start });
-        if (!switched.ok) toast(`${switched.error.code}: ${switched.error.message}`, "error");
-        else toast(switched.data.created ? "Stage session created" : "Stage session opened", "success");
+        await select(option.value.id);
       })(),
     }));
     return result;
   };
-  return { open };
+  return { open, select };
 };
 
 export const openStageSwitcher = (api, options = {}) => {

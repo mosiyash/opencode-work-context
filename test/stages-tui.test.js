@@ -324,6 +324,56 @@ test("sidebar lists direct dependencies on a separate line", () => {
   assert.match(output, /03\. Release\nDeps: 01, 02/);
 });
 
+test("sidebar rows expose mouse handlers and route clicks through the selected stage", async () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const selected = [];
+  const element = renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress" },
+    stages: [{ id: "02", title: "Build", status: "planned", depends_on: [] }],
+  } }, {}, runtime, undefined, true, (stage) => { selected.push(stage.id); });
+  const row = element.props.children()[2];
+
+  assert.equal(typeof row.props.onMouseDown, "function");
+  await row.props.onMouseDown({ button: 0 });
+  await row.props.onMouseDown({ button: 1 });
+  assert.deepEqual(selected, ["02"]);
+});
+
+test("sidebar clicks use the stage switcher flow and report navigation failures", async () => {
+  const root = makeRoot();
+  const context = WorkContext.open(root, { actor: "test" });
+  context.createWorkspace("Sidebar navigation", { workspace: "999969", sessionId: "wc-current", opencodeSessionId: "oc-current" });
+  context.addStage("999969", "Target stage");
+  context.startSession("999969", "02", { sessionId: "wc-target", opencodeSessionId: "oc-target" });
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const navigated = [];
+  const toasts = [];
+  let slot;
+  let dispose;
+  const api = {
+    state: { path: { worktree: root } },
+    route: { current: { name: "session", params: { sessionID: "oc-current" } }, navigate: (...args) => navigated.push(args) },
+    slots: { register: (plugin) => { slot = plugin.slots.sidebar_content; return () => {}; } },
+    lifecycle: { onDispose: (callback) => { dispose = callback; return () => {}; } },
+    ui: { dialog: { clear: () => {} }, toast: (toast) => toasts.push(toast) },
+  };
+  try {
+    await tuiModule.tui(api, { pollMs: 0, runtime });
+    const panel = slot({}, { session_id: "oc-current" }).props.children;
+    const target = panel.props.children()[3];
+    await target.props.onMouseDown({ button: 0 });
+    assert.deepEqual(navigated, [["session", { sessionID: "oc-target" }]]);
+    assert.deepEqual(toasts.at(-1), { message: "Stage session opened", variant: "success" });
+
+    api.route.navigate = () => { throw new Error("navigation failed"); };
+    await target.props.onMouseDown({ button: 0 });
+    assert.deepEqual(toasts.at(-1), { message: "SESSION_SWITCH_ERROR: navigation failed", variant: "error" });
+  } finally {
+    dispose?.();
+    removeRoot(root);
+  }
+});
+
 test("sidebar dependency visibility toggles and persists locally", () => {
   const root = makeRoot();
   try {
