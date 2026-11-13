@@ -4,7 +4,8 @@ import { readWorkContextSnapshot } from "../src/work-context-snapshot.js";
 import { normalizeStageId, normalizeWorkspaceId } from "../src/identifiers.js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createSignal } from "solid-js";
-import { openStageSwitcher } from "./stage-switcher.js";
+import { contextFor } from "../src/opencode-adapter.js";
+import { openStageSwitcher, startStageSession } from "./stage-switcher.js";
 import { openWorkspaceSwitcher } from "./workspace-switcher.js";
 import { openSessionSwitcher } from "./session-switcher.js";
 import { attentionForSession, attentionReasonText } from "./attention.js";
@@ -15,6 +16,8 @@ const SHORTCUT = "<leader>w";
 const STAGE_SHORTCUT = "<leader>s";
 const WORKSPACE_SHORTCUT = "<leader>o";
 const SESSION_SHORTCUT = "<leader>e";
+const CREATE_STAGE_COMMAND = "work_context.create_stage";
+const CREATE_STAGE_SHORTCUT = "<leader>a";
 const DEBOUNCE_MS = 150;
 const POLL_MS = 1000;
 const MARKERS = { planned: "[ ]", in_progress: "[•]", completed: "[✓]", cancelled: "[!]" };
@@ -563,6 +566,67 @@ export const openWorkContextActionDialog = (api, runtime = {}, options = {}) => 
   return true;
 };
 
+const currentSessionId = (api) => api?.route?.current?.params?.sessionID || api?.route?.current?.params?.sessionId;
+const projectRoot = (api) => api?.state?.path?.worktree || api?.state?.path?.directory;
+
+/** Create a planned stage directly, without routing the request through a chat command. */
+export const addStageForCurrentWorkspace = (api, title, { readContext = contextFor } = {}) => {
+  if (!title?.trim()) return { ok: false, error: { code: "INVALID_ARGUMENT", message: "Title is required" } };
+  const root = projectRoot(api);
+  const sessionId = currentSessionId(api);
+  if (!root || !sessionId) return { ok: false, error: { code: "STAGE_CONTEXT_REQUIRED", message: "The current session is not associated with a work-context stage" } };
+  try {
+    const context = readContext(root, sessionId, "OpenCode TUI");
+    const current = context.sessionByOpenCodeId(sessionId, null, null, null) || context.sessionById(sessionId);
+    if (!current) return { ok: false, error: { code: "STAGE_CONTEXT_REQUIRED", message: "The current session is not associated with a work-context stage" } };
+    return context.addStage(current.workspace, title.trim());
+  } catch (error) {
+    return { ok: false, error: { code: error.code || "STORAGE_ERROR", message: error.message || "Could not create the stage" } };
+  }
+};
+
+export const openCreateStageDialog = (api, options = {}) => {
+  if (typeof api?.ui?.DialogPrompt !== "function" || typeof api?.ui?.DialogSelect !== "function" || typeof api?.ui?.dialog?.replace !== "function") return false;
+  const create = async (title, open) => {
+    const result = addStageForCurrentWorkspace(api, title, options);
+    if (!result.ok) {
+      api.ui?.toast?.({ message: `${result.error.code}: ${result.error.message}`, variant: "error" });
+      openCreateStageDialog(api, options);
+      return;
+    }
+    if (open) {
+      const started = await startStageSession(api, {
+        workspace: result.data.workspace,
+        stage: result.data.stage,
+        title: title.trim(),
+      });
+      if (!started.ok) {
+        api.ui?.toast?.({ message: `${started.error.code}: ${started.error.message}`, variant: "error" });
+        return;
+      }
+    }
+    api.ui.dialog.clear?.();
+    api.ui?.toast?.({ message: open ? `Stage ${result.data.stage} created and opened` : `Stage ${result.data.stage} created`, variant: "success" });
+  };
+  api.ui.dialog.replace(() => api.ui.DialogPrompt({
+    title: "Create stage",
+    placeholder: "Stage title",
+    onConfirm: (title) => {
+      if (!title?.trim()) { openCreateStageDialog(api, options); return; }
+      api.ui.dialog.replace(() => api.ui.DialogSelect({
+        title: "Create stage",
+        placeholder: "Choose what happens next",
+        options: [
+          { title: "Create stage", description: "Keep working in the current stage", value: false },
+          { title: "Create and open stage", description: "Start the new stage in a new session", value: true },
+        ],
+        onSelect: (option) => void create(title, option.value),
+      }));
+    },
+  }));
+  return true;
+};
+
 export const openCompatibilityDialog = (api, runtime = {}, options = {}) => {
   const stack = api?.ui?.dialog;
   if (!stack || typeof runtime.jsx !== "function" || typeof stack.replace !== "function") return false;
@@ -591,14 +655,16 @@ export const registerWorkContextModal = (api, runtime = {}) => {
   const stageCommand = { name: "work_context.stage", title: "Switch Work Context Stage", desc: "Open a stage session in the current workspace", category: "Work Context", namespace: "palette", run: () => openStageSwitcher(api) };
   const workspaceCommand = { name: "work_context.workspace", title: "Switch Work Context Workspace", desc: "Open a workspace session", category: "Work Context", namespace: "palette", run: () => openWorkspaceSwitcher(api) };
   const sessionCommand = { name: "work_context.session", title: "Switch Work Context Session", desc: "Open an active or historical work session", category: "Work Context", namespace: "palette", run: () => openSessionSwitcher(api) };
+  const createStageCommand = { name: CREATE_STAGE_COMMAND, title: "Create Work Context Stage", desc: "Create a stage in the current workspace", category: "Work Context", namespace: "palette", run: () => openCreateStageDialog(api) };
   const actions = { name: ACTIONS_COMMAND_NAME, title: "Open Work Context Actions", desc: "Prepare a work-context command", category: "Work Context", namespace: "palette", run: () => openWorkContextActionDialog(api, runtime) };
   const registration = api.keymap.registerLayer({
-    commands: [command, stageCommand, workspaceCommand, sessionCommand, actions],
+    commands: [command, stageCommand, workspaceCommand, sessionCommand, createStageCommand, actions],
     bindings: [
       { key: SHORTCUT, cmd: COMMAND_NAME, desc: command.title },
       { key: STAGE_SHORTCUT, cmd: stageCommand.name, desc: stageCommand.title },
       { key: WORKSPACE_SHORTCUT, cmd: workspaceCommand.name, desc: workspaceCommand.title },
       { key: SESSION_SHORTCUT, cmd: sessionCommand.name, desc: sessionCommand.title },
+      { key: CREATE_STAGE_SHORTCUT, cmd: createStageCommand.name, desc: createStageCommand.title },
     ],
   });
   return { supported: true, dispose: () => disposeRegistration(registration) };

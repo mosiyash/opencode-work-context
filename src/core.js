@@ -111,7 +111,7 @@ export class WorkContext {
     workspace = normalizeWorkspaceId(workspace);
     const dir = path.join(this.storage.workspaceDir(workspace), "stages");
     if (!fs.existsSync(dir)) fail(ERROR_CODES.NOT_FOUND, "Workspace not found");
-    const stages = fs.readdirSync(dir).filter((file) => /^\d{2}\.md$/.test(file)).map((file) => {
+    const stages = fs.readdirSync(dir).filter((file) => /^\d{2}\.md$/.test(file)).sort().map((file) => {
       const stage = this.storage.readStage(workspace, file.slice(0, 2)).data;
       return { ...stage, description: stage.goal };
     });

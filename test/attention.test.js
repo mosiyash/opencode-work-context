@@ -148,8 +148,8 @@ test("controller aggregates one native session across every linked stage and wor
     api,
     projectRoot: root,
     read: async () => ({ ok: true, data: { workspaces: [
-      { id: "000001", sessions: [{ stage: "01", opencode_session_id: "oc-shared" }, { stage: "01", opencode_session_id: "oc-shared" }] },
-      { id: "000002", sessions: [{ stage: "02", opencode_session_id: "oc-shared" }] },
+      { id: "000001", stages: [{ id: "01", title: "First", status: "in_progress" }], sessions: [{ stage: "01", opencode_session_id: "oc-shared" }, { stage: "01", opencode_session_id: "oc-shared" }] },
+      { id: "000002", stages: [{ id: "02", title: "Second", status: "planned" }], sessions: [{ stage: "02", opencode_session_id: "oc-shared" }] },
     ] } }),
   });
   try {
@@ -161,6 +161,26 @@ test("controller aggregates one native session across every linked stage and wor
     });
     assert.equal(controller.attentionForWorkspace("000002").count, 1);
     assert.equal(controller.attentionForStage("000001", "02"), null);
+  } finally { controller.dispose(); removeRoot(root); }
+});
+
+test("controller excludes attention linked only to archived stages from visible aggregation", async () => {
+  const root = makeRoot();
+  const api = { route: { current: { name: "home" } } };
+  const controller = createAttentionTuiController({
+    api,
+    projectRoot: root,
+    read: async () => ({ ok: true, data: { workspaces: [{
+      id: "000001",
+      stages: [{ id: "01", title: "Visible", status: "in_progress" }],
+      sessions: [{ stage: "02", opencode_session_id: "oc-archived" }],
+    }] } }),
+  });
+  try {
+    await controller.handle(request("question.asked", "oc-archived", "archived-q-1"));
+    assert.equal(controller.attentionFor("oc-archived").reason, "question");
+    assert.equal(controller.attentionForStage("000001", "02"), null);
+    assert.equal(controller.attentionForWorkspace("000001"), null);
   } finally { controller.dispose(); removeRoot(root); }
 });
 

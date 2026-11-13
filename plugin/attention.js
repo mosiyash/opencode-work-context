@@ -272,25 +272,29 @@ const currentSessionId = (api) => api?.route?.current?.name === "session"
   : undefined;
 const linkedSessionIds = (snapshot) => new Set((snapshot?.data?.workspaces || []).flatMap((workspace) =>
   (workspace.sessions || []).map((session) => session.opencode_session_id).filter(Boolean)));
+const visibleSessionRecords = (snapshot, sessionId) => (snapshot?.workspaces || []).flatMap((workspace) => {
+  const visibleStages = new Set((workspace.stages || [])
+    .filter((stage) => stage.status !== "archived")
+    .map((stage) => stage.id));
+  return (workspace.sessions || [])
+    .filter((session) => session.opencode_session_id === sessionId && visibleStages.has(session.stage))
+    .map((session) => ({ workspace, session }));
+});
 const notificationContexts = (snapshot, sessionId, reason) => {
   const contexts = [];
   const seen = new Set();
-  for (const workspace of snapshot?.workspaces || []) {
-    for (const session of workspace.sessions || []) {
-      if (session.opencode_session_id !== sessionId || !session.stage) continue;
-      const key = `${workspace.id}:${session.stage}`;
-      if (seen.has(key)) continue;
-      const stage = (workspace.stages || []).find((item) => item.id === session.stage);
-      if (!stage) continue;
-      seen.add(key);
-      contexts.push({
-        workspaceId: workspace.id,
-        workspaceTitle: workspace.title,
-        stageId: stage.id,
-        stageTitle: stage.title,
-        reason,
-      });
-    }
+  for (const { workspace, session } of visibleSessionRecords(snapshot, sessionId)) {
+    const key = `${workspace.id}:${session.stage}`;
+    if (seen.has(key)) continue;
+    const stage = workspace.stages.find((item) => item.id === session.stage);
+    seen.add(key);
+    contexts.push({
+      workspaceId: workspace.id,
+      workspaceTitle: workspace.title,
+      stageId: stage.id,
+      stageTitle: stage.title,
+      reason,
+    });
   }
   return contexts;
 };
@@ -359,9 +363,7 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
     const current = currentSessionId(api);
     for (const attention of engine.list()) {
       if (attention.sessionId === current) continue;
-      const records = (snapshot?.workspaces || []).flatMap((workspace) => (workspace.sessions || [])
-        .filter((session) => session.opencode_session_id === attention.sessionId)
-        .map((session) => ({ workspace, session })));
+      const records = visibleSessionRecords(snapshot, attention.sessionId);
       if (records.some(matches)) bySession.set(attention.sessionId, attention);
     }
     const items = [...bySession.values()];
