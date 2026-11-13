@@ -14,7 +14,7 @@
 | 000006 | Implement fast read-only Work Context TUI modal | completed | 2026-09-02T03:42:48.234Z |
 | 000017 | Create stage modal | in_progress | 2026-11-13T17:56:39.998Z |
 | 000014 | TUI sidebar click navigation | completed | 2026-11-12T11:59:37.593Z |
-| 000018 | ATTN fix | in_progress | 2026-11-13T19:53:38.979Z |
+| 000018 | ATTN fix | completed | 2026-11-13T20:06:52.958Z |
 | 000015 | ATTN items | in_progress | 2026-11-12T17:13:27.213Z |
 | 000002 | Add CSV export to analytics report | completed | 2026-08-30T04:28:38.240Z |
 | 000004 | Stages fail to load in other projects | completed | 2026-08-31T10:23:15.456Z |
