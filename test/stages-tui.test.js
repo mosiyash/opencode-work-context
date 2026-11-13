@@ -307,6 +307,20 @@ test("renderer keeps workspace context separate and lets long titles wrap", () =
   assert.doesNotMatch(output, /A description that is deliberately/);
 });
 
+test("sidebar renders ATTN markers in bold", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const element = renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress" },
+    stages: [{ id: "01", title: "Test: review needed", status: "planned", depends_on: [] }],
+  } }, {}, runtime, {
+    attentionForStage: () => ({ count: 1, reason: "permission" }),
+  });
+  const stageText = element.props.children()[2].props.children[1];
+
+  assert.equal(stageText.props.children[1].type, "b");
+  assert.equal(stageText.props.children[1].props.children, "[ATTN: permission]");
+});
+
 test("sidebar lists direct dependencies on a separate line", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const output = renderedText(renderStagesElement({ ok: true, data: {

@@ -30,6 +30,12 @@ const statusMarker = (status) => ({
 export { readStagesSnapshot, renderStagesPanel };
 
 const defaultRuntime = { jsx };
+const renderAttentionText = (value, runtime) => {
+  const parts = value.split(/(\[ATTN[^\]]*\])/g);
+  return parts.length === 1 ? value : parts.filter(Boolean).map((part) => part.startsWith("[ATTN")
+    ? runtime.jsx("b", { children: part })
+    : part);
+};
 
 const renderStagesContent = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect) => !result?.ok || !result.data?.workspace
   ? [
@@ -50,6 +56,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
     }),
     ...result.data.stages.map((stage) => {
       const unread = attention?.attentionForStage?.(result.data.workspace.id, stage.id);
+      const stageText = `${stage.id}. ${stage.title}${showDependencies && stage.depends_on?.length ? `\nDeps: ${stage.depends_on.join(", ")}` : ""}${unread ? ` [ATTN: ${attentionReasonText(unread.reason)}${unread.count > 1 ? ` x${unread.count}` : ""}]` : ""}`;
       return runtime.jsx("box", {
         flexDirection: "row",
         onMouseDown: (event) => {
@@ -58,7 +65,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
         },
         children: [
           runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
-          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: `${stage.id}. ${stage.title}${showDependencies && stage.depends_on?.length ? `\nDeps: ${stage.depends_on.join(", ")}` : ""}${unread ? ` [ATTN: ${attentionReasonText(unread.reason)}${unread.count > 1 ? ` x${unread.count}` : ""}]` : ""}` }),
+          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: renderAttentionText(stageText, runtime) }),
         ],
       });
     }),
