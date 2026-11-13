@@ -24,6 +24,8 @@ const runInit = (root, extra = {}, args = ["init"]) => spawnSync(process.execPat
   },
 });
 
+const runCli = (root, args, extra = {}) => runInit(root, extra, args);
+
 const installMock = (root, mode = "success") => {
   const bin = fs.mkdtempSync(path.join(fixtureRoot, "npm-bin-"));
   const npm = path.join(bin, "npm");
@@ -113,6 +115,48 @@ test("installer uses .opencode package without creating root npm infrastructure"
     assert.equal(fs.existsSync(path.join(root, ".opencode", "node_modules")), true);
     const loaded = await import(path.join(root, ".opencode", "plugins", "work-context.js"));
     assert.equal(typeof loaded.default, "function");
+  } finally { removeRoot(root); removeRoot(bin); }
+});
+
+test("activate configures a managed package without creating local storage or loaders", () => {
+  const root = makeRoot();
+  try {
+    const result = runCli(root, ["activate"]);
+    assert.equal(result.status, 0, result.stderr);
+    const config = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"));
+    assert.deepEqual(config.plugins, ["opencode-work-context"]);
+    assert.equal(fs.existsSync(path.join(root, ".work-context")), false);
+    assert.equal(fs.existsSync(path.join(root, "package.json")), false);
+    assert.equal(fs.existsSync(path.join(root, ".opencode", "plugins", "work-context.js")), false);
+    assert.equal(fs.existsSync(path.join(root, ".opencode", "tui.json")), false);
+    assert.equal(fs.existsSync(path.join(root, ".opencode", "commands", "wc.md")), true);
+    assert.doesNotMatch(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"), new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  } finally { removeRoot(root); }
+});
+
+test("activation preserves supported project configuration and project overrides", () => {
+  const root = makeRoot();
+  try {
+    fs.mkdirSync(path.join(root, ".opencode"));
+    fs.writeFileSync(path.join(root, ".opencode", "opencode.json"), JSON.stringify({ model: "test/model", plugins: ["other-plugin"] }) + "\n");
+    assert.equal(runCli(root, ["activate"]).status, 0);
+    let config = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"));
+    assert.deepEqual(config.plugins, ["other-plugin", "opencode-work-context"]);
+    assert.equal(runCli(root, ["deactivate"]).status, 0);
+    config = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"));
+    assert.deepEqual(config.plugins, ["other-plugin", "opencode-work-context", "-work-context"]);
+  } finally { removeRoot(root); }
+});
+
+test("activation refuses local integration to prevent duplicate server and TUI registrations", () => {
+  const root = makeRoot();
+  const bin = installMock(root);
+  try {
+    assert.equal(runInit(root, { bin }).status, 0);
+    const result = runCli(root, ["activate"]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /project-local integration is already active/);
+    assert.equal(fs.existsSync(path.join(root, ".opencode", "opencode.json")), false);
   } finally { removeRoot(root); removeRoot(bin); }
 });
 

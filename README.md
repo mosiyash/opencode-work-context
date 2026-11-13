@@ -138,6 +138,57 @@ stage. Use explicit workspace and stage positions for unpadded workspace IDs.
 
 ## Install
 
+### Managed Package Activation
+
+For one managed package installation shared by OpenCode while keeping activation
+explicit per project, run this in each project that should use work-context:
+
+```sh
+npx opencode-work-context activate
+```
+
+`activate` writes `.opencode/opencode.json` with the supported package plugin
+entry `opencode-work-context` and installs the `/wc` command contract. OpenCode
+resolves, caches, and updates configured package plugins through its supported
+plugin manager; the project does not import an npm-global path, create a local
+`node_modules`, or create `.work-context` data merely by being activated. The
+package's server and optional TUI parts are loaded together by OpenCode, so this
+also works on server-only hosts.
+
+Activation is opt-in. Projects without this entry stay inactive. If a machine
+administrator or user has configured the package globally, a project can add
+the explicit opt-out entry with:
+
+```sh
+npx opencode-work-context deactivate
+```
+
+This appends `"-work-context"` to the project plugin list, which OpenCode
+processes after global configuration. `activate` and `deactivate` merge a plain
+JSON `.opencode/opencode.json` plugin array without replacing other settings.
+For an existing JSONC configuration, add the equivalent entry manually:
+
+```jsonc
+{
+  "plugins": ["opencode-work-context"] // or "-work-context" to opt out
+}
+```
+
+Restart OpenCode after changing plugin configuration. OpenCode checks unpinned
+configured packages through its managed plugin flow; use the OpenCode plugin
+management command available in your installed OpenCode version when you need
+to refresh it immediately. Pinned plugin entries are intentionally not updated
+automatically.
+
+Do not activate the managed package in a project already configured through
+the local installer below. The command refuses that combination so server tools
+and TUI registrations cannot be duplicated. To migrate a local project, remove
+the generated local server loader, TUI loader, and its `tui.json` entry, then
+run `activate`; its existing `.work-context` data remains intact. To return to
+the pinned local workflow, remove the managed package entry and run `init`.
+
+### Pinned Local Installation
+
 Run from the root of a standalone OpenCode project:
 
 ```sh
@@ -157,6 +208,9 @@ and generates ESM server and TUI loaders. OpenCode loads local plugins as JavaSc
 modules; keeping the generated `.js` integration path ESM avoids a CommonJS
 interop failure before custom tools are registered.
 It does not create a workspace. Start one explicitly with `/wc create "Title"`.
+This local setup takes precedence by remaining the only configured integration
+for its project, and it preserves the exact version in the project's package
+manifest.
 
 Use `--force` to replace a conflicting package-owned generated file or package
 version. Without it, existing files are never silently overwritten. Re-running

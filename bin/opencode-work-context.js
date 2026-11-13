@@ -79,10 +79,63 @@ function parseArgs(args) {
     if (unknown.length) return fail(`unknown option: ${unknown[0]}`);
     return { syncCommand: true, force: args.includes("--force") };
   }
-  if (args[0] !== "init") return fail("usage: opencode-work-context init [--force] | sync-command");
+  if (args[0] === "activate" || args[0] === "deactivate") {
+    const unknown = args.slice(1).filter((arg) => arg !== "--force");
+    if (unknown.length) return fail(`unknown option: ${unknown[0]}`);
+    return { activation: args[0] === "activate", force: args.includes("--force") };
+  }
+  if (args[0] !== "init") return fail("usage: opencode-work-context init [--force] | activate [--force] | deactivate [--force] | sync-command");
   const unknown = args.slice(1).filter((arg) => arg !== "--force");
   if (unknown.length) return fail(`unknown option: ${unknown[0]}`);
   return { force: args.includes("--force") };
+}
+
+function activate(enabled, force) {
+  const localLoader = path.join(projectRoot, ".opencode", "plugins", "work-context.js");
+  if (exists(localLoader)) {
+    fail("project-local integration is already active; keep using it or remove its generated loaders before activating the managed package");
+    return;
+  }
+  const configRelative = path.join(".opencode", "opencode.json");
+  const configFile = path.join(projectRoot, configRelative);
+  const jsoncFile = path.join(projectRoot, ".opencode", "opencode.jsonc");
+  if (exists(jsoncFile)) {
+    fail("cannot update .opencode/opencode.jsonc; add the plugin entry manually or use .opencode/opencode.json");
+    return;
+  }
+  let config = { $schema: "https://opencode.ai/config.json" };
+  if (exists(configFile)) {
+    if (hasSymlinkParent(configFile) || !fs.lstatSync(configFile).isFile() || fs.lstatSync(configFile).isSymbolicLink()) {
+      fail(`refusing to overwrite non-regular file: ${configRelative}`);
+      return;
+    }
+    try { config = JSON.parse(fs.readFileSync(configFile, "utf8")); }
+    catch { fail(`cannot update invalid JSON: ${configRelative}`); return; }
+    if (!config || typeof config !== "object" || Array.isArray(config) || (config.plugins !== undefined && !Array.isArray(config.plugins))) {
+      fail(`cannot update unsupported configuration: ${configRelative}`);
+      return;
+    }
+  }
+  const entry = enabled ? packageManifest.name : "-work-context";
+  config.plugins = [...(config.plugins || []).filter((item) => item !== entry), entry];
+  const files = new Map([
+    [configRelative, JSON.stringify(config, null, 2) + "\n"],
+    [path.join(".opencode", "commands", "wc.md"), command],
+  ]);
+  const conflicts = [...files].flatMap(([relative, content]) => {
+    const file = path.join(projectRoot, relative);
+    if (hasSymlinkParent(file) || (exists(file) && (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink()))) return [relative];
+    return relative !== configRelative && !force && exists(file) && fs.readFileSync(file, "utf8") !== content ? [relative] : [];
+  });
+  if (conflicts.length) {
+    fail(`refusing to overwrite existing files: ${conflicts.join(", ")}; rerun with --force`);
+    return;
+  }
+  for (const [relative, content] of files) {
+    const file = path.join(projectRoot, relative);
+    if (!exists(file) || fs.readFileSync(file, "utf8") !== content) writeAtomic(file, content);
+  }
+  console.log(`${enabled ? "Activated" : "Deactivated"} opencode-work-context for this project.`);
 }
 
 function syncCommandProjection(force) {
@@ -301,6 +354,8 @@ if (options?.syncCommand) {
     catch (error) { fail(`command sync failed: ${error.message}`); }
     finally { releaseInitLock(initLock); }
   }
+} else if (options?.activation !== undefined) {
+  activate(options.activation, options.force);
 } else if (options) {
   const initLock = acquireInitLock();
   if (initLock.failed) process.exitCode = 1;
