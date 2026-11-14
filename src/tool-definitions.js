@@ -9,7 +9,8 @@ const tool = Object.assign((definition) => definition, { schema: z });
 
 const run = (fn) => async (args, context) => {
   try {
-    const result = await fn(contextFor(context.worktree || context.directory, context.sessionID), args, context);
+    const projectRoot = context.worktree === "/" ? context.directory : (context.worktree || context.directory);
+    const result = await fn(contextFor(projectRoot, context.sessionID), args, context);
     try { await context.metadata({ title: "work-context", metadata: { result } }); } catch {}
     return { output: JSON.stringify(result), metadata: result };
   } catch (error) {

@@ -63,6 +63,26 @@ test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
   }
 });
 
+test("structured tools use the OpenCode directory for a global root worktree", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Global project workspace", { workspace: "999903", sessionId: "oc-create" });
+    const executeContext = {
+      directory: fixture.root,
+      worktree: "/",
+      sessionID: "oc-global-project",
+      metadata: async () => {},
+    };
+
+    const result = JSON.parse((await tools.work_context_workspace_list.execute({ workspace: "999903" }, executeContext)).output);
+    assert.equal(result.ok, true);
+    assert.equal(result.data.workspace, "999903");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("structured tools accept unpadded IDs and return canonical IDs", async () => {
   const fixture = createFixture();
   try {
