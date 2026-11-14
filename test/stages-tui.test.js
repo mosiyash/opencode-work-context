@@ -8,7 +8,7 @@ import { createSignal } from "solid-js";
 import { WorkContext, readStagesSnapshot, readWorkContextSnapshot, renderDependencyTree, renderStagesPanel } from "../src/index.js";
 import tuiModule, { createStagesTuiController, dependencyTreeOptions, openDependencyTreeDialog, renderStagesElement, sessionIdForSlot } from "../plugin/stages-tui.js";
 import realTuiLoader from "../.opencode/tui-plugins/work-context-stages.js";
-import { addStageForCurrentWorkspace, appendPromptCommand, buildWorkContextActionCommand, createWorkContextActionFlow, createWorkContextModalController, filterWorkspaces, insertPromptCommand, openCreateStageDialog, prepareWorkContextCommand, registerWorkContextModal, renderWorkContextModal, WORK_CONTEXT_ACTIONS } from "../plugin/work-context-modal.js";
+import { appendPromptCommand, buildWorkContextActionCommand, createWorkContextActionFlow, createWorkContextModalController, filterWorkspaces, insertPromptCommand, prepareWorkContextCommand, registerWorkContextModal, renderWorkContextModal, WORK_CONTEXT_ACTIONS } from "../plugin/work-context-modal.js";
 import { createStageSwitcherFlow, readStageSwitcherSnapshot, recentStageIds, rememberRecentStage, selectStageSession, startStageSession, switchToStage } from "../plugin/stage-switcher.js";
 import { createWorkspaceSwitcherFlow, selectWorkspaceSession, sortWorkspaceSwitcherEntries, switchToWorkspace } from "../plugin/workspace-switcher.js";
 import { createSessionSwitcherFlow, selectSession, sortSessionSwitcherEntries, switchToSession } from "../plugin/session-switcher.js";
@@ -987,33 +987,6 @@ test("action modal uses native dialogs to prepare an add-stage command", async (
   assert.equal(cleared, 1);
 });
 
-test("create-stage dialog adds a stage directly to the current workspace", () => {
-  const root = makeRoot();
-  const context = WorkContext.open(root, { actor: "test" });
-  context.createWorkspace("Direct stage", { workspace: "999968", sessionId: "wc-current", opencodeSessionId: "oc-current" });
-  let dialog;
-  const toasts = [];
-  const api = {
-    state: { path: { worktree: root } },
-    route: { current: { params: { sessionID: "oc-current" } } },
-    ui: {
-      DialogPrompt: (props) => ({ type: "prompt", props }),
-      DialogSelect: (props) => ({ type: "select", props }),
-      dialog: { replace: (render) => { dialog = render(); }, clear: () => {} },
-      toast: (toast) => toasts.push(toast),
-    },
-  };
-  try {
-    assert.equal(openCreateStageDialog(api), true);
-    dialog.props.onConfirm("Build UI");
-    assert.equal(dialog.type, "select");
-    dialog.props.onSelect(dialog.props.options[0]);
-    assert.equal(addStageForCurrentWorkspace(api, "Second stage").ok, true);
-    assert.deepEqual(context.listStages("999968").data.stages.map((stage) => stage.title), ["Planning", "Build UI", "Second stage"]);
-    assert.deepEqual(toasts, [{ message: "Stage 02 created", variant: "success" }]);
-  } finally { removeRoot(root); }
-});
-
 test("Work Context command center exposes the stage switcher shortcut", () => {
   let current;
   let opened = 0;
@@ -1317,9 +1290,8 @@ test("native leader prefix exposes Work Context bindings", () => {
     { key: "<leader>s", cmd: "work_context.stage", desc: "Switch Work Context Stage" },
     { key: "<leader>o", cmd: "work_context.workspace", desc: "Switch Work Context Workspace" },
     { key: "<leader>e", cmd: "work_context.session", desc: "Switch Work Context Session" },
-    { key: "<leader>a", cmd: "work_context.create_stage", desc: "Create Work Context Stage" },
   ]);
-  assert.deepEqual(layer.commands.map((command) => command.name), ["work_context.open", "work_context.stage", "work_context.workspace", "work_context.session", "work_context.create_stage", "work_context.actions"]);
+  assert.deepEqual(layer.commands.map((command) => command.name), ["work_context.open", "work_context.stage", "work_context.workspace", "work_context.session", "work_context.actions"]);
 });
 
 test("workspace switcher selects the best existing session and keeps current workspaces first", () => {
