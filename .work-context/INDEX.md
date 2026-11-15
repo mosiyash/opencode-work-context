@@ -7,7 +7,7 @@
 | 000013 | Stages tree | completed | 2026-11-13T04:27:19.398Z |
 | 000003 | Fix error: `Session event timestamps are not ordered` | completed | 2026-08-31T08:05:29.609Z |
 | 000008 | Functionality optimization | in_progress | 2026-09-03T07:23:25.522Z |
-| 000019 | Gitlab fixes | in_progress | 2026-11-15T06:36:27.298Z |
+| 000019 | Gitlab fixes | completed | 2026-11-15T10:55:12.941Z |
 | 000001 | Research persistent TUI stages panel | completed | 2026-08-30T04:39:36.617Z |
 | 000012 | Notify when background sessions need attention | completed | 2026-11-06T04:17:32.658Z |
 | 000009 | Restore default leader key | completed | 2026-09-04T04:17:47.879Z |
