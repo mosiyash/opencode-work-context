@@ -849,15 +849,40 @@ test("title renderer applies tracker prefix and inactive suffix", () => {
   );
 });
 
-test("tracker links support GitLab, GitHub and Jira issue URLs", () => {
+test("title renderer lists unique stage tracker links below the session identifier", () => {
+  assert.equal(
+    renderTitle({
+      workspace: "000005",
+      stageTitle: "Stage title",
+      stage: "02",
+      ordinal: 3,
+      stageTrackerLinks: [
+        { url: "https://gitlab.example/group/project/-/issues/42", provider: "gitlab", iid: 42 },
+        { url: "https://github.com/acme/project/issues/7", provider: "github", iid: 7 },
+        { url: "https://gitlab.example/group/project/-/issues/42", provider: "gitlab", iid: 42 },
+      ],
+    }),
+    "Stage title\n000005 02/03\nTasks: GL#42, GH#7",
+  );
+});
+
+test("tracker links support GitLab issues and work items, GitHub and Jira issue URLs", () => {
   const root = makeRoot();
   try {
     const context = WorkContext.open(root, { actor: "test" });
     context.createWorkspace("Tracker workspace", { workspace: "999975", sessionId: "session-1" });
+    context.linkIssue("999975", "https://gitlab.example/group/project/-/issues/41");
     context.linkIssue("999975", "https://github.com/acme/project/issues/42");
     context.linkIssue("999975", "https://jira.example.com/browse/PROJ-123", "01");
+    context.linkIssue("999975", "https://gitlab.example/group/project/-/work_items/43", "01");
 
     assert.deepEqual(context.storage.readWorkspace("999975").data.tracker_links[0], {
+      url: "https://gitlab.example/group/project/-/issues/41",
+      provider: "gitlab",
+      project: "group/project",
+      iid: 41,
+    });
+    assert.deepEqual(context.storage.readWorkspace("999975").data.tracker_links[1], {
       url: "https://github.com/acme/project/issues/42",
       provider: "github",
       project: "acme/project",
@@ -869,6 +894,48 @@ test("tracker links support GitLab, GitHub and Jira issue URLs", () => {
       project: "PROJ",
       key: "PROJ-123",
     });
+    assert.deepEqual(context.storage.readStage("999975", "01").data.tracker_links[1], {
+      url: "https://gitlab.example/group/project/-/work_items/43",
+      provider: "gitlab",
+      project: "group/project",
+      iid: 43,
+    });
+    const reloaded = WorkContext.open(root, { actor: "test" });
+    assert.deepEqual(reloaded.storage.readStage("999975", "01").data.tracker_links[1], {
+      url: "https://gitlab.example/group/project/-/work_items/43",
+      provider: "gitlab",
+      project: "group/project",
+      iid: 43,
+    });
     assert.throws(() => context.linkIssue("999975", "https://jira.example.com/browse/PROJ-abc"), (error) => error.code === ERROR_CODES.INVALID_ISSUE_URL);
+    assert.throws(() => context.linkIssue("999975", "https://gitlab.example/group/project/-/work_items/not-a-number"), (error) => error.code === ERROR_CODES.INVALID_ISSUE_URL);
+    assert.throws(() => context.linkIssue("999975", "https://gitlab.example/group/project/-/work_items/43/details"), (error) => error.code === ERROR_CODES.INVALID_ISSUE_URL);
+  } finally { removeRoot(root); }
+});
+
+test("tracker links can be unlinked from workspaces and stages", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Tracker workspace", { workspace: "999974", sessionId: "session-1" });
+    context.linkIssue("999974", "https://gitlab.example/group/project/-/issues/41");
+    context.linkIssue("999974", "https://github.com/acme/project/issues/42");
+    context.linkIssue("999974", "https://jira.example.com/browse/PROJ-123", "01");
+
+    const workspaceResult = context.unlinkIssue("999974", "https://gitlab.example/group/project/-/issues/41");
+    const stageResult = context.unlinkIssue("999974", "https://jira.example.com/browse/PROJ-123", "01");
+    const repeatedResult = context.unlinkIssue("999974", "https://gitlab.example/group/project/-/issues/41");
+
+    assert.deepEqual(workspaceResult.changed, [context.storage.workspaceFile("999974")]);
+    assert.deepEqual(stageResult.changed, [context.storage.stageFile("999974", "01")]);
+    assert.deepEqual(repeatedResult.changed, []);
+    assert.deepEqual(context.storage.readWorkspace("999974").data.tracker_links, [{
+      url: "https://github.com/acme/project/issues/42",
+      provider: "github",
+      project: "acme/project",
+      iid: 42,
+    }]);
+    assert.deepEqual(context.storage.readStage("999974", "01").data.tracker_links, []);
+    assert.throws(() => context.unlinkIssue("999974", "https://gitlab.example/group/project/-/issues/not-a-number"), (error) => error.code === ERROR_CODES.INVALID_ISSUE_URL);
   } finally { removeRoot(root); }
 });

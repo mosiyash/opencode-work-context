@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readStagesSnapshot } from "../src/stages-snapshot.js";
+import { contextFor, titleFor } from "../src/opencode-adapter.js";
 import { renderDependencyTree, renderStagesPanel } from "../src/stages-renderer.js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createSignal } from "solid-js";
@@ -26,6 +27,12 @@ const statusMarker = (status) => ({
   cancelled: "[!]",
   archived: "[-]",
 }[status] || "[?]");
+const trackerLinkText = (link) => {
+  const identifier = link.key || link.iid;
+  if (link.provider === "gitlab") return `GL#${identifier}`;
+  if (link.provider === "github") return `GH#${identifier}`;
+  return `JIRA ${identifier}`;
+};
 
 export { readStagesSnapshot, renderStagesPanel };
 
@@ -56,7 +63,16 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
     }),
     ...result.data.stages.map((stage) => {
       const unread = attention?.attentionForStage?.(result.data.workspace.id, stage.id);
-      const stageText = `${stage.id}. ${stage.title}${showDependencies && stage.depends_on?.length ? `\nDeps: ${stage.depends_on.join(", ")}` : ""}${unread ? ` [ATTN: ${attentionReasonText(unread.reason)}${unread.count > 1 ? ` x${unread.count}` : ""}]` : ""}`;
+      const metadata = showDependencies ? [
+        stage.tracker_links?.length && `Tasks: ${stage.tracker_links.map(trackerLinkText).join(", ")}`,
+        stage.depends_on?.length && `Deps: ${stage.depends_on.join(", ")}`,
+      ].filter(Boolean).join(" · ") : "";
+      const attentionText = unread ? `[ATTN: ${attentionReasonText(unread.reason)}${unread.count > 1 ? ` x${unread.count}` : ""}]` : "";
+      const stageText = [
+        `${stage.id}. ${stage.title}`,
+        metadata,
+        attentionText,
+      ].filter(Boolean).join("\n");
       return runtime.jsx("box", {
         flexDirection: "row",
         onMouseDown: (event) => {
@@ -227,7 +243,21 @@ const renderStagesSlot = (controller, theme, sessionId, runtime = defaultRuntime
   children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime, attention, controller.showDependencies, onStageSelect),
 });
 
-const registerDependencyToggle = (api, controller) => {
+const updateSessionTitle = async (api, projectRoot) => {
+  const sessionId = api?.route?.current?.params?.sessionID
+    || api?.route?.current?.params?.sessionId
+    || api?.route?.current?.params?.session_id;
+  if (!sessionId || typeof api?.client?.session?.update !== "function") return;
+  try {
+    const context = contextFor(projectRoot, sessionId);
+    const session = context.sessionById(sessionId) || context.sessionByOpenCodeId(sessionId, null, null, null);
+    if (!session) return;
+    const title = titleFor(context, session.workspace, session.stage, sessionId, session, readTuiState(projectRoot).sidebar_dependencies === true);
+    await api.client.session.update({ path: { id: sessionId }, query: { directory: projectRoot }, body: { title } });
+  } catch {}
+};
+
+const registerDependencyToggle = (api, controller, projectRoot) => {
   if (typeof api?.keymap?.registerLayer !== "function") return () => {};
   const command = {
     name: DEPENDENCIES_COMMAND,
@@ -235,7 +265,11 @@ const registerDependencyToggle = (api, controller) => {
     desc: "Show or hide dependency IDs in the stages sidebar",
     category: "Work Context",
     namespace: "palette",
-    run: () => controller.toggleDependencies(),
+    run: () => {
+      const visible = controller.toggleDependencies();
+      void updateSessionTitle(api, projectRoot);
+      return visible;
+    },
   };
   return api.keymap.registerLayer({
     commands: [command],
@@ -312,7 +346,7 @@ export const tui = async (api, options = {}) => {
     attention: api.workContextAttention,
   });
   const stageSwitcher = createStageSwitcherFlow(api);
-  const unregisterDependencyToggle = registerDependencyToggle(api, controller);
+  const unregisterDependencyToggle = registerDependencyToggle(api, controller, projectRoot);
   let currentSessionId = initialSessionId;
   const unregisterDependencyTree = registerDependencyTree(api, controller, () => currentSessionId || ACTIVE_WORKSPACE_SESSION);
   await controller.load(initialSessionId);

@@ -1,5 +1,6 @@
 import tools from "../src/tool-definitions.js";
 import { contextFor, titleFor } from "../src/opencode-adapter.js";
+import { readTuiState } from "./tui-state.js";
 
 export default async ({ client, directory, worktree }) => ({
   tool: tools,
@@ -25,7 +26,7 @@ async function updateSessionTitle(client, projectRoot, directory, sessionId) {
     const context = contextFor(projectRoot, sessionId);
     const session = context.sessionById(sessionId) || context.sessionByOpenCodeId(sessionId, null, null, null);
     if (!session) return;
-    const title = titleFor(context, session.workspace, session.stage, sessionId, session);
+    const title = titleFor(context, session.workspace, session.stage, sessionId, session, readTuiState(projectRoot).sidebar_dependencies === true);
     if (!title) return;
     const current = await client.session.get({ path: { id: sessionId }, query: { directory } });
     const currentSession = current.data ?? current;

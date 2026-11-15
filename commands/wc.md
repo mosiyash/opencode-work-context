@@ -34,6 +34,7 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `stage handoff [<workspace>] [<stage>]` -> `work_context_handoff_stage`
 - `stage abandon [<workspace>] [<stage>]` -> `work_context_abandon_stage`
 - `stage finish [<workspace>] [<stage>]` -> `work_context_finish_stage`
+- `<workspace> [<stage>] unlink-issue <URL>` -> `work_context_unlink_issue`
 
 Supported syntax:
 
@@ -58,6 +59,7 @@ Supported syntax:
 - `stage abandon [<workspace>] [<stage>]`
 - `stage finish [<workspace>] [<stage>]`
 - `<workspace> [<stage>] link-issue <URL>`
+- `<workspace> [<stage>] unlink-issue <URL>`
 - `session rename "summary"`
 - `stage handoff [<workspace>] <stage>`
 - `stage abandon [<workspace>] <stage>`

@@ -44,6 +44,7 @@ const readWorkspace = (context, record, currentSession) => {
         status: stage.status,
         description: stage.description,
         depends_on: stage.depends_on,
+        tracker_links: stage.tracker_links || [],
         current: stage.stage === currentStage,
       })),
     currentStage,

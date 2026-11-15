@@ -60,6 +60,7 @@ test("work-context snapshot includes stages and session metadata for all workspa
     assert.equal(result.data.workspaces[0].activeSession.session_id, "oc-first");
     assert.equal(result.data.workspaces[0].stages[1].description, "Build the read model");
     assert.deepEqual(result.data.workspaces[0].stages.map((stage) => stage.depends_on), [[], ["01"]]);
+    assert.deepEqual(result.data.workspaces[0].stages.map((stage) => stage.tracker_links), [[], []]);
   } finally { removeRoot(root); }
 });
 
@@ -71,14 +72,15 @@ test("snapshot selects workspace and current stage by OpenCode session ID", () =
     context.handoff("999987", "01", "oc-1");
     context.addStage("999987", "Implementation", { goal: "Build the panel" });
     context.startSession("999987", "02", { sessionId: "oc-2" });
+    context.linkIssue("999987", "https://gitlab.example/group/project/-/work_items/42", "02");
 
     const result = readStagesSnapshot({ projectRoot: root, sessionId: "oc-2" });
     assert.equal(result.ok, true);
     assert.deepEqual(result.data.workspace, { id: "999987", title: "Panel workspace", status: "in_progress" });
     assert.equal(result.data.currentStage, "02");
     assert.deepEqual(result.data.stages, [
-      { id: "01", title: "Planning", status: "in_progress", description: "Clarify the work goal and constraints", depends_on: [], current: false },
-      { id: "02", title: "Implementation", status: "in_progress", description: "Build the panel", depends_on: [], current: true },
+      { id: "01", title: "Planning", status: "in_progress", description: "Clarify the work goal and constraints", depends_on: [], tracker_links: [], current: false },
+      { id: "02", title: "Implementation", status: "in_progress", description: "Build the panel", depends_on: [], tracker_links: [{ url: "https://gitlab.example/group/project/-/work_items/42", provider: "gitlab", project: "group/project", iid: 42 }], current: true },
     ]);
     assert.equal(typeof result.data.generatedAt, "string");
   } finally { removeRoot(root); }
@@ -308,7 +310,7 @@ test("renderer keeps workspace context separate and lets long titles wrap", () =
   assert.doesNotMatch(output, /A description that is deliberately/);
 });
 
-test("sidebar renders ATTN markers in bold", () => {
+test("sidebar renders ATTN markers in bold on a separate line", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const element = renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
@@ -320,6 +322,7 @@ test("sidebar renders ATTN markers in bold", () => {
 
   assert.equal(stageText.props.children[1].type, "b");
   assert.equal(stageText.props.children[1].props.children, "[ATTN: permission]");
+  assert.match(stageText.props.children[0], /\n$/);
 });
 
 test("sidebar omits attention linked only to an archived stage", async () => {
@@ -344,20 +347,20 @@ test("sidebar omits attention linked only to an archived stage", async () => {
   } finally { controller.dispose(); removeRoot(root); }
 });
 
-test("sidebar lists direct dependencies on a separate line", () => {
+test("sidebar lists tasks before direct dependencies on a single metadata line", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const output = renderedText(renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
     stages: [
       { id: "01", title: "Planning", status: "completed", depends_on: [] },
-      { id: "02", title: "Build", status: "planned", depends_on: ["01"] },
+      { id: "02", title: "Build", status: "planned", depends_on: ["01"], tracker_links: [{ provider: "gitlab", iid: 41 }] },
       { id: "03", title: "Release", status: "planned", depends_on: ["01", "02"] },
     ],
   } }, {}, runtime));
 
   assert.match(output, /01\. Planning/);
   assert.doesNotMatch(output, /01\. Planning\nDeps:/);
-  assert.match(output, /02\. Build\nDeps: 01/);
+  assert.match(output, /02\. Build\nTasks: GL#41 · Deps: 01/);
   assert.match(output, /03\. Release\nDeps: 01, 02/);
 });
 
@@ -1331,7 +1334,7 @@ test("sidebar and modal render attention without theme color support", async () 
     id: "000001", title: "Demo", status: "in_progress", stages: [{ id: "02", title: "Build", status: "in_progress" }],
     sessions: [{ stage: "02", session_id: "internal", opencode_session_id: "oc-unread", state: "active" }],
   }], stages: [{ id: "02", title: "Build", status: "in_progress" }], currentStage: "02" } };
-  assert.match(renderedText(renderStagesElement(snapshot, {}, runtime, attention)), /\[ATTN\].*\[ATTN: permission\]/);
+  assert.match(renderedText(renderStagesElement(snapshot, {}, runtime, attention)), /\[ATTN\][\s\S]*\[ATTN: permission\]/);
 
   const controller = createWorkContextModalController({ read: async () => snapshot, attention });
   try {

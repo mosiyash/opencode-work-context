@@ -19,7 +19,7 @@ const validTrackerLinks = (links) => links.every((link) => {
     if (url.protocol !== "http:" && url.protocol !== "https:") return false;
     if (link.provider === "gitlab" || link.provider === "github") {
       const allowed = ["url", "provider", "project", "iid"];
-      const match = url.pathname.match(link.provider === "gitlab" ? /^\/(.+)\/-\/issues\/(\d+)\/?$/ : /^\/([^/]+\/[^/]+)\/issues\/(\d+)\/?$/);
+      const match = url.pathname.match(link.provider === "gitlab" ? /^\/(.+)\/-\/(?:issues|work_items)\/(\d+)\/?$/ : /^\/([^/]+\/[^/]+)\/issues\/(\d+)\/?$/);
       return Object.keys(link).every((key) => allowed.includes(key)) && Object.keys(link).length === allowed.length && match && match[1] === link.project && Number(match[2]) === link.iid && Number.isInteger(link.iid) && link.iid > 0;
     }
     if (link.provider === "jira") {

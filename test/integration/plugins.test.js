@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import { readStagesSnapshot, renderStagesPanel } from "../../src/index.js";
 import serverPlugin from "../../plugin/work-context.js";
@@ -356,6 +358,46 @@ test("stage tracker link is preferred over workspace tracker link in the session
     const hooks = await serverPlugin(host);
     await hooks["tool.execute.after"]({ tool: "work_context_start_session", sessionID: "oc-resume" });
     assert.equal(host.title, "Tracked stage\nGL#11 | 999901 02/01");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("unlink issue tool removes a workspace tracker link", async () => {
+  const fixture = createFixture();
+  try {
+    const { context, root } = fixture;
+    context.createWorkspace("Tracked workspace", { workspace: "999899", sessionId: "oc-create" });
+    context.linkIssue("999899", "https://gitlab.example/group/project/-/issues/10");
+
+    const tools = (await import("../../src/tool-definitions.js")).default;
+    const result = JSON.parse((await tools.work_context_unlink_issue.execute({ workspace: "999899", url: "https://gitlab.example/group/project/-/issues/10" }, createSessionHost(root, "oc-unlink"))).output);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(context.storage.readWorkspace("999899").data.tracker_links, []);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("session title lists stage tracker links when dependency mode is enabled", async () => {
+  const fixture = createFixture();
+  try {
+    const { context, root } = fixture;
+    context.createWorkspace("Tracked workspace", { workspace: "999900", sessionId: "oc-create" });
+    context.linkIssue("999900", "https://gitlab.example/group/project/-/issues/10");
+    context.finish("999900", "01", "oc-create", { knowledgeReview: "none" });
+    context.addStage("999900", "Current stage");
+    context.startSession("999900", "02", { sessionId: "oc-resume" });
+    context.linkIssue("999900", "https://gitlab.example/group/project/-/issues/12", "02");
+    context.addStage("999900", "Linked later stage");
+    context.linkIssue("999900", "https://gitlab.example/group/project/-/work_items/11", "03");
+    fs.writeFileSync(path.join(root, ".work-context", "local", "tui-state.json"), '{"schema":1,"sidebar_dependencies":true}\n');
+
+    const host = createSessionHost(root, "oc-resume");
+    const hooks = await serverPlugin(host);
+    await hooks["tool.execute.after"]({ tool: "work_context_start_session", sessionID: "oc-resume" });
+    assert.equal(host.title, "Current stage\nGL#12 | 999900 02/01\nTasks: GL#11");
   } finally {
     fixture.cleanup();
   }

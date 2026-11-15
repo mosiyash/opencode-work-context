@@ -41,7 +41,7 @@ function parseIssue(url) {
   try {
     const parsed = new URL(url);
     if (!/^https?:$/.test(parsed.protocol)) fail(ERROR_CODES.INVALID_ISSUE_URL, "Expected a supported tracker issue URL");
-    let match = parsed.pathname.match(/^\/(.+)\/-\/issues\/(\d+)\/?$/);
+    let match = parsed.pathname.match(/^\/(.+)\/-\/(?:issues|work_items)\/(\d+)\/?$/);
     if (match) return { url: parsed.toString(), provider: "gitlab", project: match[1], iid: Number(match[2]) };
     match = parsed.pathname.match(/^\/([^/]+\/[^/]+)\/issues\/(\d+)\/?$/);
     if (match) return { url: parsed.toString(), provider: "github", project: match[1], iid: Number(match[2]) };
@@ -522,6 +522,24 @@ export class WorkContext {
     });
   }
 
+  unlinkIssue(workspace, url, stage = null) {
+    const normalizedWorkspace = normalizeWorkspaceId(workspace);
+    const normalizedStage = stage === null || stage === undefined ? null : normalizeStageId(stage);
+    const parsed = parseIssue(url);
+    return this.transact(`link-${normalizedWorkspace}-${normalizedStage || "workspace"}`, () => {
+      const file = normalizedStage ? this.storage.stageFile(normalizedWorkspace, normalizedStage) : this.storage.workspaceFile(normalizedWorkspace);
+      const current = normalizedStage ? this.storage.readStage(normalizedWorkspace, normalizedStage) : this.storage.readWorkspace(normalizedWorkspace);
+      const links = current.data.tracker_links || [];
+      const remaining = links.filter((link) => link.url !== parsed.url);
+      if (remaining.length === links.length) return this.result({ workspace: normalizedWorkspace, stage: normalizedStage, issue: parsed }, []);
+      current.data.tracker_links = remaining;
+      current.data.updated_at = new Date().toISOString();
+      this.storage.writeMarkdown(file, current.data, current.body);
+      generateProjections(this.storage);
+      return this.result({ workspace: normalizedWorkspace, stage: normalizedStage, issue: parsed }, [file]);
+    });
+  }
+
   renameSession(workspace, stage, sessionId, summary) {
     if (!summary?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Summary is required");
     workspace = normalizeWorkspaceId(workspace);
@@ -650,7 +668,7 @@ export class WorkContext {
   help(command = "") {
     return this.result({
       command,
-      syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|workspace reopen|resume|stage add|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
+      syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|workspace reopen|resume|stage add|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
       note: "stage finish requires an explicit user lifecycle request unless the Planning-stage prompt contains the exact line AUTO_STAGE_FINISH: allowed; stage reopen requires a completed stage and a reason; stage restore requires an archived stage and a reason, returns its saved pre-archive status (or in_progress for legacy archives), and requires explicit separate-session resume when actionable; workspace reopen requires a completed workspace and a reason.",
     }, []);
       return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace and stage are optional for stage rename/update/update-prompt/update-result/archive/handoff/abandon/finish and session rename/close when the current session identifies them; explicit workspace and stage positions accept padded or unpadded positive integer IDs and structured results remain canonical; zero, signs, decimals, whitespace, and overlong identifiers are invalid; stage update-result requires an existing stage result; finish <stage> is a shortcut for stage finish <stage>; when only one numeric identifier is supplied, six digits mean workspace and one or two digits mean stage; stage add accepts an optional local prompt; from an unassociated OpenCode session it also enters the new stage immediately, while an associated session remains on its current stage; resume returns resume.next_action, resume.instruction, and active shared entries in resume.context.workspace_knowledge; implementation may begin only with a non-empty prompt and no unanswered questions; ask focused questions and do not modify application code when next_action is ask_questions; force-close requires a session ID, reason, and exact confirmation FORCE_CLOSE; before stage finish, add, update, or supersede durable findings, or explicitly declare none; stage finish closes only the current stage session and returns downstream stages for informational prompt review without starting one; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);

@@ -367,10 +367,10 @@ Tools are registered by the installed server export and are not copied into the
 project. Core and storage remain in the installed package; projects should not
 copy `src/` or `tools/`. `.work-context` Markdown, JSONL, `INDEX.md`, and
 `SESSIONS.md` are generated projections and must never be edited manually.
-Tracker links support GitLab issues (`/-/issues/<number>`), GitHub issues
-(`/issues/<number>`), and Jira issues (`/browse/KEY-123`). They are URL-based
-references only; the plugin does not call provider APIs or synchronize issue
-metadata.
+Tracker links support GitLab issues (`/-/issues/<number>`) and work items
+(`/-/work_items/<number>`), GitHub issues (`/issues/<number>`), and Jira issues
+(`/browse/KEY-123`). They are URL-based references only; the plugin does not
+call provider APIs or synchronize issue metadata.
 Knowledge operations are explicit: list, add, update, and supersede. Finishing a
 stage always validates the Knowledge Base and reports its total and active entry
 counts. Before finishing, persist new durable findings, update changed entries,
