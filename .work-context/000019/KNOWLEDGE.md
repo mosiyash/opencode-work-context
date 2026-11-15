@@ -19,3 +19,13 @@ The linkIssue parser in src/core.js accepts GitLab URLs only in /-/issues/<iid> 
 - Sources: ["GitLab Work Items documentation","GitLab Tasks documentation","src/core.js","src/storage.js","src/title.js"]
 
 Support only project-scoped GitLab URLs in the form /<project>/-/work_items/<iid>, treating them as the existing GitLab tracker identity. This covers canonical URLs for Issue, Incident, Task, Ticket, Objective, Key Result, and configurable project work-item types without a schema change. Defer group-scoped work items and epics because the current project/iid model cannot distinguish a group scope, and do not accept merge requests, test cases, or other distinct resources as tracker issues. Existing URL-only deduplication may retain both issue and work-item aliases for one resource; address that separately only if needed.
+
+## KC-0003: Managed activation shares OpenCode package cache
+
+- Kind: decision
+- Status: active
+- Created: 2026-11-15T10:54:19.710Z
+- Updated: 2026-11-15T10:54:19.710Z
+- Sources: ["README.md","mssh .opencode/opencode.json","tsn package.json"]
+
+Use `npx opencode-work-context activate` to enable the unpinned managed plugin only for a project. OpenCode resolves the package from its shared managed cache, so activated projects do not need a project-local npm dependency or `npm install -g`. Do not configure a local loader and the managed package at the same time.

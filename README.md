@@ -155,6 +155,12 @@ plugin manager; the project does not import an npm-global path, create a local
 package's server and optional TUI parts are loaded together by OpenCode, so this
 also works on server-only hosts.
 
+Managed activation has two scopes: it enables the plugin only in the current
+project, while OpenCode keeps the package in its shared managed cache for every
+activated project. It does not require `npm install -g` or a project-local npm
+dependency. Restart OpenCode after publishing a new unpinned package version so
+the managed plugin flow can refresh the shared copy.
+
 Activation is opt-in. Projects without this entry stay inactive. If a machine
 administrator or user has configured the package globally, a project can add
 the explicit opt-out entry with:
