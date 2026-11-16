@@ -125,7 +125,8 @@ test("activate configures a managed package without creating local storage or lo
     const result = runCli(root, ["activate"]);
     assert.equal(result.status, 0, result.stderr);
     const config = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"));
-    assert.deepEqual(config.plugins, ["opencode-work-context"]);
+    assert.deepEqual(config.plugin, ["opencode-work-context"]);
+    assert.equal(config.plugins, undefined);
     assert.equal(fs.existsSync(path.join(root, ".work-context")), false);
     assert.equal(fs.existsSync(path.join(root, "package.json")), false);
     assert.equal(fs.existsSync(path.join(root, ".opencode", "plugins", "work-context.js")), false);
@@ -139,13 +140,35 @@ test("activation preserves supported project configuration and project overrides
   const root = makeRoot();
   try {
     fs.mkdirSync(path.join(root, ".opencode"));
-    fs.writeFileSync(path.join(root, ".opencode", "opencode.json"), JSON.stringify({ model: "test/model", plugins: ["other-plugin"] }) + "\n");
+    fs.writeFileSync(path.join(root, ".opencode", "opencode.json"), JSON.stringify({ model: "test/model", plugin: ["other-plugin"] }) + "\n");
     assert.equal(runCli(root, ["activate"]).status, 0);
     let config = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"));
-    assert.deepEqual(config.plugins, ["other-plugin", "opencode-work-context"]);
+    assert.deepEqual(config.plugin, ["other-plugin", "opencode-work-context"]);
     assert.equal(runCli(root, ["deactivate"]).status, 0);
     config = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"));
-    assert.deepEqual(config.plugins, ["other-plugin", "opencode-work-context", "-work-context"]);
+    assert.deepEqual(config.plugin, ["other-plugin", "-work-context"]);
+  } finally { removeRoot(root); }
+});
+
+test("activation migrates work-context entries from the legacy plugins field", () => {
+  const root = makeRoot();
+  try {
+    fs.mkdirSync(path.join(root, ".opencode"));
+    fs.writeFileSync(path.join(root, ".opencode", "opencode.json"), JSON.stringify({
+      model: "test/model",
+      plugin: ["other-plugin", "opencode-work-context@0.4.15", "-work-context"],
+      plugins: ["legacy-other", "opencode-work-context"],
+    }) + "\n");
+
+    assert.equal(runCli(root, ["activate"]).status, 0);
+    let config = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"));
+    assert.deepEqual(config.plugin, ["other-plugin", "opencode-work-context"]);
+    assert.deepEqual(config.plugins, ["legacy-other"]);
+
+    assert.equal(runCli(root, ["deactivate"]).status, 0);
+    config = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"));
+    assert.deepEqual(config.plugin, ["other-plugin", "-work-context"]);
+    assert.deepEqual(config.plugins, ["legacy-other"]);
   } finally { removeRoot(root); }
 });
 

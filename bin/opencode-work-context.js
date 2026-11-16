@@ -116,13 +116,24 @@ function activate(enabled, force) {
     }
     try { config = JSON.parse(fs.readFileSync(configFile, "utf8")); }
     catch { fail(`cannot update invalid JSON: ${configRelative}`); return; }
-    if (!config || typeof config !== "object" || Array.isArray(config) || (config.plugins !== undefined && !Array.isArray(config.plugins))) {
+    if (!config || typeof config !== "object" || Array.isArray(config)
+      || (config.plugin !== undefined && !Array.isArray(config.plugin))
+      || (config.plugins !== undefined && !Array.isArray(config.plugins))) {
       fail(`cannot update unsupported configuration: ${configRelative}`);
       return;
     }
   }
   const entry = enabled ? packageManifest.name : "-work-context";
-  config.plugins = [...(config.plugins || []).filter((item) => item !== entry), entry];
+  const isWorkContextEntry = (item) => typeof item === "string" && (
+    item === packageManifest.name
+    || item.startsWith(`${packageManifest.name}@`)
+    || item === "-work-context"
+  );
+  config.plugin = [...(config.plugin || []).filter((item) => !isWorkContextEntry(item)), entry];
+  if (config.plugins) {
+    config.plugins = config.plugins.filter((item) => !isWorkContextEntry(item));
+    if (config.plugins.length === 0) delete config.plugins;
+  }
   const files = new Map([
     [configRelative, JSON.stringify(config, null, 2) + "\n"],
     [path.join(".opencode", "commands", "wc.md"), command],

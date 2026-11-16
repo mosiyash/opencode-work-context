@@ -156,8 +156,8 @@ explicit per project, run this in each project that should use work-context:
 npx opencode-work-context activate
 ```
 
-`activate` writes `.opencode/opencode.json` with the supported package plugin
-entry `opencode-work-context` and installs the `/wc` command contract. OpenCode
+`activate` writes `.opencode/opencode.json` with the supported `plugin` entry
+`opencode-work-context` and installs the `/wc` command contract. OpenCode
 resolves, caches, and updates configured package plugins through its supported
 plugin manager; the project does not import an npm-global path, create a local
 `node_modules`, or create `.work-context` data merely by being activated. The
@@ -185,9 +185,13 @@ For an existing JSONC configuration, add the equivalent entry manually:
 
 ```jsonc
 {
-  "plugins": ["opencode-work-context"] // or "-work-context" to opt out
+  "plugin": ["opencode-work-context"] // or "-work-context" to opt out
 }
 ```
+
+Re-running `activate` also migrates work-context entries previously generated
+under the unsupported legacy `plugins` field. Unrelated legacy entries are
+preserved rather than activated or removed implicitly.
 
 Restart OpenCode after changing plugin configuration. OpenCode checks unpinned
 configured packages through its managed plugin flow; use the OpenCode plugin
