@@ -31,10 +31,14 @@ const readWorkspace = (context, record, currentSession) => {
     ? currentSession
     : sessions.find((session) => session.session_id === currentSession?.session_id);
   const currentStage = matchingSession?.stage || null;
+  const mode = record.mode || "standard";
+  const candidates = mode === "startup" ? context.candidates().summary(record.workspace) : null;
   return {
     id: record.workspace,
     title: record.title,
     status: record.status,
+    mode,
+    ...(candidates ? { candidates } : {}),
     stages: listed.stages
       .filter((stage) => stage.status !== "archived")
       .sort((left, right) => Number(left.stage) - Number(right.stage))

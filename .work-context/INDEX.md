@@ -19,5 +19,6 @@
 | 000015 | ATTN items | in_progress | 2026-11-12T17:13:27.213Z |
 | 000002 | Add CSV export to analytics report | completed | 2026-08-30T04:28:38.240Z |
 | 000004 | Stages fail to load in other projects | completed | 2026-08-31T10:23:15.456Z |
+| 000020 | Startup commit candidate workflow | in_progress | 2026-11-16T04:31:13.771Z |
 | 000011 | Fixes | completed | 2026-11-13T04:27:19.414Z |
 | 000010 | Fixes for creating a new stage | completed | 2026-11-13T04:27:19.450Z |

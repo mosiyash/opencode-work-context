@@ -6,6 +6,7 @@ This directory records the package and OpenCode integration decisions.
 - [ADR-0003: Fast read-only Work Context TUI modal](0003-fast-read-only-work-context-tui-modal.md)
 - [ADR-0004: Stage session switcher](0004-stage-session-switcher.md)
 - [ADR-0005: Background attention notifications](0005-background-attention-notifications.md)
+- [ADR-0006: Startup commit candidate workflow](0006-startup-commit-candidate-workflow.md)
 
 The filesystem core and storage implementation remain the package source of
 truth. Server and TUI integrations import package exports, and projects do not

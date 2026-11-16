@@ -76,7 +76,7 @@ test("snapshot selects workspace and current stage by OpenCode session ID", () =
 
     const result = readStagesSnapshot({ projectRoot: root, sessionId: "oc-2" });
     assert.equal(result.ok, true);
-    assert.deepEqual(result.data.workspace, { id: "999987", title: "Panel workspace", status: "in_progress" });
+    assert.deepEqual(result.data.workspace, { id: "999987", title: "Panel workspace", status: "in_progress", mode: "standard" });
     assert.equal(result.data.currentStage, "02");
     assert.deepEqual(result.data.stages, [
       { id: "01", title: "Planning", status: "in_progress", description: "Clarify the work goal and constraints", depends_on: [], tracker_links: [], current: false },
@@ -150,13 +150,27 @@ test("snapshot switches workspace data by the active OpenCode session mapping", 
 
 test("renderer includes compact status rows and a non-color current marker", () => {
   const output = renderStagesPanel({ ok: true, data: {
-    workspace: { id: "000001", title: "Demo", status: "in_progress" },
+    workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "startup" },
     stages: [{ id: "01", title: "Plan", status: "planned", description: "Define scope", current: true }],
   } });
   assert.match(output, /\[ \] 01\. Plan/);
   assert.doesNotMatch(output, /Define scope/);
-  assert.match(output, /^Demo\n\nStages · in_progress/);
+  assert.match(output, /^Demo\nWorkflow · startup\n\nStages · in_progress/);
   assert.match(output, /Stages · in_progress/);
+});
+
+test("renderer shows compact active candidate counts only when present", () => {
+  const startup = renderStagesPanel({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "startup", candidates: { pending: 1, ready: 2 } },
+    stages: [],
+  } });
+  const standard = renderStagesPanel({ ok: true, data: {
+    workspace: { id: "000002", title: "Standard", status: "in_progress", mode: "standard" },
+    stages: [],
+  } });
+
+  assert.match(startup, /Workflow · startup\nCandidates · pending 1 · ready 2/);
+  assert.doesNotMatch(standard, /Candidates/);
 });
 
 test("renderer uses todo-style markers for stage statuses", () => {
@@ -305,7 +319,7 @@ test("renderer keeps workspace context separate and lets long titles wrap", () =
     workspace: { id: "000001", title: "A workspace title that is deliberately much too long" },
     stages: [{ id: "01", title: "A stage title that is deliberately much too long", status: "planned", description: "A description that is deliberately much too long for the compact sidebar panel", current: false }],
   } });
-  assert.match(output, /^A workspace title that is deliberately much too long\n\nStages/);
+  assert.match(output, /^A workspace title that is deliberately much too long\nWorkflow · standard\n\nStages/);
   assert.match(output, /\[ \] 01\. A stage title that is deliberately much too long/);
   assert.doesNotMatch(output, /A description that is deliberately/);
 });
@@ -323,6 +337,24 @@ test("sidebar renders ATTN markers in bold on a separate line", () => {
   assert.equal(stageText.props.children[1].type, "b");
   assert.equal(stageText.props.children[1].props.children, "[ATTN: permission]");
   assert.match(stageText.props.children[0], /\n$/);
+});
+
+test("native sidebar renders the workflow mode below the workspace title", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const output = renderedText(renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "startup" },
+    stages: [],
+  } }, {}, runtime));
+  assert.match(output, /Demo\s+Workflow · startup\s+Stages/);
+});
+
+test("native sidebar renders candidate counts from the snapshot", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const output = renderedText(renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "startup", candidates: { pending: 2, ready: 1 } },
+    stages: [],
+  } }, {}, runtime));
+  assert.match(output, /Workflow · startup\s+Candidates · pending 2 · ready 1\s+Stages/);
 });
 
 test("sidebar omits attention linked only to an archived stage", async () => {
@@ -536,7 +568,8 @@ test("stages panel does not claim the whole sidebar height", () => {
   assert.equal(element.props.maxHeight, undefined);
   const [workspaceBlock, stagesBlock] = element.props.children();
   assert.equal(workspaceBlock.props.marginBottom, 1);
-  assert.equal(workspaceBlock.props.children.props.children.props.children, "Demo workspace");
+  assert.equal(workspaceBlock.props.children[0].props.children.props.children, "Demo workspace");
+  assert.equal(workspaceBlock.props.children[1].props.children, "Workflow · standard");
   assert.equal(stagesBlock.props.children[0].props.children.props.children, "Stages");
 });
 

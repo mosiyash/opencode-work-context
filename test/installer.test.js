@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { defaultConfig } from "../src/storage.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cli = path.join(packageRoot, "bin", "opencode-work-context.js");
@@ -174,12 +175,34 @@ test("repeated init is idempotent and conflicts require force", () => {
   } finally { removeRoot(root); removeRoot(bin); }
 });
 
+test("force updates package files while preserving project config and TUI extensions", () => {
+  const root = makeRoot();
+  const bin = installMock(root);
+  try {
+    fs.mkdirSync(path.join(root, ".work-context"), { recursive: true });
+    fs.mkdirSync(path.join(root, ".opencode"), { recursive: true });
+    const config = defaultConfig().replace("issue_prefix: short", "issue_prefix: full");
+    fs.writeFileSync(path.join(root, ".work-context", "config.yaml"), config);
+    fs.writeFileSync(path.join(root, ".opencode", "tui.json"), JSON.stringify({ $schema: "https://opencode.ai/tui.json", theme: "custom", plugin: ["./tui-plugins/project.js"] }, null, 2) + "\n");
+
+    const result = runInit(root, { bin }, ["init", "--force"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readFileSync(path.join(root, ".work-context", "config.yaml"), "utf8"), config);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, ".opencode", "tui.json"), "utf8")), {
+      $schema: "https://opencode.ai/tui.json",
+      theme: "custom",
+      plugin: ["./tui-plugins/project.js", "./tui-plugins/work-context-stages.js"],
+    });
+  } finally { removeRoot(root); removeRoot(bin); }
+});
+
 test("sync-command refreshes only the generated slash command", () => {
   const root = makeRoot();
   try {
     fs.mkdirSync(path.join(root, ".opencode", "commands"), { recursive: true });
     fs.writeFileSync(path.join(root, ".opencode", "commands", "wc.md"), "stale command\n");
     fs.writeFileSync(path.join(root, ".opencode", "sentinel"), "preserve\n");
+    fs.writeFileSync(path.join(root, ".opencode", "work-context.md"), "Project-specific workflow\n");
 
     const refused = runInit(root, { bin: "" }, ["sync-command"]);
     assert.notEqual(refused.status, 0);
@@ -191,6 +214,7 @@ test("sync-command refreshes only the generated slash command", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"), fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8"));
     assert.equal(fs.readFileSync(path.join(root, ".opencode", "sentinel"), "utf8"), "preserve\n");
+    assert.equal(fs.readFileSync(path.join(root, ".opencode", "work-context.md"), "utf8"), "Project-specific workflow\n");
     assert.equal(fs.existsSync(path.join(root, "package.json")), false);
     assert.match(result.stdout, /Updated \.opencode\/commands\/wc\.md/);
   } finally { removeRoot(root); }

@@ -32,7 +32,7 @@ readStagesSnapshot({ projectRoot, sessionId })
     ok: true,
     data: {
       schema: 1,
-      workspace: { id, title, status },
+      workspace: { id, title, status, mode, candidates?: { pending, ready } },
       stages: [{ id, title, status, description, current }],
       currentStage: id | null,
       generatedAt: ISO_TIMESTAMP
@@ -85,6 +85,7 @@ stage list:
 
 ```text
 <workspace title>
+Workflow · <workspace mode>
 
 Stages · <workspace status>
 <status marker> <stage id>. <stage title>
@@ -92,9 +93,15 @@ Stages · <workspace status>
 ```
 
 The current stage receives a visual marker and remains visible when its status
-is `in_progress`. Status is text, not color alone, so the panel remains usable
-in monochrome terminals. Long titles and descriptions are truncated by the
-TUI renderer rather than by the provider.
+is `in_progress`. The workflow mode is shown directly below the workspace title
+in both native and text fallback renderers. Status is text, not color alone, so
+the panel remains usable in monochrome terminals. Long titles and descriptions
+are truncated by the TUI renderer rather than by the provider.
+
+For startup workspaces, the provider may add pending and ready candidate counts
+from local candidate metadata. The panel shows one compact line only when either
+count is nonzero. It never reads Git state, patch contents, or selected paths,
+and therefore does not claim that a ready candidate is currently applicable.
 
 The MVP is read-only. It does not bind Enter, mutation keys, or lifecycle
 shortcuts. Future actions must dispatch the same structured tools as `/wc` and

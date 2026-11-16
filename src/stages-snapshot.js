@@ -34,6 +34,8 @@ export function readStagesSnapshot({ projectRoot, sessionId }) {
     if (!session) return { ok: true, data: emptySnapshot() };
 
     const workspace = context.storage.readWorkspace(session.workspace).data;
+    const mode = workspace.mode || "standard";
+    const candidates = mode === "startup" ? context.candidates().summary(session.workspace) : null;
     const stages = context.listStages(session.workspace).data.stages
       .filter((stage) => stage.status !== "archived")
       .sort((left, right) => Number(left.stage) - Number(right.stage))
@@ -52,7 +54,7 @@ export function readStagesSnapshot({ projectRoot, sessionId }) {
       ok: true,
       data: {
         schema: 1,
-        workspace: { id: workspace.workspace, title: workspace.title, status: workspace.status },
+        workspace: { id: workspace.workspace, title: workspace.title, status: workspace.status, mode, ...(candidates ? { candidates } : {}) },
         stages,
         currentStage,
         generatedAt: new Date().toISOString(),

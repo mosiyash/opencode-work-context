@@ -108,6 +108,15 @@ without touching project configuration or loaders:
 npx opencode-work-context sync-command --force
 ```
 
+The generated `.opencode/commands/wc.md` and package-owned plugin loaders are
+replaceable package projections. Do not add project-specific workflow logic to
+them. Put additive project guidance in `.opencode/work-context.md`; `/wc` reads
+that file when present and merges it into the package command context. Local
+guidance can specialize project workflow, but cannot replace structured tool
+mapping, storage safety, or explicit lifecycle rules. Implement executable
+project extensions as separate project plugins rather than modifying generated
+loaders.
+
 Useful commands:
 
 ```text
@@ -246,12 +255,18 @@ refresh mechanisms.
 Use a specific version instead of `latest` when you need a pinned upgrade, for
 example `npx --yes opencode-work-context@0.1.10 init --force`.
 
-Generated files:
+Installed files and project state:
 
-- `.work-context/config.yaml` for filesystem configuration;
-- `.opencode/commands/wc.md` for the `/wc` command contract;
-- `.opencode/plugins/work-context.js` as a thin loader from the installed package;
-- `.opencode/tui-plugins/work-context-stages.js` as the reactive stages-panel loader;
+- `.work-context/config.yaml` is project-owned filesystem configuration; `init`
+  creates it once and preserves subsequent project changes, including with
+  `--force`;
+- `.opencode/commands/wc.md` is the package-managed `/wc` command contract;
+- `.opencode/plugins/work-context.js` is a package-managed thin server loader;
+- `.opencode/tui-plugins/work-context-stages.js` is a package-managed reactive
+  stages-panel loader;
+- `.opencode/tui.json` is shared project configuration; `init` merges the
+  work-context TUI entry and preserves other settings and plugin entries;
+- `.opencode/work-context.md` is the optional project-owned instruction overlay;
 - `.work-context/local/` in `.gitignore` for personal session events.
 - `<workspace>/KNOWLEDGE.md` is the canonical durable knowledge ledger and is
   created on the first explicit knowledge operation.
@@ -397,6 +412,71 @@ accepted only after every stage is `completed`. Use `/wc workspace list <workspa
 to list stages with their descriptions. Workspace titles can be changed with
 `/wc workspace rename <workspace> "title"`, and existing stage descriptions can
 be changed with `/wc stage update <workspace> <stage> "description"`.
+Workspaces use `standard` mode by default. Switch deliberately to the shared-tree
+startup workflow with `/wc workspace mode <workspace> startup`; switch back with
+`/wc workspace mode <workspace> standard`. The active workflow is shown below the
+workspace title in the sidebar. Standard mode keeps the existing conservative
+worktree behavior. When an OpenCode session is associated with a startup-mode
+workspace, every resume also supplies the agent with the startup policy:
+
+- a shared dirty worktree and concurrent stages are expected;
+- stages do not own files or commits;
+- ready work is captured promptly as an explicit commit candidate;
+- mixed-stage provenance alone is not a reason to stop;
+- a concrete overlapping or stale candidate patch is a reason to stop and report
+  the conflict.
+
+Startup-mode workspaces can snapshot an explicit ready subset as a local commit
+candidate without creating a commit or modifying the ordinary Git index:
+
+```text
+/wc candidate create 000123 "Ship parser fix" "Fix parser edge cases"
+/wc candidate capture 000123 CC-000001 paths src/parser.js test/parser.test.js
+/wc candidate preview 000123 CC-000001
+/wc candidate ready 000123 CC-000001
+/wc candidate commit 000123 CC-000001
+```
+
+A typical shared-tree sequence can keep unrelated work moving:
+
+1. Change `a.txt`, create candidate A, and capture only `a.txt`.
+2. Continue unfinished work in `b.txt` after A has been captured.
+3. Preview and mark candidate A ready, then commit it explicitly.
+4. The new commit contains `a.txt`; `b.txt` remains unchanged as working-tree WIP.
+
+The sidebar reads only candidate metadata and shows a compact
+`Candidates · pending <count> · ready <count>` line when either count is nonzero.
+It does not inspect Git state, patches, paths, or candidate freshness. A `ready`
+label therefore means lifecycle status, not a guarantee that a later publication
+cannot encounter a conflict.
+
+Capture accepts either complete repository paths or one exact Git unified patch,
+which permits selecting individual hunks. Candidate metadata and patches are
+stored only in `.work-context/local/candidates/`; they are not written to tracked
+workspace projections. Preview reconstructs the recorded base in a temporary
+`GIT_INDEX_FILE`, so the normal index, unrelated files, and unrelated hunks remain
+unchanged. Binary patches, paths outside the repository, malformed patches,
+repositories without `HEAD`, and candidate operations in `standard` mode are
+rejected. A preview reports when the current `HEAD` differs from the recorded
+base. `candidate commit` requires a ready candidate and uses its stored message;
+an optional final argument overrides that message. Publication reconstructs the
+current `HEAD` in another temporary index, reapplies a stale candidate only when
+its exact patch still applies cleanly, creates the commit, and compare-and-swaps
+the attached branch ref. Overlap, detached `HEAD`, or a ref race leaves candidate
+metadata, the worktree, the ordinary index, and the branch ref unchanged by the
+operation. Commit publication uses `git commit-tree`, so it deliberately bypasses
+Git hooks and signing rather than invoking interactive policy.
+
+Candidate publication is serialized by the repository-scoped `candidate-git`
+lock. Any operation that needs both locks acquires `candidate-git` before the
+work-context `write` lock; integrations must preserve this ordering to avoid
+deadlocks. Lock owners are released after success or failure. Existing stale-lock
+handling remains explicit rather than removing an unknown owner's lock.
+
+Use `/wc candidate show`, `/wc candidate list`, and `/wc candidate discard` to
+inspect or retire local candidates. Candidate patches may contain source code or
+secrets and follow the same local-only handling requirements as other files under
+`.work-context/local/`.
 `/wc workspace reopen <workspace> "reason"` records a recovery entry and returns
 only a completed workspace to `in_progress`.
 

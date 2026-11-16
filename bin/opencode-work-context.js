@@ -18,12 +18,14 @@ const dependencyRoot = fs.existsSync(path.join(projectRoot, "package.json"))
 const dependencyManifestFile = path.join(dependencyRoot, "package.json");
 let dependencyManifest = {};
 try { dependencyManifest = JSON.parse(fs.readFileSync(dependencyManifestFile, "utf8")); } catch {}
-const pluginLoader = `// Server tools and lifecycle hooks stay in the installed package.
+const pluginLoader = `// Package-managed loader: keep project extensions in separate plugin files.
+// Server tools and lifecycle hooks stay in the installed package.
 import serverPlugin from "${packageManifest.name}/server";
 
 export default serverPlugin.server;
 `;
-const tuiLoader = `// TUI integration stays in the installed package; do not copy src/ or tools.
+const tuiLoader = `// Package-managed loader: keep project extensions in separate TUI plugin files.
+// TUI integration stays in the installed package; do not copy src/ or tools.
 import { createSignal } from "solid-js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import plugin from "${packageManifest.name}/tui";
@@ -43,13 +45,16 @@ const tuiConfig = JSON.stringify({
   plugin: ["./tui-plugins/work-context-stages.js"],
 }, null, 2) + "\n";
 const command = fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8");
+const configRelative = path.join(".work-context", "config.yaml");
+const tuiConfigRelative = path.join(".opencode", "tui.json");
+const tuiPluginEntry = "./tui-plugins/work-context-stages.js";
 const generated = new Map([
-  [path.join(".work-context", "config.yaml"), defaultConfig()],
+  [configRelative, defaultConfig()],
   [path.join(".opencode", "commands", "wc.md"), command],
   [path.join(".opencode", "plugins", "work-context.js"), `// Thin project integration; tools remain in the installed npm package.
 ${pluginLoader}`],
   [path.join(".opencode", "tui-plugins", "work-context-stages.js"), tuiLoader],
-  [path.join(".opencode", "tui.json"), tuiConfig],
+  [tuiConfigRelative, tuiConfig],
 ]);
 
 const fail = (message) => {
@@ -171,6 +176,16 @@ function ensureModuleScope() {
 }
 
 function checkConflicts(force) {
+  const sharedTuiConfig = path.join(projectRoot, tuiConfigRelative);
+  if (exists(sharedTuiConfig) && fs.lstatSync(sharedTuiConfig).isFile() && !fs.lstatSync(sharedTuiConfig).isSymbolicLink()) {
+    try {
+      const config = JSON.parse(fs.readFileSync(sharedTuiConfig, "utf8"));
+      if (!config || typeof config !== "object" || Array.isArray(config) || (config.plugin !== undefined && (!Array.isArray(config.plugin) || config.plugin.some((item) => typeof item !== "string")))) throw new Error("unsupported shape");
+    } catch {
+      fail(`cannot merge unsupported configuration: ${tuiConfigRelative}`);
+      return false;
+    }
+  }
   const conflicts = ["package.json", "package-lock.json", "npm-shrinkwrap.json"].flatMap((relative) => {
     const file = path.join(dependencyRoot, relative);
     if (!exists(file)) return [];
@@ -184,6 +199,8 @@ function checkConflicts(force) {
     if (!exists(file)) return [];
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink()) return [relative];
+    if (relative === configRelative) return [];
+    if (relative === tuiConfigRelative) return [];
     return !force && fs.readFileSync(file, "utf8") !== content ? [relative] : [];
   }));
   const gitignore = path.join(projectRoot, ".gitignore");
@@ -337,6 +354,14 @@ function installPackage(snapshot) {
 function writeGenerated() {
   for (const [relative, content] of generated) {
     const file = path.join(projectRoot, relative);
+    if (relative === configRelative && exists(file)) continue;
+    if (relative === tuiConfigRelative && exists(file)) {
+      const config = JSON.parse(fs.readFileSync(file, "utf8"));
+      config.plugin = [...(config.plugin || []).filter((item) => item !== tuiPluginEntry), tuiPluginEntry];
+      const merged = JSON.stringify(config, null, 2) + "\n";
+      if (fs.readFileSync(file, "utf8") !== merged) writeAtomic(file, merged);
+      continue;
+    }
     if (!exists(file) || fs.readFileSync(file, "utf8") !== content) writeAtomic(file, content);
   }
   const gitignore = path.join(projectRoot, ".gitignore");

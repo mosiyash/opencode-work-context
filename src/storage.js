@@ -88,13 +88,13 @@ const validateEventStream = (events) => {
   }
 };
 function validateMetadata(data, kind, workspace, stage = null) {
-  const allowed = kind === "workspace" ? ["schema", "workspace", "title", "status", "created_at", "updated_at", "tracker_links", "reopen_history"] : ["schema", "workspace", "stage", "title", "status", "goal", "prompt", "depends_on", "owner", "created_at", "updated_at", "tracker_links", "reopen_history", "archive_history"];
+  const allowed = kind === "workspace" ? ["schema", "workspace", "title", "status", "mode", "created_at", "updated_at", "tracker_links", "reopen_history"] : ["schema", "workspace", "stage", "title", "status", "goal", "prompt", "depends_on", "owner", "created_at", "updated_at", "tracker_links", "reopen_history", "archive_history"];
   if (Object.keys(data).some((key) => !allowed.includes(key)) || data.schema !== 1 || !requiredString(data, "workspace") || !/^\d{6}$/.test(data.workspace) || data.workspace !== workspace) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
   if (!requiredString(data, "title") || !validTimestamp(data.created_at) || !validTimestamp(data.updated_at) || Date.parse(data.updated_at) < Date.parse(data.created_at) || !Array.isArray(data.tracker_links)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
   if (!validTrackerLinks(data.tracker_links) || data.tracker_links.some((link) => !link.provider.trim() || !link.project.trim() || ((link.provider === "gitlab" || link.provider === "github") ? (!Number.isInteger(link.iid) || link.iid < 1) : !link.key?.trim()))) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} tracker links`);
   const statuses = kind === "workspace" ? ["in_progress", "completed", "cancelled"] : ["planned", "in_progress", "completed", "cancelled", "archived"];
   if (!statuses.includes(data.status)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} status`);
-  const invalidWorkspaceHistory = kind === "workspace" && data.reopen_history !== undefined && !validReopenHistory(data.reopen_history);
+  const invalidWorkspaceHistory = kind === "workspace" && ((data.mode !== undefined && !["standard", "startup"].includes(data.mode)) || (data.reopen_history !== undefined && !validReopenHistory(data.reopen_history)));
   const invalidStageMetadata = kind === "stage" && (
     data.stage !== stage || !/^\d{2}$/.test(data.stage) || !requiredString(data, "goal")
     || (data.prompt !== undefined && !requiredString(data, "prompt")) || !requiredString(data, "owner")

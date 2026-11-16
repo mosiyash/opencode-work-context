@@ -20,11 +20,40 @@ test("create writes canonical metadata, events and projections", () => {
     assert.equal(result.ok, true);
     assert.equal(result.data.ordinal, "01/01");
     assert.equal(context.storage.readWorkspace("999997").data.status, "in_progress");
+    assert.equal(context.storage.readWorkspace("999997").data.mode, "standard");
     assert.match(fs.readFileSync(path.join(root, ".work-context", "INDEX.md"), "utf8"), /999997/);
     assert.equal(context.storage.readEvents().length, 1);
   } finally {
     removeRoot(root);
   }
+});
+
+test("workspace mode defaults safely for legacy records and can be changed explicitly", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Startup mode workspace", { workspace: "999990", sessionId: "startup-session", mode: "startup" });
+    assert.equal(context.storage.readWorkspace("999990").data.mode, "startup");
+    assert.throws(() => context.createWorkspace("Invalid mode workspace", { workspace: "999989", sessionId: "invalid-session", mode: "invalid" }), (error) => error.code === ERROR_CODES.INVALID_ARGUMENT);
+
+    context.createWorkspace("Legacy mode workspace", { workspace: "999991", sessionId: "session-1" });
+    const record = context.storage.readWorkspace("999991");
+    delete record.data.mode;
+    context.storage.writeMarkdown(context.storage.workspaceFile("999991"), record.data, record.body);
+
+    assert.equal(context.listWorkspaces().data.find((workspace) => workspace.workspace === "999991").mode, "standard");
+    assert.equal(context.listStages("999991").data.mode, "standard");
+    assert.equal(context.storage.readWorkspace("999991").data.mode, undefined);
+
+    const changed = context.setWorkspaceMode("999991", "startup");
+    assert.deepEqual(changed.data, { workspace: "999991", mode: "startup" });
+    assert.equal(context.storage.readWorkspace("999991").data.mode, "startup");
+    assert.throws(() => context.setWorkspaceMode("999991", "invalid"), (error) => error.code === ERROR_CODES.INVALID_ARGUMENT);
+
+    record.data.mode = "invalid";
+    context.storage.writeMarkdown(context.storage.workspaceFile("999991"), record.data, record.body);
+    assert.throws(() => context.storage.readWorkspace("999991"), (error) => error.code === ERROR_CODES.STORAGE_ERROR);
+  } finally { removeRoot(root); }
 });
 
 test("multiple workspaces can share an OpenCode session ID", () => {
@@ -202,6 +231,33 @@ test("resume returns the saved prompt and a continuation summary", () => {
   } finally {
     removeRoot(root);
   }
+});
+
+test("resume exposes startup policy only to associated OpenCode sessions", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Startup policy", { workspace: "999964", sessionId: "startup-planning", mode: "startup" });
+    context.handoff("999964", "01", "startup-planning");
+
+    const unassociated = context.startSession("999964", "01", { sessionId: "startup-core" });
+    assert.equal(unassociated.data.resume.context.workflow_policy, undefined);
+    assert.doesNotMatch(unassociated.data.resume.instruction, /Startup workflow policy/);
+    context.handoff("999964", "01", "startup-core");
+
+    const associated = context.startSession("999964", "01", { sessionId: "startup-associated", opencodeSessionId: "oc-startup" });
+    assert.equal(associated.data.resume.context.workflow_policy.mode, "startup");
+    assert.match(associated.data.resume.instruction, /shared dirty worktree and concurrent stages are expected/i);
+    assert.match(associated.data.resume.instruction, /Capture ready work promptly/);
+    assert.match(associated.data.resume.instruction, /Mixed-stage provenance alone is not a reason to stop/);
+    assert.match(associated.data.resume.instruction, /overlapping or stale candidate conflict/);
+
+    context.createWorkspace("Standard policy", { workspace: "999963", sessionId: "standard-planning" });
+    context.handoff("999963", "01", "standard-planning");
+    const standard = context.startSession("999963", "01", { sessionId: "standard-associated", opencodeSessionId: "oc-standard" });
+    assert.equal(standard.data.resume.context.workflow_policy, undefined);
+    assert.doesNotMatch(standard.data.resume.instruction, /Startup workflow policy/);
+  } finally { removeRoot(root); }
 });
 
 test("resume accepts archived dependencies and continues a handed-off stage", () => {
@@ -590,6 +646,8 @@ test("help exposes stage lifecycle commands without internal session or duplicat
     assert.match(syntax, /stage reopen/);
     assert.match(syntax, /stage restore/);
     assert.match(syntax, /workspace rename/);
+    assert.match(syntax, /workspace mode/);
+    assert.match(syntax, /candidate capture/);
     assert.match(syntax, /workspace reopen/);
     assert.match(syntax, /stage update/);
     assert.doesNotMatch(syntax, /session close|handoff\|knowledge/);

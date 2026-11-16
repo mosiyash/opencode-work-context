@@ -56,9 +56,11 @@ export function renderStagesPanel(result) {
 
   const lines = [
     snapshot.workspace.title,
-    "",
-    `Stages · ${snapshot.workspace.status}`,
+    `Workflow · ${snapshot.workspace.mode || "standard"}`,
   ];
+  const candidates = snapshot.workspace.candidates;
+  if (candidates && (candidates.pending || candidates.ready)) lines.push(`Candidates · pending ${candidates.pending} · ready ${candidates.ready}`);
+  lines.push("", `Stages · ${snapshot.workspace.status}`);
   for (const stage of snapshot.stages) {
     lines.push(`${statusMarker(stage.status)} ${stage.id}. ${stage.title}${stage.depends_on?.length ? `\nDeps: ${stage.depends_on.join(", ")}` : ""}`);
   }

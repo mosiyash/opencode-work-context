@@ -65,6 +65,44 @@ test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
   }
 });
 
+test("resume tool exposes startup policy without changing standard-mode instructions", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Startup integration", { workspace: "999909", sessionId: "startup-create", mode: "startup" });
+    context.handoff("999909", "01", "startup-create");
+    context.createWorkspace("Standard integration", { workspace: "999910", sessionId: "standard-create" });
+    context.handoff("999910", "01", "standard-create");
+    const executeContext = { directory: fixture.root, worktree: fixture.root, sessionID: "oc-policy", metadata: async () => {} };
+
+    const startup = JSON.parse((await tools.work_context_start_session.execute({ workspace: "999909", stage: "01" }, executeContext)).output);
+    assert.equal(startup.data.resume.context.workflow_policy.mode, "startup");
+    assert.match(startup.data.resume.instruction, /stages do not own files or commits/);
+    context.handoff("999909", "01", startup.data.session_id);
+
+    const standard = JSON.parse((await tools.work_context_start_session.execute({ workspace: "999910", stage: "01" }, executeContext)).output);
+    assert.equal(standard.data.resume.context.workflow_policy, undefined);
+    assert.doesNotMatch(standard.data.resume.instruction, /Startup workflow policy/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("startup create tool associates the planning session and returns its policy", async () => {
+  const fixture = createFixture();
+  try {
+    const executeContext = { directory: fixture.root, worktree: fixture.root, sessionID: "oc-startup-create", metadata: async () => {} };
+    const created = JSON.parse((await tools.work_context_create_workspace.execute({ title: "Created startup", mode: "startup" }, executeContext)).output);
+
+    assert.equal(created.data.mode, "startup");
+    assert.equal(created.data.resume.context.workflow_policy.mode, "startup");
+    assert.match(created.data.resume.instruction, /Capture ready work promptly/);
+    assert.equal(fixture.context.sessionByOpenCodeId("oc-startup-create").workspace, created.data.workspace);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("structured tools use the OpenCode directory for a global root worktree", async () => {
   const fixture = createFixture();
   try {
@@ -80,6 +118,23 @@ test("structured tools use the OpenCode directory for a global root worktree", a
     const result = JSON.parse((await tools.work_context_workspace_list.execute({ workspace: "999903" }, executeContext)).output);
     assert.equal(result.ok, true);
     assert.equal(result.data.workspace, "999903");
+    assert.equal(result.data.mode, "standard");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("workspace mode tool persists an explicit workflow mode", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Mode tool workspace", { workspace: "999904", sessionId: "oc-create" });
+    const executeContext = { directory: fixture.root, worktree: fixture.root, sessionID: "oc-mode", metadata: async () => {} };
+
+    const result = JSON.parse((await tools.work_context_set_workspace_mode.execute({ workspace: "999904", mode: "startup" }, executeContext)).output);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.data, { workspace: "999904", mode: "startup" });
+    assert.equal(context.listWorkspaces().data[0].mode, "startup");
   } finally {
     fixture.cleanup();
   }

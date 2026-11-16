@@ -8,8 +8,10 @@ import { generateProjections, renderSessions } from "./projections.js";
 import { nextKnowledgeId, parseKnowledge, renderKnowledge, validateKnowledgeInput, validateKnowledgeRecords } from "./knowledge.js";
 import { normalizeStageId, normalizeWorkspaceId } from "./identifiers.js";
 import { isDependencySatisfied } from "./stage-status.js";
+import { CandidateStore } from "./candidates.js";
 
 const actor = (options) => options.actor || "OpenCode";
+const workspaceMode = (data) => data.mode || "standard";
 const activeKnowledge = (records) => records
   .filter((record) => record.status === "active")
   .map(({ id: knowledgeId, title, kind, text, sources }) => ({ id: knowledgeId, title, kind, text, sources }));
@@ -27,6 +29,16 @@ const preservedStageResult = (record) => stageResult(record)
 const appendHistory = (bodyText, heading, entry) => `${bodyText.trimEnd()}${bodyText.includes(`\n## ${heading}\n`) ? "" : `\n\n## ${heading}\n`}\n- ${entry}\n`;
 const automaticFinishAllowed = (storage, workspace) => /(?:^|\n)AUTO_STAGE_FINISH:\s*allowed\s*$/mi.test(storage.readStage(workspace, "01").data.prompt || "");
 const resumeConfirmationRequired = (prompt) => /(?:^|\r?\n)RESUME_CONFIRMATION: required(?=\r?\n|$)/.test(prompt || "");
+const startupWorkflowPolicy = () => ({
+  mode: "startup",
+  guidance: [
+    "A shared dirty worktree and concurrent stages are expected; stages do not own files or commits.",
+    "Capture ready work promptly as an explicit commit candidate while unrelated work remains in progress.",
+    "Mixed-stage provenance alone is not a reason to stop; do not reconstruct ownership after the fact.",
+    "Stop only for a concrete overlapping or stale candidate conflict, and report that conflict explicitly.",
+  ],
+});
+const startupWorkflowInstruction = (policy) => policy ? `\n\nStartup workflow policy:\n${policy.guidance.map((item) => `- ${item}`).join("\n")}` : "";
 const resumePresentationInstruction = ({ confirmationRequired }) => `Before doing any work, give the user a concise context summary:
 - Use the user's language.
 - Name the stage without reporting workspace IDs, stage IDs, session UUIDs, ordinals, ok flags, or absent error codes.
@@ -102,7 +114,10 @@ export class WorkContext {
     if (!fs.existsSync(this.storage.root)) return { ok: true, data: [] };
     const data = fs.readdirSync(this.storage.root, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && /^\d{6}$/.test(entry.name))
-      .map((entry) => this.storage.readWorkspace(entry.name).data);
+      .map((entry) => {
+        const data = this.storage.readWorkspace(entry.name).data;
+        return { ...data, mode: workspaceMode(data) };
+      });
     return { ok: true, data };
   }
 
@@ -129,7 +144,8 @@ export class WorkContext {
       visiting.delete(stage); visited.add(stage);
     };
     for (const stage of ids) visit(stage);
-    return { ok: true, data: { workspace, stages, sessions: reduceSessions(this.storage.readEvents()).filter((session) => session.workspace === workspace) } };
+    const workspaceData = this.storage.readWorkspace(workspace).data;
+    return { ok: true, data: { workspace, title: workspaceData.title, status: workspaceData.status, mode: workspaceMode(workspaceData), stages, sessions: reduceSessions(this.storage.readEvents()).filter((session) => session.workspace === workspace) } };
   }
 
   finishWorkspace(workspace) {
@@ -190,22 +206,26 @@ export class WorkContext {
 
   createWorkspace(title, options = {}) {
     if (!title?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Title is required");
+    const mode = options.mode === undefined ? "standard" : options.mode;
+    if (!["standard", "startup"].includes(mode)) fail(ERROR_CODES.INVALID_ARGUMENT, "Workspace mode must be 'standard' or 'startup'");
     const requestedWorkspace = options.workspace;
     return this.transact("workspace-create", () => {
       const workspace = requestedWorkspace === undefined ? this.nextWorkspace() : normalizeWorkspaceId(requestedWorkspace);
       const now = new Date().toISOString();
       if (fs.existsSync(this.storage.workspaceDir(workspace))) fail(ERROR_CODES.CONFLICT, "Workspace already exists");
       fs.mkdirSync(path.join(this.storage.workspaceDir(workspace), "stages"), { recursive: true });
-      this.storage.writeMarkdown(this.storage.workspaceFile(workspace), { schema: 1, workspace, title: title.trim(), status: "in_progress", created_at: now, updated_at: now, tracker_links: [] }, body(title));
+      this.storage.writeMarkdown(this.storage.workspaceFile(workspace), { schema: 1, workspace, title: title.trim(), status: "in_progress", mode, created_at: now, updated_at: now, tracker_links: [] }, body(title));
       const planningGoal = "Clarify the work goal and constraints";
       const planningPrompt = "Diagnose and plan the task without functional changes. Discuss possible solutions, record durable workspace-wide facts, decisions, constraints, important files, and risks through explicit knowledge operations, and decompose the work into the following stages. For each new implementation stage, write a separate detailed prompt with local context, concrete actions, constraints, completion criteria, and the expected result; do not duplicate shared knowledge that every stage receives in resume.context.workspace_knowledge. Ask clarifying questions only when genuinely blocked. Stages must remain in progress until the user explicitly requests stage finish. If the user explicitly agrees to automatic completion for this workspace, add the exact standalone line AUTO_STAGE_FINISH: allowed to this Planning-stage prompt.";
       this.storage.writeMarkdown(this.storage.stageFile(workspace, "01"), { schema: 1, workspace, stage: "01", title: "Planning", status: "in_progress", goal: planningGoal, prompt: planningPrompt, depends_on: [], owner: actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body("Planning", planningGoal, planningPrompt));
       const sessionId = options.sessionId || randomUUID();
+      const workflowPolicy = mode === "startup" && options.opencodeSessionId ? startupWorkflowPolicy() : null;
       if (this.storage.readEvents().some((item) => item.session_id === sessionId)) fail(ERROR_CODES.CONFLICT, "Session ID already exists");
       this.writeEvents([event("session.started", workspace, "01", 1, sessionId, actor(this.options), { summary: `planning ${title.trim()}`, opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
       generateProjections(this.storage);
       return this.result({
         workspace,
+        mode,
         stage: "01",
         session_id: sessionId,
         ordinal: "01/01",
@@ -220,11 +240,12 @@ export class WorkContext {
             essence: planningGoal,
             previous: "The previous session did not save a result; the stopping point needs to be clarified.",
             now: planningPrompt,
-            workspace_knowledge: [],
-            lifecycle: { automatic_finish_allowed: false },
+             workspace_knowledge: [],
+             ...(workflowPolicy ? { workflow_policy: workflowPolicy } : {}),
+             lifecycle: { automatic_finish_allowed: false },
           },
           next_action: "start_work",
-          instruction: `${planningPrompt}\n\nDo not invoke stage finish unless the user explicitly requests the lifecycle command. Automatic completion is permitted only when lifecycle.automatic_finish_allowed is true, which requires the exact AUTO_STAGE_FINISH: allowed line in this workspace's Planning-stage prompt.`,
+           instruction: `${planningPrompt}${startupWorkflowInstruction(workflowPolicy)}\n\nDo not invoke stage finish unless the user explicitly requests the lifecycle command. Automatic completion is permitted only when lifecycle.automatic_finish_allowed is true, which requires the exact AUTO_STAGE_FINISH: allowed line in this workspace's Planning-stage prompt.`,
         },
       }, [workspace, "01"]);
     });
@@ -243,6 +264,56 @@ export class WorkContext {
       generateProjections(this.storage);
       return this.result({ workspace, title: nextTitle }, [workspace]);
     });
+  }
+
+  setWorkspaceMode(workspace, mode) {
+    workspace = normalizeWorkspaceId(workspace);
+    if (!["standard", "startup"].includes(mode)) fail(ERROR_CODES.INVALID_ARGUMENT, "Workspace mode must be 'standard' or 'startup'");
+    return this.transact(`workspace-${workspace}`, () => {
+      const record = this.storage.readWorkspace(workspace);
+      if (workspaceMode(record.data) === mode && record.data.mode === mode) return this.result({ workspace, mode }, []);
+      record.data.mode = mode;
+      record.data.updated_at = new Date().toISOString();
+      this.storage.writeMarkdown(this.storage.workspaceFile(workspace), record.data, record.body);
+      generateProjections(this.storage);
+      return this.result({ workspace, mode }, [workspace]);
+    });
+  }
+
+  candidates() { return new CandidateStore(this); }
+
+  createCandidate(workspace, title, message = null) {
+    return this.transact("candidate-create", () => this.result(this.candidates().create(workspace, title, message), ["local:candidates"]));
+  }
+
+  listCandidates(workspace) { return { ok: true, data: this.candidates().list(workspace) }; }
+
+  showCandidate(workspace, candidate) {
+    const store = this.candidates();
+    workspace = store.assertStartup(workspace);
+    return { ok: true, data: store.read(candidate, workspace, true) };
+  }
+
+  captureCandidate(workspace, candidate, input) {
+    return this.transact("candidate-capture", () => this.result(this.candidates().capture(workspace, candidate, input), ["local:candidates"]));
+  }
+
+  previewCandidate(workspace, candidate) { return { ok: true, data: this.candidates().preview(workspace, candidate) }; }
+
+  readyCandidate(workspace, candidate) {
+    return this.transact("candidate-ready", () => this.result(this.candidates().setStatus(workspace, candidate, "ready"), ["local:candidates"]));
+  }
+
+  discardCandidate(workspace, candidate) {
+    return this.transact("candidate-discard", () => this.result(this.candidates().setStatus(workspace, candidate, "discarded"), ["local:candidates"]));
+  }
+
+  commitCandidate(workspace, candidate, message = undefined, options = {}) {
+    this.storage.assertSafeRoots();
+    // Operations needing both locks always acquire candidate-git before write.
+    return withLock(this.storage.lockPath("candidate-git"), () => this.transact("candidate-commit", () =>
+      this.result(this.candidates().commit(workspace, candidate, message, options), ["local:candidates"])
+    ), { session: this.options.sessionId, owner: actor(this.options) });
   }
 
   nextWorkspace() {
@@ -285,7 +356,9 @@ export class WorkContext {
       const hasPrompt = Boolean(stageRecord.data.prompt?.trim());
       const confirmationRequired = hasPrompt && resumeConfirmationRequired(stageRecord.data.prompt);
       const previousResult = preservedStageResult(stageRecord);
-      const workspaceTitle = this.storage.readWorkspace(workspace).data.title;
+       const workspaceRecord = this.storage.readWorkspace(workspace).data;
+       const workspaceTitle = workspaceRecord.title;
+       const workflowPolicy = workspaceMode(workspaceRecord) === "startup" && options.opencodeSessionId ? startupWorkflowPolicy() : null;
       const workspaceKnowledge = activeKnowledge(this.listKnowledge(workspace).data);
       const automaticFinish = automaticFinishAllowed(this.storage, workspace);
       return this.result({
@@ -314,12 +387,13 @@ export class WorkContext {
             essence: stageRecord.data.goal || stageRecord.data.title,
             previous: previousSessionSummary || previousResult || "No previous progress was recorded.",
             now: hasPrompt ? stageRecord.data.prompt : "First clarify the task and work plan with the user.",
-            workspace_knowledge: workspaceKnowledge,
-            lifecycle: { automatic_finish_allowed: automaticFinish },
+             workspace_knowledge: workspaceKnowledge,
+             ...(workflowPolicy ? { workflow_policy: workflowPolicy } : {}),
+             lifecycle: { automatic_finish_allowed: automaticFinish },
           },
           next_action: hasPrompt ? confirmationRequired ? "await_confirmation" : "start_work" : "ask_questions",
           instruction: `${hasPrompt
-            ? `${resumePresentationInstruction({ confirmationRequired })}\n\nSaved working prompt:\n${stageRecord.data.prompt}`
+             ? `${resumePresentationInstruction({ confirmationRequired })}\n\nSaved working prompt:\n${stageRecord.data.prompt}${startupWorkflowInstruction(workflowPolicy)}`
             : `This stage has no non-empty prompt. Give the user a concise plain-language summary of the stage title and goal, then ask focused questions needed to define the intended outcome and scope. Do not inspect or modify application code yet. Do not report raw operation metadata or identifiers.`}\n\nDo not invoke stage finish unless the user explicitly requests the lifecycle command. Automatic completion is permitted only when lifecycle.automatic_finish_allowed is true, which requires the exact AUTO_STAGE_FINISH: allowed line in this workspace's Planning-stage prompt.`,
         },
       }, [workspace, stage]);
@@ -668,10 +742,9 @@ export class WorkContext {
   help(command = "") {
     return this.result({
       command,
-      syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|workspace reopen|resume|stage add|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
-      note: "stage finish requires an explicit user lifecycle request unless the Planning-stage prompt contains the exact line AUTO_STAGE_FINISH: allowed; stage reopen requires a completed stage and a reason; stage restore requires an archived stage and a reason, returns its saved pre-archive status (or in_progress for legacy archives), and requires explicit separate-session resume when actionable; workspace reopen requires a completed workspace and a reason.",
+      syntax: "/wc [create|list|workspace list|workspace rename|workspace mode|candidate create|candidate capture|candidate preview|candidate show|candidate list|candidate ready|candidate commit|candidate discard|workspace finish|workspace reopen|resume|stage add|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
+       note: "associated OpenCode sessions in startup-mode workspaces receive the shared-worktree and commit-candidate policy on resume; standard mode remains conservative; commit candidates are local-only and require startup workflow mode; capture and commit use isolated Git indexes and never alter the ordinary index; candidate commit uses the stored message unless an explicit non-empty override is provided, and bypasses Git hooks and signing; stage finish requires an explicit user lifecycle request unless the Planning-stage prompt contains the exact line AUTO_STAGE_FINISH: allowed; stage reopen requires a completed stage and a reason; stage restore requires an archived stage and a reason, returns its saved pre-archive status (or in_progress for legacy archives), and requires explicit separate-session resume when actionable; workspace reopen requires a completed workspace and a reason.",
     }, []);
-      return this.result({ command, syntax: "/wc [create|list|workspace list|workspace rename|workspace finish|resume|stage add|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]", note: "workspace and stage are optional for stage rename/update/update-prompt/update-result/archive/handoff/abandon/finish and session rename/close when the current session identifies them; explicit workspace and stage positions accept padded or unpadded positive integer IDs and structured results remain canonical; zero, signs, decimals, whitespace, and overlong identifiers are invalid; stage update-result requires an existing stage result; finish <stage> is a shortcut for stage finish <stage>; when only one numeric identifier is supplied, six digits mean workspace and one or two digits mean stage; stage add accepts an optional local prompt; from an unassociated OpenCode session it also enters the new stage immediately, while an associated session remains on its current stage; resume returns resume.next_action, resume.instruction, and active shared entries in resume.context.workspace_knowledge; implementation may begin only with a non-empty prompt and no unanswered questions; ask focused questions and do not modify application code when next_action is ask_questions; force-close requires a session ID, reason, and exact confirmation FORCE_CLOSE; before stage finish, add, update, or supersede durable findings, or explicitly declare none; stage finish closes only the current stage session and returns downstream stages for informational prompt review without starting one; workspace finish requires all non-archived stages to be completed; archived stages retain their IDs and history and are hidden from the TUI by default; mutating commands call structured tools; only explicit lifecycle operations change storage." }, []);
   }
 
   result(data, changed, next = null) {

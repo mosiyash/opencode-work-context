@@ -10,8 +10,17 @@ other than `resume`, report the structured result and stable error code. For
 `resume`, follow its human-oriented presentation rules instead. Use `work_context_help` when
 the syntax is missing or ambiguous.
 
+`.opencode/commands/wc.md` is package-managed and may be replaced during install,
+activation, or `sync-command`. Never store project-specific workflow logic in this
+file or generated plugin loaders. Keep additive project instructions in
+`.opencode/work-context.md`; when that file exists, read it before dispatching the
+operation and merge its guidance into this command context. Project guidance may
+specialize local workflow, but it must not override this tool mapping, structured
+arguments, storage safety, or explicit lifecycle requirements.
+
 For `workspace list <workspace>` (or `<workspace> list`), report the workspace
-status and every stage as `stage - status - title - description`.
+status and workflow mode, then every stage as
+`stage - status - title - description`.
 
 Use these exact tool mappings; do not invent shortened tool names:
 
@@ -19,6 +28,15 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `list` -> `work_context_list_workspaces`
 - `workspace list <workspace>` or `<workspace> list` -> `work_context_workspace_list`
 - `workspace rename <workspace> "title"` -> `work_context_rename_workspace`
+- `workspace mode <workspace> <standard|startup>` -> `work_context_set_workspace_mode`
+- `candidate create <workspace> "title" ["message"]` -> `work_context_create_candidate`
+- `candidate capture <workspace> <candidateId> paths <path>...` or `candidate capture <workspace> <candidateId> patch "patch"` -> `work_context_capture_candidate`
+- `candidate preview <workspace> <candidateId>` -> `work_context_preview_candidate`
+- `candidate show <workspace> <candidateId>` -> `work_context_show_candidate`
+- `candidate list <workspace>` -> `work_context_list_candidates`
+- `candidate ready <workspace> <candidateId>` -> `work_context_ready_candidate`
+- `candidate commit <workspace> <candidateId> ["message"]` -> `work_context_commit_candidate`
+- `candidate discard <workspace> <candidateId>` -> `work_context_discard_candidate`
 - `workspace finish <workspace>` -> `work_context_workspace_finish`
 - `workspace reopen <workspace> "reason"` -> `work_context_reopen_workspace`
 - `resume <workspace> <stage>` -> `work_context_start_session`
@@ -43,6 +61,16 @@ Supported syntax:
 - `list` or `<workspace> list`
 - `workspace list <workspace>`
 - `workspace rename <workspace> "title"`
+- `workspace mode <workspace> <standard|startup>`
+- `candidate create <workspace> "title" ["message"]`
+- `candidate capture <workspace> <candidateId> paths <path>...`
+- `candidate capture <workspace> <candidateId> patch "patch"`
+- `candidate preview <workspace> <candidateId>`
+- `candidate show <workspace> <candidateId>`
+- `candidate list <workspace>`
+- `candidate ready <workspace> <candidateId>`
+- `candidate commit <workspace> <candidateId> ["message"]`
+- `candidate discard <workspace> <candidateId>`
 - `workspace finish <workspace>`
 - `workspace reopen <workspace> "reason"`
 - `resume <workspace> <stage>`
@@ -72,6 +100,8 @@ Supported syntax:
 - when the saved prompt contains several clear deliverables, add `In this stage we will` with 2-5 short outcome-oriented bullets derived only from the prompt, previous result, and workspace knowledge; do not invent scope, and omit this block for a small stage
 - do not expose raw workspace/stage/session identifiers, ordinals, `ok` flags, or absent error codes in the user-facing resume summary
 - `resume.context.workspace_knowledge` contains every active durable knowledge entry for the workspace; treat it as established shared context, and do not repeat earlier analysis unless an entry is incomplete, contradicted, or needs verification
+- an associated OpenCode session resumed in a `startup` workspace receives `resume.context.workflow_policy`; follow it as active agent policy: a shared dirty worktree and concurrent stages are expected, stages do not own files or commits, ready work should be captured promptly into an explicit candidate, mixed-stage provenance alone is not a reason to stop, and an actual overlapping or stale candidate conflict must stop with a concrete report
+- standard-mode and unassociated core sessions do not receive startup policy; retain the existing conservative worktree behavior there
 - after presenting the summary, continue work immediately when `resume.next_action` is `start_work`; do not ask for generic confirmation
 - a stage may require confirmation only with an exact standalone `RESUME_CONFIRMATION: required` line in its saved prompt; when `resume.next_action` is `await_confirmation`, present the summary and wait before inspecting or modifying application code
 - `create` enters the new workspace's Planning stage in the current OpenCode session only when that session is not yet in a workspace; otherwise it only creates the workspace and its planning session
@@ -87,6 +117,7 @@ Supported syntax:
 - `stage reopen <workspace> <stage> "reason"` applies only to a completed stage, preserves its result and completion history, records the reason, changes it to `in_progress`, and does not start a session or affect downstream stages; use an explicit separate-session `resume` to work on it again
 - `stage restore <workspace> <stage> "reason"` applies only to an archived stage and restores its saved pre-archive status. New archives preserve that status; legacy archives restore to `in_progress`. It records the reason, preserves stage content and results, does not start a session, and requires explicit separate-session `resume` when restored to `planned` or `in_progress`.
 - `workspace reopen <workspace> "reason"` applies only to a completed workspace, changes it to `in_progress`, and records durable recovery history. Cancelled workspaces cannot be reopened.
+- candidate operations require `startup` workflow mode and store metadata and patch payloads only under `.work-context/local/`; capture requires exactly one explicit list of complete paths or one Git unified patch and never infers stage ownership; commit requires a ready candidate, uses its stored message unless a non-empty override is supplied, serializes Git publication, bypasses hooks and signing, and never uses the ordinary Git index
 - `knowledge list|add|update|supersede <workspace> ...`
 
 Arguments: $ARGUMENTS

@@ -33,6 +33,9 @@ const trackerLinkText = (link) => {
   if (link.provider === "github") return `GH#${identifier}`;
   return `JIRA ${identifier}`;
 };
+const candidateSummaryText = (workspace) => workspace.candidates && (workspace.candidates.pending || workspace.candidates.ready)
+  ? `Candidates · pending ${workspace.candidates.pending} · ready ${workspace.candidates.ready}`
+  : null;
 
 export { readStagesSnapshot, renderStagesPanel };
 
@@ -52,7 +55,12 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
   : [
     runtime.jsx("box", {
       marginBottom: 1,
-      children: runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: `${attention?.attentionForWorkspace?.(result.data.workspace.id) ? "[ATTN] " : ""}${result.data.workspace.title}` }) }),
+      flexDirection: "column",
+      children: [
+        runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: `${attention?.attentionForWorkspace?.(result.data.workspace.id) ? "[ATTN] " : ""}${result.data.workspace.title}` }) }),
+        runtime.jsx("text", { fg: theme?.current?.textMuted, children: `Workflow · ${result.data.workspace.mode || "standard"}` }),
+        candidateSummaryText(result.data.workspace) && runtime.jsx("text", { fg: theme?.current?.textMuted, children: candidateSummaryText(result.data.workspace) }),
+      ],
     }),
     runtime.jsx("box", {
       flexDirection: "row",
