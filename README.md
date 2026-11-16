@@ -153,22 +153,20 @@ For one managed package installation shared by OpenCode while keeping activation
 explicit per project, run this in each project that should use work-context:
 
 ```sh
-npx opencode-work-context activate
+npx --yes opencode-work-context@latest activate
 ```
 
-`activate` writes `.opencode/opencode.json` with the supported `plugin` entry
-`opencode-work-context` and installs the `/wc` command contract. OpenCode
-resolves, caches, and updates configured package plugins through its supported
-plugin manager; the project does not import an npm-global path, create a local
-`node_modules`, or create `.work-context` data merely by being activated. The
-package's server and optional TUI parts are loaded together by OpenCode, so this
-also works on server-only hosts.
+`activate` writes the exact current package spec, such as
+`opencode-work-context@0.6.1`, to the supported `plugin` arrays in
+`.opencode/opencode.json` and `.opencode/tui.json`, and installs the `/wc`
+command contract. OpenCode stores that package once in its shared managed cache;
+the project does not import an npm-global path, create a local `node_modules`, or
+create `.work-context` data merely by being activated.
 
 Managed activation has two scopes: it enables the plugin only in the current
 project, while OpenCode keeps the package in its shared managed cache for every
 activated project. It does not require `npm install -g` or a project-local npm
-dependency. Restart OpenCode after publishing a new unpinned package version so
-the managed plugin flow can refresh the shared copy.
+dependency. The exact spec avoids stale unversioned cache entries.
 
 Activation is opt-in. Projects without this entry stay inactive. If a machine
 administrator or user has configured the package globally, a project can add
@@ -185,7 +183,7 @@ For an existing JSONC configuration, add the equivalent entry manually:
 
 ```jsonc
 {
-  "plugin": ["opencode-work-context"] // or "-work-context" to opt out
+  "plugin": ["opencode-work-context@<version>"] // or "-work-context" to opt out
 }
 ```
 
@@ -193,11 +191,16 @@ Re-running `activate` also migrates work-context entries previously generated
 under the unsupported legacy `plugins` field. Unrelated legacy entries are
 preserved rather than activated or removed implicitly.
 
-Restart OpenCode after changing plugin configuration. OpenCode checks unpinned
-configured packages through its managed plugin flow; use the OpenCode plugin
-management command available in your installed OpenCode version when you need
-to refresh it immediately. Pinned plugin entries are intentionally not updated
-automatically.
+Update managed activation from one activated project with an exact version:
+
+```sh
+opencode plugin opencode-work-context@<version> --force
+```
+
+This updates both project config targets and populates the versioned shared cache
+entry. Re-run `npx --yes opencode-work-context@<version> activate --force` in
+other activated projects when their pinned config must also change. Restart
+OpenCode after changing plugin configuration.
 
 Do not activate the managed package in a project already configured through
 the local installer below. The command refuses that combination so server tools

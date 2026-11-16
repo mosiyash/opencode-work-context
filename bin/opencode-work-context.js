@@ -103,6 +103,8 @@ function activate(enabled, force) {
   }
   const configRelative = path.join(".opencode", "opencode.json");
   const configFile = path.join(projectRoot, configRelative);
+  const managedTuiConfigRelative = path.join(".opencode", "tui.json");
+  const managedTuiConfigFile = path.join(projectRoot, managedTuiConfigRelative);
   const jsoncFile = path.join(projectRoot, ".opencode", "opencode.jsonc");
   if (exists(jsoncFile)) {
     fail("cannot update .opencode/opencode.jsonc; add the plugin entry manually or use .opencode/opencode.json");
@@ -123,7 +125,21 @@ function activate(enabled, force) {
       return;
     }
   }
-  const entry = enabled ? packageManifest.name : "-work-context";
+  let managedTuiConfig = { $schema: "https://opencode.ai/tui.json" };
+  if (exists(managedTuiConfigFile)) {
+    if (hasSymlinkParent(managedTuiConfigFile) || !fs.lstatSync(managedTuiConfigFile).isFile() || fs.lstatSync(managedTuiConfigFile).isSymbolicLink()) {
+      fail(`refusing to overwrite non-regular file: ${managedTuiConfigRelative}`);
+      return;
+    }
+    try { managedTuiConfig = JSON.parse(fs.readFileSync(managedTuiConfigFile, "utf8")); }
+    catch { fail(`cannot update invalid JSON: ${managedTuiConfigRelative}`); return; }
+    if (!managedTuiConfig || typeof managedTuiConfig !== "object" || Array.isArray(managedTuiConfig)
+      || (managedTuiConfig.plugin !== undefined && !Array.isArray(managedTuiConfig.plugin))) {
+      fail(`cannot update unsupported configuration: ${managedTuiConfigRelative}`);
+      return;
+    }
+  }
+  const entry = enabled ? `${packageManifest.name}@${packageManifest.version}` : "-work-context";
   const isWorkContextEntry = (item) => typeof item === "string" && (
     item === packageManifest.name
     || item.startsWith(`${packageManifest.name}@`)
@@ -134,14 +150,16 @@ function activate(enabled, force) {
     config.plugins = config.plugins.filter((item) => !isWorkContextEntry(item));
     if (config.plugins.length === 0) delete config.plugins;
   }
+  managedTuiConfig.plugin = [...(managedTuiConfig.plugin || []).filter((item) => !isWorkContextEntry(item)), entry];
   const files = new Map([
     [configRelative, JSON.stringify(config, null, 2) + "\n"],
+    [managedTuiConfigRelative, JSON.stringify(managedTuiConfig, null, 2) + "\n"],
     [path.join(".opencode", "commands", "wc.md"), command],
   ]);
   const conflicts = [...files].flatMap(([relative, content]) => {
     const file = path.join(projectRoot, relative);
     if (hasSymlinkParent(file) || (exists(file) && (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink()))) return [relative];
-    return relative !== configRelative && !force && exists(file) && fs.readFileSync(file, "utf8") !== content ? [relative] : [];
+    return ![configRelative, managedTuiConfigRelative].includes(relative) && !force && exists(file) && fs.readFileSync(file, "utf8") !== content ? [relative] : [];
   });
   if (conflicts.length) {
     fail(`refusing to overwrite existing files: ${conflicts.join(", ")}; rerun with --force`);
