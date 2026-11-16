@@ -441,15 +441,18 @@ workspace, every resume also supplies the agent with the startup policy:
 - a shared dirty worktree and concurrent stages are expected;
 - stages do not own files or commits;
 - ready work is captured promptly as an explicit commit candidate;
-- mixed-stage provenance alone is not a reason to stop;
-- a concrete overlapping or stale candidate patch is a reason to stop and report
-  the conflict.
+- exact, shared-foundation, and integration candidates express the intended
+  commit boundary without claiming stage ownership;
+- mixed-stage provenance and complete files containing unrelated stage work are
+  not reasons to require prior commits or stop;
+- only a concrete patch conflict, an incoherent candidate boundary, or failed
+  required verification stops candidate publication.
 
 Startup-mode workspaces can snapshot an explicit ready subset as a local commit
 candidate without creating a commit or modifying the ordinary Git index:
 
 ```text
-/wc candidate create 000123 "Ship parser fix" "Fix parser edge cases"
+/wc candidate create 000123 "Ship parser fix" "Fix parser edge cases" strategy exact stages 02
 /wc candidate capture 000123 CC-000001 paths src/parser.js test/parser.test.js
 /wc candidate preview 000123 CC-000001
 /wc candidate ready 000123 CC-000001
@@ -462,6 +465,23 @@ A typical shared-tree sequence can keep unrelated work moving:
 2. Continue unfinished work in `b.txt` after A has been captured.
 3. Preview and mark candidate A ready, then commit it explicitly.
 4. The new commit contains `a.txt`; `b.txt` remains unchanged as working-tree WIP.
+
+Choose the candidate strategy by the coherent repository change being published,
+not by which stage touched each file:
+
+- `exact` is the default and is preferred when the intended patch can be safely
+  separated from other WIP;
+- `shared_foundation` captures one coherent prerequisite used by several stages;
+- `integration` captures already-intertwined work from several stages when it
+  forms one reviewable and testable result and cannot be split safely.
+
+Candidate creation may include several related stage IDs. They are normalized
+and validated within the candidate workspace, then returned by create, list,
+show, preview, ready, and commit operations. These references provide
+traceability only: they do not assign files or hunks, change stage lifecycle or
+dependencies, or infer relations from Git or session history. Existing candidate
+records without strategy or stage-reference metadata remain readable; new
+candidates default to `exact` with no related stages.
 
 The sidebar reads only candidate metadata and shows a compact
 `Candidates · pending <count> · ready <count>` line when either count is nonzero.
@@ -485,6 +505,11 @@ the attached branch ref. Overlap, detached `HEAD`, or a ref race leaves candidat
 metadata, the worktree, the ordinary index, and the branch ref unchanged by the
 operation. Commit publication uses `git commit-tree`, so it deliberately bypasses
 Git hooks and signing rather than invoking interactive policy.
+
+If multiple stages have edited the same lines, Work Context cannot retrospectively
+separate those edits by provenance. Use an integration candidate only when the
+combined patch is coherent and verified; otherwise stop and establish a safe
+candidate boundary before publication.
 
 Candidate publication is serialized by the repository-scoped `candidate-git`
 lock. Any operation that needs both locks acquires `candidate-git` before the

@@ -2,18 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { atomicWrite } from "./storage.js";
 import { ERROR_CODES, fail } from "./errors.js";
-import { normalizeWorkspaceId } from "./identifiers.js";
+import { normalizeStageId, normalizeWorkspaceId } from "./identifiers.js";
 import { capturePatch, capturePaths, commitPatch, previewPatch, repositoryState } from "./git-candidates.js";
 
 const candidatePattern = /^CC-(\d{6})$/;
 const statuses = new Set(["draft", "ready", "discarded", "committed"]);
+const strategies = new Set(["exact", "shared_foundation", "integration"]);
 const timestamp = (value) => typeof value === "string" && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
 const metadataKeys = ["schema", "candidate", "workspace", "title", "message", "base_head", "status", "created_at", "updated_at", "selected_paths", "patch_file"];
+const optionalMetadataKeys = ["strategy", "related_stages"];
 
 function validateCandidate(data, expectedId = null) {
   const valid = data && typeof data === "object" && !Array.isArray(data)
     && metadataKeys.every((key) => Object.hasOwn(data, key))
-    && Object.keys(data).every((key) => metadataKeys.includes(key) || ["commit_hash", "committed_at"].includes(key))
+    && Object.keys(data).every((key) => metadataKeys.includes(key) || optionalMetadataKeys.includes(key) || ["commit_hash", "committed_at"].includes(key))
     && data.schema === 1 && candidatePattern.test(data.candidate) && (!expectedId || data.candidate === expectedId)
     && /^\d{6}$/.test(data.workspace) && typeof data.title === "string" && data.title.trim()
     && typeof data.message === "string" && data.message.trim() && /^[0-9a-f]{40,64}$/.test(data.base_head)
@@ -22,6 +24,10 @@ function validateCandidate(data, expectedId = null) {
     && Array.isArray(data.selected_paths) && data.selected_paths.every((item) => typeof item === "string" && item && !path.isAbsolute(item) && !item.split("/").includes(".."))
     && new Set(data.selected_paths).size === data.selected_paths.length
     && data.patch_file === `${data.candidate}.patch`
+    && (Object.hasOwn(data, "strategy") === Object.hasOwn(data, "related_stages"))
+    && (!Object.hasOwn(data, "strategy") || (strategies.has(data.strategy)
+      && Array.isArray(data.related_stages) && data.related_stages.every((stage) => /^\d{2}$/.test(stage) && stage !== "00")
+      && new Set(data.related_stages).size === data.related_stages.length))
     && (data.status === "committed"
       ? /^[0-9a-f]{40,64}$/.test(data.commit_hash) && timestamp(data.committed_at)
       : !Object.hasOwn(data, "commit_hash") && !Object.hasOwn(data, "committed_at"));
@@ -74,13 +80,19 @@ export class CandidateStore {
     if (patch !== null) atomicWrite(this.patchFile(data.candidate), patch);
   }
 
-  create(workspace, title, message = null) {
+  create(workspace, title, message = null, options = {}) {
     workspace = this.assertStartup(workspace);
     if (!title?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Candidate title is required");
+    const strategy = options.strategy ?? "exact";
+    if (!strategies.has(strategy)) fail(ERROR_CODES.INVALID_ARGUMENT, "Candidate strategy must be 'exact', 'shared_foundation' or 'integration'");
+    if (options.relatedStages !== undefined && !Array.isArray(options.relatedStages)) fail(ERROR_CODES.INVALID_ARGUMENT, "Related stages must be an array");
+    const relatedStages = (options.relatedStages || []).map(normalizeStageId);
+    if (new Set(relatedStages).size !== relatedStages.length) fail(ERROR_CODES.INVALID_ARGUMENT, "Related stages must be unique");
+    for (const stage of relatedStages) this.context.storage.readStage(workspace, stage);
     const repository = repositoryState(this.context.storage.projectRoot);
     const id = this.nextId();
     const now = new Date().toISOString();
-    const data = { schema: 1, candidate: id, workspace, title: title.trim(), message: message?.trim() || title.trim(), base_head: repository.head, status: "draft", created_at: now, updated_at: now, selected_paths: [], patch_file: `${id}.patch` };
+    const data = { schema: 1, candidate: id, workspace, title: title.trim(), message: message?.trim() || title.trim(), strategy, related_stages: relatedStages, base_head: repository.head, status: "draft", created_at: now, updated_at: now, selected_paths: [], patch_file: `${id}.patch` };
     this.write(data, "");
     return data;
   }

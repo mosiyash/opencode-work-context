@@ -29,7 +29,7 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `workspace list <workspace>` or `<workspace> list` -> `work_context_workspace_list`
 - `workspace rename <workspace> "title"` -> `work_context_rename_workspace`
 - `workspace mode <workspace> <standard|startup>` -> `work_context_set_workspace_mode`
-- `candidate create <workspace> "title" ["message"]` -> `work_context_create_candidate`
+- `candidate create <workspace> "title" ["message"] [strategy <exact|shared_foundation|integration>] [stages <stage>...]` -> `work_context_create_candidate`
 - `candidate capture <workspace> <candidateId> paths <path>...` or `candidate capture <workspace> <candidateId> patch "patch"` -> `work_context_capture_candidate`
 - `candidate preview <workspace> <candidateId>` -> `work_context_preview_candidate`
 - `candidate show <workspace> <candidateId>` -> `work_context_show_candidate`
@@ -62,7 +62,7 @@ Supported syntax:
 - `workspace list <workspace>`
 - `workspace rename <workspace> "title"`
 - `workspace mode <workspace> <standard|startup>`
-- `candidate create <workspace> "title" ["message"]`
+- `candidate create <workspace> "title" ["message"] [strategy <exact|shared_foundation|integration>] [stages <stage>...]`
 - `candidate capture <workspace> <candidateId> paths <path>...`
 - `candidate capture <workspace> <candidateId> patch "patch"`
 - `candidate preview <workspace> <candidateId>`
@@ -100,7 +100,7 @@ Supported syntax:
 - when the saved prompt contains several clear deliverables, add `In this stage we will` with 2-5 short outcome-oriented bullets derived only from the prompt, previous result, and workspace knowledge; do not invent scope, and omit this block for a small stage
 - do not expose raw workspace/stage/session identifiers, ordinals, `ok` flags, or absent error codes in the user-facing resume summary
 - `resume.context.workspace_knowledge` contains every active durable knowledge entry for the workspace; treat it as established shared context, and do not repeat earlier analysis unless an entry is incomplete, contradicted, or needs verification
-- an associated OpenCode session resumed in a `startup` workspace receives `resume.context.workflow_policy`; follow it as active agent policy: a shared dirty worktree and concurrent stages are expected, stages do not own files or commits, ready work should be captured promptly into an explicit candidate, mixed-stage provenance alone is not a reason to stop, and an actual overlapping or stale candidate conflict must stop with a concrete report
+- an associated OpenCode session resumed in a `startup` workspace receives `resume.context.workflow_policy`; follow it as active agent policy: a shared dirty worktree and concurrent stages are expected, stages do not own files or commits, and ready work should be captured promptly into an explicit candidate; prefer an `exact` candidate when safely separable, use `shared_foundation` when several stages use one coherent change, and use `integration` when intertwined changes form one reviewable and testable result; mixed provenance and complete files containing unrelated stage work are not reasons to require prior commits or stop; stop only for a concrete patch conflict, an incoherent candidate boundary, or failed required verification
 - standard-mode and unassociated core sessions do not receive startup policy; retain the existing conservative worktree behavior there
 - after presenting the summary, continue work immediately when `resume.next_action` is `start_work`; do not ask for generic confirmation
 - a stage may require confirmation only with an exact standalone `RESUME_CONFIRMATION: required` line in its saved prompt; when `resume.next_action` is `await_confirmation`, present the summary and wait before inspecting or modifying application code
@@ -117,7 +117,7 @@ Supported syntax:
 - `stage reopen <workspace> <stage> "reason"` applies only to a completed stage, preserves its result and completion history, records the reason, changes it to `in_progress`, and does not start a session or affect downstream stages; use an explicit separate-session `resume` to work on it again
 - `stage restore <workspace> <stage> "reason"` applies only to an archived stage and restores its saved pre-archive status. New archives preserve that status; legacy archives restore to `in_progress`. It records the reason, preserves stage content and results, does not start a session, and requires explicit separate-session `resume` when restored to `planned` or `in_progress`.
 - `workspace reopen <workspace> "reason"` applies only to a completed workspace, changes it to `in_progress`, and records durable recovery history. Cancelled workspaces cannot be reopened.
-- candidate operations require `startup` workflow mode and store metadata and patch payloads only under `.work-context/local/`; capture requires exactly one explicit list of complete paths or one Git unified patch and never infers stage ownership; commit requires a ready candidate, uses its stored message unless a non-empty override is supplied, serializes Git publication, bypasses hooks and signing, and never uses the ordinary Git index
+- candidate operations require `startup` workflow mode and store metadata and patch payloads only under `.work-context/local/`; create accepts an optional strategy and related stages, which are normalized references for traceability only and never ownership or lifecycle; capture requires exactly one explicit list of complete paths or one Git unified patch and never infers stage ownership; commit requires a ready candidate, uses its stored message unless a non-empty override is supplied, serializes Git publication, bypasses hooks and signing, and never uses the ordinary Git index
 - `knowledge list|add|update|supersede <workspace> ...`
 
 Arguments: $ARGUMENTS

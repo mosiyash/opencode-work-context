@@ -249,8 +249,9 @@ test("resume exposes startup policy only to associated OpenCode sessions", () =>
     assert.equal(associated.data.resume.context.workflow_policy.mode, "startup");
     assert.match(associated.data.resume.instruction, /shared dirty worktree and concurrent stages are expected/i);
     assert.match(associated.data.resume.instruction, /Capture ready work promptly/);
-    assert.match(associated.data.resume.instruction, /Mixed-stage provenance alone is not a reason to stop/);
-    assert.match(associated.data.resume.instruction, /overlapping or stale candidate conflict/);
+    assert.match(associated.data.resume.instruction, /exact candidate.*shared foundation candidate.*integration candidate/);
+    assert.match(associated.data.resume.instruction, /complete files containing unrelated stage work are not reasons to stop/);
+    assert.match(associated.data.resume.instruction, /concrete patch conflict.*incoherent candidate boundary.*failed required verification/);
 
     context.createWorkspace("Standard policy", { workspace: "999963", sessionId: "standard-planning" });
     context.handoff("999963", "01", "standard-planning");

@@ -34,8 +34,9 @@ const startupWorkflowPolicy = () => ({
   guidance: [
     "A shared dirty worktree and concurrent stages are expected; stages do not own files or commits.",
     "Capture ready work promptly as an explicit commit candidate while unrelated work remains in progress.",
-    "Mixed-stage provenance alone is not a reason to stop; do not reconstruct ownership after the fact.",
-    "Stop only for a concrete overlapping or stale candidate conflict, and report that conflict explicitly.",
+    "Choose an exact candidate when separable, a shared foundation candidate when several stages use one change, or an integration candidate when intertwined changes form one coherent reviewable result.",
+    "Mixed-stage provenance or complete files containing unrelated stage work are not reasons to stop, require prior commits, or reconstruct ownership after the fact.",
+    "Stop only for a concrete patch conflict, an incoherent candidate boundary, or failed required verification, and report it explicitly.",
   ],
 });
 const startupWorkflowInstruction = (policy) => policy ? `\n\nStartup workflow policy:\n${policy.guidance.map((item) => `- ${item}`).join("\n")}` : "";
@@ -282,8 +283,8 @@ export class WorkContext {
 
   candidates() { return new CandidateStore(this); }
 
-  createCandidate(workspace, title, message = null) {
-    return this.transact("candidate-create", () => this.result(this.candidates().create(workspace, title, message), ["local:candidates"]));
+  createCandidate(workspace, title, message = null, options = {}) {
+    return this.transact("candidate-create", () => this.result(this.candidates().create(workspace, title, message, options), ["local:candidates"]));
   }
 
   listCandidates(workspace) { return { ok: true, data: this.candidates().list(workspace) }; }
@@ -743,7 +744,7 @@ export class WorkContext {
     return this.result({
       command,
       syntax: "/wc [create|list|workspace list|workspace rename|workspace mode|candidate create|candidate capture|candidate preview|candidate show|candidate list|candidate ready|candidate commit|candidate discard|workspace finish|workspace reopen|resume|stage add|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
-       note: "associated OpenCode sessions in startup-mode workspaces receive the shared-worktree and commit-candidate policy on resume; standard mode remains conservative; commit candidates are local-only and require startup workflow mode; capture and commit use isolated Git indexes and never alter the ordinary index; candidate commit uses the stored message unless an explicit non-empty override is provided, and bypasses Git hooks and signing; stage finish requires an explicit user lifecycle request unless the Planning-stage prompt contains the exact line AUTO_STAGE_FINISH: allowed; stage reopen requires a completed stage and a reason; stage restore requires an archived stage and a reason, returns its saved pre-archive status (or in_progress for legacy archives), and requires explicit separate-session resume when actionable; workspace reopen requires a completed workspace and a reason.",
+       note: "associated OpenCode sessions in startup-mode workspaces receive the shared-worktree and commit-candidate policy on resume; standard mode remains conservative; candidate strategies are exact, shared_foundation, and integration, with optional related stage references for traceability only; commit candidates are local-only and require startup workflow mode; capture and commit use isolated Git indexes and never alter the ordinary index; candidate commit uses the stored message unless an explicit non-empty override is provided, and bypasses Git hooks and signing; stage finish requires an explicit user lifecycle request unless the Planning-stage prompt contains the exact line AUTO_STAGE_FINISH: allowed; stage reopen requires a completed stage and a reason; stage restore requires an archived stage and a reason, returns its saved pre-archive status (or in_progress for legacy archives), and requires explicit separate-session resume when actionable; workspace reopen requires a completed workspace and a reason.",
     }, []);
   }
 

@@ -25,9 +25,13 @@ startup workspace receive a concise policy on resume:
 - shared dirty state and concurrent stages are expected;
 - stages do not own files or commits;
 - ready work is captured promptly into an explicit commit candidate;
-- mixed-stage provenance is not itself a blocker;
-- concrete overlapping or stale candidate patches stop publication with a
-  stable conflict.
+- exact candidates are preferred when a patch is safely separable, shared
+  foundation candidates represent one change used by several stages, and
+  integration candidates represent intertwined but coherent changes;
+- mixed-stage provenance and complete files containing unrelated stage work do
+  not require prior commits and are not themselves blockers;
+- concrete patch conflicts, incoherent candidate boundaries, and failed required
+  verification stop publication.
 
 An unassociated core session does not receive agent policy, and standard mode
 retains its conservative behavior.
@@ -40,6 +44,14 @@ with compare-and-swap semantics. Candidate/Git operations are serialized.
 Hooks and signing are deliberately bypassed because publication uses
 `git commit-tree`.
 
+New candidates record a strategy of `exact`, `shared_foundation`, or
+`integration` and may reference multiple stages in the same workspace. Stage
+references are normalized and validated, but are traceability only. They do not
+assign ownership, alter lifecycle or dependency checks, or affect patch capture
+and publication. Relations are never inferred from Git history, session history,
+touched files, or diffs. Candidate metadata written before these fields existed
+remains readable without migration.
+
 Read-only snapshots expose only pending and ready candidate counts. The stages
 sidebar may render those counts when nonzero. Renderers do not read Git state,
 candidate patches, selected paths, or candidate metadata files directly. A
@@ -50,6 +62,9 @@ ready count represents lifecycle state, not current applicability.
 - A ready subset can be committed while unrelated working-tree WIP continues.
 - Agents no longer need to infer retrospective stage ownership before forming a
   commit.
+- Shared foundations and coherent integration changes can be named explicitly
+  and traced to several related stages without coupling commit and stage
+  boundaries.
 - Candidate conflicts are concrete patch/application failures instead of
   provenance guesses.
 - Candidate payloads remain local and may differ between machines.
@@ -57,6 +72,9 @@ ready count represents lifecycle state, not current applicability.
   deliberately.
 - Candidate publication bypasses repository hooks and commit signing, which is
   explicit in the command and documentation contract.
+- Edits to identical lines cannot be retrospectively separated by stage. An
+  integration candidate must include the coherent combined result, or
+  publication must wait for a safe boundary.
 
 ## Alternatives considered
 

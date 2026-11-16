@@ -78,6 +78,8 @@ test("resume tool exposes startup policy without changing standard-mode instruct
     const startup = JSON.parse((await tools.work_context_start_session.execute({ workspace: "999909", stage: "01" }, executeContext)).output);
     assert.equal(startup.data.resume.context.workflow_policy.mode, "startup");
     assert.match(startup.data.resume.instruction, /stages do not own files or commits/);
+    assert.match(startup.data.resume.instruction, /shared foundation candidate/);
+    assert.match(startup.data.resume.instruction, /complete files containing unrelated stage work are not reasons to stop/);
     context.handoff("999909", "01", startup.data.session_id);
 
     const standard = JSON.parse((await tools.work_context_start_session.execute({ workspace: "999910", stage: "01" }, executeContext)).output);

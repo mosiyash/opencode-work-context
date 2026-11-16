@@ -135,6 +135,35 @@ test("binary path capture and malformed or stale candidate data fail with stable
   } finally { cleanup(root); }
 });
 
+test("candidate strategy and related stages are normalized, validated, and preserve legacy records", () => {
+  const root = makeRepository();
+  try {
+    const context = openStartup(root);
+    context.addStage("999901", "Second stage", { prompt: "Continue the shared change." });
+    const shared = context.createCandidate("999901", "Shared foundation", null, { strategy: "shared_foundation", relatedStages: ["1", "02"] }).data;
+    assert.equal(shared.strategy, "shared_foundation");
+    assert.deepEqual(shared.related_stages, ["01", "02"]);
+    assert.deepEqual(context.listCandidates("999901").data[0].related_stages, ["01", "02"]);
+
+    assert.throws(() => context.createCandidate("999901", "Invalid strategy", null, { strategy: "shared" }), (error) => error.code === ERROR_CODES.INVALID_ARGUMENT);
+    assert.throws(() => context.createCandidate("999901", "Duplicate stages", null, { relatedStages: ["1", "01"] }), (error) => error.code === ERROR_CODES.INVALID_ARGUMENT);
+    assert.throws(() => context.createCandidate("999901", "Malformed stage", null, { relatedStages: ["stage-1"] }), (error) => error.code === ERROR_CODES.INVALID_ARGUMENT);
+
+    const foreign = WorkContext.open(root, { actor: "test" });
+    foreign.createWorkspace("Foreign workspace", { workspace: "999902", sessionId: "foreign", mode: "startup" });
+    foreign.addStage("999902", "Foreign second stage", { prompt: "Foreign work." });
+    foreign.addStage("999902", "Foreign third stage", { prompt: "Foreign work." });
+    assert.throws(() => context.createCandidate("999901", "Foreign stage", null, { relatedStages: ["03"] }), (error) => error.code === ERROR_CODES.NOT_FOUND);
+
+    const file = path.join(root, ".work-context", "local", "candidates", `${shared.candidate}.json`);
+    const legacy = JSON.parse(fs.readFileSync(file, "utf8"));
+    delete legacy.strategy;
+    delete legacy.related_stages;
+    fs.writeFileSync(file, `${JSON.stringify(legacy, null, 2)}\n`);
+    assert.equal(context.showCandidate("999901", shared.candidate).data.strategy, undefined);
+  } finally { cleanup(root); }
+});
+
 test("path capture supports renames and preview reports a changed HEAD", () => {
   const root = makeRepository();
   try {
@@ -167,19 +196,26 @@ test("candidate creation reports repositories without Git or HEAD", () => {
   } finally { cleanup(root); }
 });
 
-test("structured candidate tools expose the local lifecycle", async () => {
+test("structured candidate tools expose strategy and stage traceability through the local lifecycle", async () => {
   const root = makeRepository();
   try {
     openStartup(root);
+    const context = WorkContext.open(root, { actor: "test" });
+    context.addStage("999901", "Tool stage", { prompt: "Test candidate traceability." });
     fs.writeFileSync(path.join(root, "app.txt"), "tool capture\n");
     const toolContext = { directory: root, worktree: root, sessionID: "tool-session", metadata: async () => {} };
-    const created = JSON.parse((await tools.work_context_create_candidate.execute({ workspace: "999901", title: "Tool candidate" }, toolContext)).output);
+    const created = JSON.parse((await tools.work_context_create_candidate.execute({ workspace: "999901", title: "Tool candidate", strategy: "integration", relatedStages: ["1", "2"] }, toolContext)).output);
     const captured = JSON.parse((await tools.work_context_capture_candidate.execute({ workspace: "999901", candidateId: created.data.candidate, paths: ["app.txt"] }, toolContext)).output);
     const ready = JSON.parse((await tools.work_context_ready_candidate.execute({ workspace: "999901", candidateId: created.data.candidate }, toolContext)).output);
 
     assert.equal(created.ok, true);
+    assert.equal(created.data.strategy, "integration");
+    assert.deepEqual(created.data.related_stages, ["01", "02"]);
     assert.match(captured.data.patch, /tool capture/);
     assert.equal(ready.data.status, "ready");
+    assert.equal(JSON.parse((await tools.work_context_preview_candidate.execute({ workspace: "999901", candidateId: created.data.candidate }, toolContext)).output).data.candidate.strategy, "integration");
+    assert.equal(JSON.parse((await tools.work_context_show_candidate.execute({ workspace: "999901", candidateId: created.data.candidate }, toolContext)).output).data.strategy, "integration");
+    assert.equal(JSON.parse((await tools.work_context_list_candidates.execute({ workspace: "999901" }, toolContext)).output).data[0].strategy, "integration");
   } finally { cleanup(root); }
 });
 
@@ -239,6 +275,34 @@ test("candidate A commits while unrelated B work continues as WIP", () => {
     assert.equal(fs.existsSync(hookMarker), false);
     assert.equal(git(root, ["log", "-1", "--format=%G?"]).trim(), "N");
     assert.throws(() => context.discardCandidate("999901", candidate), (error) => error.code === ERROR_CODES.INVALID_STATE);
+  } finally { cleanup(root); }
+});
+
+test("integration candidate commits coherent overlapping-stage work without lifecycle or index changes", () => {
+  const root = makeRepository();
+  try {
+    const context = openStartup(root);
+    context.addStage("999901", "Concurrent stage", { prompt: "Continue the integrated change." });
+    const stageStatuses = context.listStages("999901").data.stages.map(({ stage, status }) => ({ stage, status }));
+    fs.writeFileSync(path.join(root, "app.txt"), "stage one\nshared result\nstage two\n");
+    fs.writeFileSync(path.join(root, "shared.txt"), "coherent foundation\n");
+    fs.writeFileSync(path.join(root, "wip.txt"), "unrelated work\n");
+    fs.writeFileSync(path.join(root, "indexed.txt"), "ordinary index\n");
+    git(root, ["add", "indexed.txt"]);
+    const indexBefore = fs.readFileSync(path.join(root, ".git", "index"));
+
+    const candidate = context.createCandidate("999901", "Integrated result", null, { strategy: "integration", relatedStages: ["01", "02"] }).data;
+    context.captureCandidate("999901", candidate.candidate, { paths: ["app.txt", "shared.txt"] });
+    context.readyCandidate("999901", candidate.candidate);
+    const committed = context.commitCandidate("999901", candidate.candidate).data;
+
+    assert.equal(committed.strategy, "integration");
+    assert.deepEqual(committed.related_stages, ["01", "02"]);
+    assert.equal(git(root, ["show", "HEAD:app.txt"]), "stage one\nshared result\nstage two\n");
+    assert.equal(git(root, ["show", "HEAD:shared.txt"]), "coherent foundation\n");
+    assert.match(git(root, ["status", "--short", "--", "wip.txt"]), /^\?\? wip\.txt/);
+    assert.deepEqual(fs.readFileSync(path.join(root, ".git", "index")), indexBefore);
+    assert.deepEqual(context.listStages("999901").data.stages.map(({ stage, status }) => ({ stage, status })), stageStatuses);
   } finally { cleanup(root); }
 });
 
