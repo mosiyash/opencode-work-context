@@ -16,6 +16,7 @@ const activeControllers = new WeakMap();
 const PRIORITY = { idle: 1, question: 2, permission: 3, error: 4 };
 const REASON_TEXT = { idle: "response complete", question: "question", permission: "permission", error: "error" };
 const REASON_MARKER = { idle: "✓", question: "?", permission: "!", error: "x" };
+const REASON_SIGNAL = { idle: "✓", question: "?", permission: "!", error: "×" };
 const EVENT_TYPES = [
   "session.status",
   "session.idle",
@@ -75,6 +76,21 @@ export const attentionReasonText = (reason) => REASON_TEXT[reason] || "attention
 export const attentionIndicatorText = (attention) => attention
   ? `[${REASON_MARKER[attention.reason] || "!"} ${attentionReasonText(attention.reason)}${attention.count > 1 ? ` x${attention.count}` : ""}]`
   : "";
+export const attentionSignalText = (attention, { alwaysCount = false } = {}) => attention
+  ? `${REASON_SIGNAL[attention.reason] || "!"}${alwaysCount || attention.count > 1 ? attention.count : ""}`
+  : "";
+export const attentionSummaryText = (attention, options = {}) => {
+  if (!attention) return "";
+  if (!attention.items?.length) return attentionSignalText(attention, options);
+  const counts = attention.items.reduce((summary, item) => {
+    summary[item.reason] = (summary[item.reason] || 0) + 1;
+    return summary;
+  }, {});
+  return ["error", "permission", "question", "idle"]
+    .filter((reason) => counts[reason])
+    .map((reason) => attentionSignalText({ reason, count: counts[reason] }, options))
+    .join(" ");
+};
 export const globalAttentionToast = (event) => {
   const context = [event?.projectTitle, event?.workspaceTitle, event?.stageTitle].filter(Boolean).join(" / ");
   return {

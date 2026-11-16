@@ -5,7 +5,7 @@ import { contextFor, titleFor } from "../src/opencode-adapter.js";
 import { renderDependencyTree, renderStagesPanel } from "../src/stages-renderer.js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createSignal } from "solid-js";
-import { attentionIndicatorText } from "./attention.js";
+import { attentionSummaryText } from "./attention.js";
 import { createStageSwitcherFlow } from "./stage-switcher.js";
 import { readTuiState, updateTuiState } from "./tui-state.js";
 
@@ -42,28 +42,22 @@ const candidateSummaryText = (workspace) => workspace.candidates && (workspace.c
 export { readStagesSnapshot, renderStagesPanel };
 
 const defaultRuntime = { jsx };
-const renderAttentionText = (value, indicator, runtime) => {
-  if (!indicator) return value;
-  const parts = value.split(indicator);
-  return parts.length === 1 ? value : parts.flatMap((part, index) => index
-    ? [runtime.jsx("b", { children: indicator }), part]
-    : [part]).filter(Boolean);
-};
-
-const renderStagesContent = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect, activityFrame = () => LOADER_FRAMES[0]) => !result?.ok || !result.data?.workspace
-  ? [
+const renderStagesContent = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect, activityFrame = () => LOADER_FRAMES[0]) => {
+  if (!result?.ok || !result.data?.workspace) return [
     runtime.jsx("text", { children: runtime.jsx("b", { children: "Stages" }) }),
     ...renderStagesPanel(result).split("\n").slice(1).map((line) => runtime.jsx("text", { children: line })),
-  ]
-  : [
+  ];
+  const workspaceAttention = attentionSummaryText(attention?.attentionForWorkspace?.(result.data.workspace.id), { alwaysCount: true });
+  return [
     runtime.jsx("box", {
       marginBottom: 1,
       flexDirection: "column",
       children: [
-        runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: `${attentionIndicatorText(attention?.attentionForWorkspace?.(result.data.workspace.id))} ${result.data.workspace.title}`.trim() }) }),
+        runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: result.data.workspace.title }) }),
         runtime.jsx("text", { fg: theme?.current?.textMuted, children: `Workflow · ${result.data.workspace.mode || "standard"}` }),
+        workspaceAttention && runtime.jsx("text", { children: ["Attention · ", runtime.jsx("b", { children: workspaceAttention })] }),
         candidateSummaryText(result.data.workspace) && runtime.jsx("text", { fg: theme?.current?.textMuted, children: candidateSummaryText(result.data.workspace) }),
-      ],
+      ].filter(Boolean),
     }),
     runtime.jsx("box", {
       flexDirection: "row",
@@ -79,11 +73,10 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
         stage.tracker_links?.length && `Tasks: ${stage.tracker_links.map(trackerLinkText).join(", ")}`,
         stage.depends_on?.length && `Deps: ${stage.depends_on.join(", ")}`,
       ].filter(Boolean).join(" · ") : "";
-      const attentionText = attentionIndicatorText(unread);
+      const attentionSignal = attentionSummaryText(unread);
       const stageText = [
         `${stage.id}. ${stage.title}`,
         metadata,
-        attentionText,
       ].filter(Boolean).join("\n");
       return runtime.jsx("box", {
         flexDirection: "row",
@@ -92,13 +85,19 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
           return onStageSelect?.(stage);
         },
         children: [
-          working && runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: theme?.current?.warning, children: activityFrame() }),
+          runtime.jsx("text", {
+            flexShrink: 0,
+            marginRight: 1,
+            fg: working || stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted,
+            children: working ? activityFrame() : attentionSignal ? runtime.jsx("b", { children: attentionSignal }) : " ",
+          }),
           runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
-          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: renderAttentionText(stageText, attentionText, runtime) }),
-        ].filter(Boolean),
+          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: stageText }),
+        ],
       });
     }),
   ];
+};
 
 export const renderStagesElement = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect, activityFrame) => {
   return runtime.jsx("box", {

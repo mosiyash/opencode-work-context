@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { attentionForSession, attentionIndicatorText, createAttentionEngine, createAttentionTuiController, createPendingNavigationTracker, globalAttentionToast, normalizeAttentionEvent, openAttentionDestination, tui } from "../plugin/attention.js";
+import { attentionForSession, attentionIndicatorText, attentionSignalText, attentionSummaryText, createAttentionEngine, createAttentionTuiController, createPendingNavigationTracker, globalAttentionToast, normalizeAttentionEvent, openAttentionDestination, tui } from "../plugin/attention.js";
 import { createGlobalAttentionChannel } from "../plugin/global-attention.js";
 import { createTuiFocusTracker } from "../plugin/tui-focus.js";
 import { readTuiState, updateTuiState } from "../plugin/tui-state.js";
@@ -60,6 +60,22 @@ test("attention indicators retain a reason label and distinct compact marker", (
   assert.equal(attentionIndicatorText({ reason: "permission", count: 1 }), "[! permission]");
   assert.equal(attentionIndicatorText({ reason: "error", count: 3 }), "[x error x3]");
   assert.equal(attentionIndicatorText({ reason: "unknown", count: 1 }), "[! attention]");
+});
+
+test("compact attention signals group mixed reasons by priority", () => {
+  assert.equal(attentionSignalText({ reason: "idle", count: 1 }), "✓");
+  assert.equal(attentionSignalText({ reason: "question", count: 2 }), "?2");
+  assert.equal(attentionSignalText({ reason: "permission", count: 1 }), "!");
+  assert.equal(attentionSignalText({ reason: "error", count: 3 }), "×3");
+  assert.equal(attentionSummaryText({ count: 7, reason: "error", items: [
+    { sessionId: "error", reason: "error" },
+    { sessionId: "permission-1", reason: "permission" },
+    { sessionId: "permission-2", reason: "permission" },
+    { sessionId: "question", reason: "question" },
+    { sessionId: "idle-1", reason: "idle" },
+    { sessionId: "idle-2", reason: "idle" },
+    { sessionId: "idle-3", reason: "idle" },
+  ] }, { alwaysCount: true }), "×1 !2 ?1 ✓3");
 });
 
 test("duplicate delivery and lower-priority signals do not replace attention", () => {

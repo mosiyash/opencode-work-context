@@ -324,7 +324,7 @@ test("renderer keeps workspace context separate and lets long titles wrap", () =
   assert.doesNotMatch(output, /A description that is deliberately/);
 });
 
-test("sidebar renders reason-specific attention markers in bold on a separate line", () => {
+test("sidebar renders a compact attention signal before the lifecycle marker", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const element = renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
@@ -332,14 +332,15 @@ test("sidebar renders reason-specific attention markers in bold on a separate li
   } }, {}, runtime, {
     attentionForStage: () => ({ count: 1, reason: "permission" }),
   });
-  const stageText = element.props.children()[2].props.children[1];
+  const row = element.props.children()[2];
 
-  assert.equal(stageText.props.children[1].type, "b");
-  assert.equal(stageText.props.children[1].props.children, "[! permission]");
-  assert.match(stageText.props.children[0], /\n$/);
+  assert.equal(row.props.children[0].props.children.type, "b");
+  assert.equal(row.props.children[0].props.children.props.children, "!");
+  assert.equal(row.props.children[1].props.children, "[ ]");
+  assert.equal(row.props.children[2].props.children, "01. Test: review needed");
 });
 
-test("sidebar renders a live loader beside the preserved lifecycle marker and attention", () => {
+test("sidebar loader takes the signal column while preserving lifecycle and unread attention", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const element = renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
@@ -351,7 +352,37 @@ test("sidebar renders a live loader beside the preserved lifecycle marker and at
   }, true, undefined, () => "⠙");
   const row = element.props.children()[2];
   assert.deepEqual(row.props.children.slice(0, 2).map((child) => child.props.children), ["⠙", "[•]"]);
-  assert.match(renderedText(row), /Working[\s\S]*\[\? question x2\]/);
+  assert.equal(row.props.children[2].props.children, "01. Working");
+
+  const waiting = renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress" },
+    stages: [{ id: "01", title: "Working", status: "in_progress", current: true, depends_on: [] }],
+    currentStage: "01",
+  } }, {}, runtime, {
+    activityForStage: () => null,
+    attentionForStage: () => ({ count: 2, reason: "question" }),
+  });
+  assert.equal(waiting.props.children()[2].props.children[0].props.children.props.children, "?2");
+});
+
+test("sidebar keeps workspace title clean and renders a grouped attention summary", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const output = renderedText(renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "B2B platform", status: "in_progress", mode: "startup" },
+    stages: [],
+  } }, {}, runtime, {
+    attentionForWorkspace: () => ({ count: 7, reason: "error", items: [
+      { sessionId: "error", reason: "error" },
+      { sessionId: "permission-1", reason: "permission" },
+      { sessionId: "permission-2", reason: "permission" },
+      { sessionId: "question", reason: "question" },
+      { sessionId: "idle-1", reason: "idle" },
+      { sessionId: "idle-2", reason: "idle" },
+      { sessionId: "idle-3", reason: "idle" },
+    ] }),
+  }));
+  assert.match(output, /^B2B platform\s+Workflow · startup\s+Attention ·\s+×1 !2 \?1 ✓3\s+Stages/);
+  assert.doesNotMatch(output, /^\[/);
 });
 
 test("native sidebar renders the workflow mode below the workspace title", () => {
@@ -1430,7 +1461,7 @@ test("sidebar and modal render attention without theme color support", async () 
     id: "000001", title: "Demo", status: "in_progress", stages: [{ id: "02", title: "Build", status: "in_progress" }],
     sessions: [{ stage: "02", session_id: "internal", opencode_session_id: "oc-unread", state: "active" }],
   }], stages: [{ id: "02", title: "Build", status: "in_progress" }], currentStage: "02" } };
-  assert.match(renderedText(renderStagesElement(snapshot, {}, runtime, attention)), /\[! permission\][\s\S]*\[! permission\]/);
+  assert.match(renderedText(renderStagesElement(snapshot, {}, runtime, attention)), /Attention ·\s+!1[\s\S]*! \[•\] 02\. Build/);
 
   const controller = createWorkContextModalController({ read: async () => snapshot, attention });
   try {

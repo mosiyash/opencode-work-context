@@ -37,10 +37,13 @@ does not copy A's state, acknowledge A's marker, or attempt navigation to A's
 server. Restored state and duplicate host events do not publish new events. If
 the channel is unavailable, foreground detection falls back to renderer state.
 
-Persistent attention presentation uses a compact reason-specific marker with a
-text label: response complete, question, permission, or error. Aggregated stage
-and workspace markers include the number of distinct affected native sessions.
-The symbols improve scanning, but meaning never depends on color or a glyph.
+Persistent attention presentation uses a reason-specific marker with a text label
+in modals and switchers: response complete, question, permission, or error. The
+stages sidebar instead reserves one compact signal column before the lifecycle
+marker: `✓`, `?`, `!`, or `×`, with a numeric count when needed. The workspace
+header keeps its title clean and renders a separate grouped summary such as
+`Attention · ×1 !2 ?1 ✓3`. The symbols improve scanning, but detailed views keep
+the textual reason so meaning never depends only on color or a glyph.
 
 Live activity is a separate ephemeral projection keyed by native OpenCode
 session ID. Only live `session.status` `busy` or `retry` events enter the working

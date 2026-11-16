@@ -326,13 +326,16 @@ disable this TUI loader; the package does not use an internal keymap fallback.
 The optional TUI loader tracks linked OpenCode sessions that need attention.
 Questions, permission requests, errors, and a background session becoming idle
 after observed work remain marked until that native session is opened. Compact
-markers retain both a symbol and a textual reason: `[✓ response complete]`,
-`[? question]`, `[! permission]`, or `[x error]`. Aggregated markers append an
-`xN` session count. Attention does not change workspace or stage lifecycle state.
+markers retain both a symbol and a textual reason in modals and switchers:
+`[✓ response complete]`, `[? question]`, `[! permission]`, or `[x error]`.
+The compact stages sidebar uses a dedicated signal column with `✓`, `?`, `!`,
+or `×` and appends a numeric count when needed. Its workspace header groups
+mixed unread reasons by priority, for example `Attention · ×1 !2 ?1 ✓3`.
+Attention does not change workspace or stage lifecycle state.
 
 The stages sidebar separately observes live `busy` and `retry` events for active
-OpenCode sessions mapped to visible work-context stages. A braille loader appears
-beside the lifecycle marker while any such session is working and stops on idle,
+OpenCode sessions mapped to visible work-context stages. A braille loader uses
+the signal column before the lifecycle marker while any such session is working and stops on idle,
 question, permission, or error events. This live state is never persisted or
 inferred from stage status, historical sessions, or unread attention, so startup
 and missed mappings fail closed without a stale loader.
