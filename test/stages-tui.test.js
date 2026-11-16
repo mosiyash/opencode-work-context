@@ -324,7 +324,7 @@ test("renderer keeps workspace context separate and lets long titles wrap", () =
   assert.doesNotMatch(output, /A description that is deliberately/);
 });
 
-test("sidebar renders ATTN markers in bold on a separate line", () => {
+test("sidebar renders reason-specific attention markers in bold on a separate line", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const element = renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
@@ -335,8 +335,23 @@ test("sidebar renders ATTN markers in bold on a separate line", () => {
   const stageText = element.props.children()[2].props.children[1];
 
   assert.equal(stageText.props.children[1].type, "b");
-  assert.equal(stageText.props.children[1].props.children, "[ATTN: permission]");
+  assert.equal(stageText.props.children[1].props.children, "[! permission]");
   assert.match(stageText.props.children[0], /\n$/);
+});
+
+test("sidebar renders a live loader beside the preserved lifecycle marker and attention", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const element = renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress" },
+    stages: [{ id: "01", title: "Working", status: "in_progress", current: true, depends_on: [] }],
+    currentStage: "01",
+  } }, {}, runtime, {
+    activityForStage: () => ({ count: 2, items: [] }),
+    attentionForStage: () => ({ count: 2, reason: "question" }),
+  }, true, undefined, () => "⠙");
+  const row = element.props.children()[2];
+  assert.deepEqual(row.props.children.slice(0, 2).map((child) => child.props.children), ["⠙", "[•]"]);
+  assert.match(renderedText(row), /Working[\s\S]*\[\? question x2\]/);
 });
 
 test("native sidebar renders the workflow mode below the workspace title", () => {
@@ -375,7 +390,7 @@ test("sidebar omits attention linked only to an archived stage", async () => {
       workspace: { id: "000001", title: "Demo", status: "in_progress" },
       stages: [{ id: "01", title: "Visible", status: "in_progress", depends_on: [] }],
     } }, {}, runtime, controller);
-    assert.doesNotMatch(renderedText(rendered), /\[ATTN/);
+    assert.doesNotMatch(renderedText(rendered), /question/);
   } finally { controller.dispose(); removeRoot(root); }
 });
 
@@ -600,6 +615,7 @@ test("TUI performs an initial load and refreshes after session.updated with debo
 
 test("TUI refreshes immediately after a work-context tool completes", async () => {
   const calls = [];
+  let attentionRefreshes = 0;
   const handlers = new Map();
   const api = {
     state: { path: { worktree: makeRoot() } },
@@ -607,6 +623,7 @@ test("TUI refreshes immediately after a work-context tool completes", async () =
     slots: { register: () => () => {} },
     event: { on: (name, callback) => { handlers.set(name, callback); return () => {}; } },
     lifecycle: { onDispose: () => () => {} },
+    workContextAttention: { refresh: async () => { attentionRefreshes += 1; } },
     stagesSnapshotProvider: async ({ sessionId }) => {
       calls.push(sessionId);
       return { ok: true, data: { workspace: { id: "000001" }, stages: [], currentStage: null } };
@@ -619,6 +636,7 @@ test("TUI refreshes immediately after a work-context tool completes", async () =
     } } });
     await new Promise((resolve) => setTimeout(resolve, 180));
     assert.deepEqual(calls, ["oc-1", "oc-1"]);
+    assert.equal(attentionRefreshes, 1);
   } finally { removeRoot(api.state.path.worktree); }
 });
 
@@ -660,12 +678,14 @@ test("TUI refreshes when canonical work-context storage changes", async () => {
   const context = WorkContext.open(root, { actor: "test" });
   context.createWorkspace("Watched workspace", { workspace: "999979", sessionId: "oc-1" });
   let reads = 0;
+  let attentionRefreshes = 0;
   const api = {
     state: { path: { worktree: root } },
     route: { current: { name: "session", params: { sessionID: "oc-1" } } },
     slots: { register: () => () => {} },
     event: { on: () => () => {} },
     lifecycle: { onDispose: () => () => {} },
+    workContextAttention: { refresh: async () => { attentionRefreshes += 1; } },
     stagesSnapshotProvider: async () => {
       reads += 1;
       return { ok: true, data: { workspace: { id: "999979" }, stages: [], currentStage: null } };
@@ -676,6 +696,7 @@ test("TUI refreshes when canonical work-context storage changes", async () => {
     context.addStage("999979", "Watched stage");
     await new Promise((resolve) => setTimeout(resolve, 220));
     assert.equal(reads >= 2, true);
+    assert.equal(attentionRefreshes >= 1, true);
   } finally { removeRoot(root); }
 });
 
@@ -732,6 +753,48 @@ test("controller invalidates reactive slot reads after an asynchronous refresh",
   await first;
   assert.equal(controller.resultFor("oc-1").data.workspace.id, "000001");
   controller.dispose();
+});
+
+test("controller runs one bounded loader timer only while a visible stage is working", async () => {
+  let listener;
+  let working = true;
+  let timerCallback;
+  let starts = 0;
+  let clears = 0;
+  const attention = {
+    subscribe: (callback) => { listener = callback; return () => {}; },
+    activityForStage: () => working ? { count: 1, items: [] } : null,
+  };
+  const controller = createStagesTuiController({
+    projectRoot: "/tmp/project",
+    loaderMs: 80,
+    loaderClock: {
+      setInterval: (callback) => { starts += 1; timerCallback = callback; return 42; },
+      clearInterval: (timer) => { assert.equal(timer, 42); clears += 1; },
+    },
+    attention,
+    read: async () => ({ ok: true, data: {
+      workspace: { id: "000001" },
+      stages: [{ id: "01", status: "in_progress" }],
+    } }),
+  });
+  await controller.load("oc-visible");
+  controller.resultFor("oc-visible");
+  assert.equal(starts, 1);
+  const initial = controller.activityFrame();
+  timerCallback();
+  assert.notEqual(controller.activityFrame(), initial);
+  listener();
+  assert.equal(starts, 1);
+  working = false;
+  listener();
+  assert.equal(clears, 1);
+  assert.equal(controller.activityFrame(), "⠋");
+  working = true;
+  listener();
+  assert.equal(starts, 2);
+  controller.dispose();
+  assert.equal(clears, 2);
 });
 
 test("package exports preserve server and TUI plugin entry points", async () => {
@@ -1106,7 +1169,7 @@ test("session switcher renders a color-independent attention marker and controll
     { stage: "01", ordinal: 1, session_id: "internal", opencode_session_id: "oc-unread", state: "active" },
   ] }] } }) });
   await flow.open();
-  assert.match(current.props.options[0].title, /^\[ATTN\]/);
+  assert.match(current.props.options[0].title, /^\[\? question\]/);
   assert.match(current.props.options[0].description, /needs attention: question/);
 });
 
@@ -1299,7 +1362,7 @@ test("stage switcher keeps current first and puts attention before ordinary dest
   } }) });
   await flow.open();
   assert.deepEqual(current.props.options.slice(0, 2).map((option) => option.category), ["Current", "Needs attention"]);
-  assert.match(current.props.options[1].title, /\[ATTN\].*03\. Unread/);
+  assert.match(current.props.options[1].title, /\[\? question\].*03\. Unread/);
   assert.match(current.props.options[1].description, /needs attention: question/);
 });
 
@@ -1367,14 +1430,14 @@ test("sidebar and modal render attention without theme color support", async () 
     id: "000001", title: "Demo", status: "in_progress", stages: [{ id: "02", title: "Build", status: "in_progress" }],
     sessions: [{ stage: "02", session_id: "internal", opencode_session_id: "oc-unread", state: "active" }],
   }], stages: [{ id: "02", title: "Build", status: "in_progress" }], currentStage: "02" } };
-  assert.match(renderedText(renderStagesElement(snapshot, {}, runtime, attention)), /\[ATTN\][\s\S]*\[ATTN: permission\]/);
+  assert.match(renderedText(renderStagesElement(snapshot, {}, runtime, attention)), /\[! permission\][\s\S]*\[! permission\]/);
 
   const controller = createWorkContextModalController({ read: async () => snapshot, attention });
   try {
     await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.match(renderedText(renderWorkContextModal(controller, {}, runtime)), /\[ATTN\].*\[ATTN: permission\]/);
+    assert.match(renderedText(renderWorkContextModal(controller, {}, runtime)), /\[! permission\].*\[! permission\]/);
     controller.handleKey({ key: "Enter" });
-    assert.match(renderedText(renderWorkContextModal(controller, {}, runtime)), /\[ATTN: permission\].*internal/);
+    assert.match(renderedText(renderWorkContextModal(controller, {}, runtime)), /\[! permission\].*internal/);
   } finally { controller.dispose(); }
 });
 

@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-04
-- Updated: 2026-11-05
+- Updated: 2026-11-16
 - Deciders: OpenCode
 
 ## Context
@@ -36,6 +36,21 @@ Project-local attention and acknowledgement remain authoritative. A toast in B
 does not copy A's state, acknowledge A's marker, or attempt navigation to A's
 server. Restored state and duplicate host events do not publish new events. If
 the channel is unavailable, foreground detection falls back to renderer state.
+
+Persistent attention presentation uses a compact reason-specific marker with a
+text label: response complete, question, permission, or error. Aggregated stage
+and workspace markers include the number of distinct affected native sessions.
+The symbols improve scanning, but meaning never depends on color or a glyph.
+
+Live activity is a separate ephemeral projection keyed by native OpenCode
+session ID. Only live `session.status` `busy` or `retry` events enter the working
+state. Idle, question, permission, and error events clear it. Aggregation accepts
+only distinct native IDs mapped to active sessions on visible stages; historical,
+archived, unknown, and unmapped sessions are excluded. The stages panel uses one
+bounded braille animation timer while a visible stage is working and disposes it
+when activity ends or the TUI unloads. Activity is not persisted or restored and
+is never inferred from lifecycle state, snapshots, unread attention, or generic
+session updates.
 
 A dependency-free notifier boundary delivers independently from the in-TUI
 channel, allowing attention to appear both in active OpenCode and in the system

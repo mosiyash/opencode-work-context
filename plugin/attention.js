@@ -15,6 +15,7 @@ const ACTIVE_ATTENTION_KEY = Symbol.for("opencode-work-context.attention");
 const activeControllers = new WeakMap();
 const PRIORITY = { idle: 1, question: 2, permission: 3, error: 4 };
 const REASON_TEXT = { idle: "response complete", question: "question", permission: "permission", error: "error" };
+const REASON_MARKER = { idle: "✓", question: "?", permission: "!", error: "x" };
 const EVENT_TYPES = [
   "session.status",
   "session.idle",
@@ -29,7 +30,8 @@ const stableHash = (parts) => createHash("sha256").update(parts.map((part) => St
 const eventBody = (event) => event?.properties || event?.data || {};
 const eventSessionId = (event) => {
   const body = eventBody(event);
-  return body.sessionID || body.sessionId || body.session_id || event?.sessionID || event?.sessionId || event?.session_id;
+  return body.sessionID || body.sessionId || body.session_id || body.info?.id || body.part?.sessionID
+    || event?.sessionID || event?.sessionId || event?.session_id;
 };
 const eventKey = (event, kind, cycle) => {
   const body = eventBody(event);
@@ -70,6 +72,9 @@ export const normalizeAttentionEvent = (event, cycle = 0) => {
 };
 
 export const attentionReasonText = (reason) => REASON_TEXT[reason] || "attention";
+export const attentionIndicatorText = (attention) => attention
+  ? `[${REASON_MARKER[attention.reason] || "!"} ${attentionReasonText(attention.reason)}${attention.count > 1 ? ` x${attention.count}` : ""}]`
+  : "";
 export const globalAttentionToast = (event) => {
   const context = [event?.projectTitle, event?.workspaceTitle, event?.stageTitle].filter(Boolean).join(" / ");
   return {
@@ -280,6 +285,8 @@ const visibleSessionRecords = (snapshot, sessionId) => (snapshot?.workspaces || 
     .filter((session) => session.opencode_session_id === sessionId && visibleStages.has(session.stage))
     .map((session) => ({ workspace, session }));
 });
+const activeVisibleSessionRecords = (snapshot, sessionId) => visibleSessionRecords(snapshot, sessionId)
+  .filter(({ session }) => session.state === "active");
 const notificationContexts = (snapshot, sessionId, reason) => {
   const contexts = [];
   const seen = new Set();
@@ -316,29 +323,85 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
   });
   let linked = new Set();
   let snapshot = null;
+  let activityMappingAvailable = false;
+  const activity = new Map();
+  const listeners = new Set();
   let disposed = false;
+  let refreshGeneration = 0;
+  let latestRefresh = Promise.resolve(false);
   let pending = Promise.resolve();
+  const notify = (change) => {
+    for (const listener of listeners) listener(change);
+  };
+  const unsubscribeEngine = engine.subscribe(notify);
+  const setActivity = (sessionId, status) => {
+    if (activity.get(sessionId) === status) return false;
+    activity.set(sessionId, status);
+    notify({ sessionId, activity: status });
+    return true;
+  };
+  const clearActivity = (sessionId) => {
+    if (!activity.delete(sessionId)) return false;
+    notify({ sessionId, activity: null });
+    return true;
+  };
+  const pruneActivity = () => {
+    for (const sessionId of activity.keys()) {
+      if (!activeVisibleSessionRecords(snapshot, sessionId).length) clearActivity(sessionId);
+    }
+  };
+  const clearAllActivity = () => {
+    for (const sessionId of [...activity.keys()]) clearActivity(sessionId);
+  };
   const acknowledgeObserved = (sessionId) => {
     const observedEventKey = engine.attentionFor(sessionId)?.eventKey;
     return observedEventKey ? engine.acknowledge(sessionId, observedEventKey) : false;
   };
-  const refresh = async () => {
-    try {
-      const result = await read({ projectRoot, sessionId: currentSessionId(api) });
-      if (result?.ok) {
-        linked = linkedSessionIds(result);
-        snapshot = result.data;
-        const current = currentSessionId(api);
-        if (isFocused() !== false && current && linked.has(current) && shouldAcknowledge(current) !== false) acknowledgeObserved(current);
+  const refresh = () => {
+    const generation = ++refreshGeneration;
+    const operation = (async () => {
+      try {
+        const result = await read({ projectRoot, sessionId: currentSessionId(api) });
+        if (disposed || generation !== refreshGeneration) return false;
+        if (result?.ok) {
+          linked = linkedSessionIds(result);
+          snapshot = result.data;
+          activityMappingAvailable = true;
+          pruneActivity();
+          const current = currentSessionId(api);
+          if (isFocused() !== false && current && linked.has(current) && shouldAcknowledge(current) !== false) acknowledgeObserved(current);
+        } else {
+          activityMappingAvailable = false;
+          clearAllActivity();
+        }
+      } catch {
+        if (disposed || generation !== refreshGeneration) return false;
+        activityMappingAvailable = false;
+        clearAllActivity();
       }
-    } catch {}
-    return linked;
+      return true;
+    })();
+    latestRefresh = operation;
+    return operation;
   };
   const process = async (event) => {
     if (disposed) return { changed: false, ignored: true };
     const sessionId = eventSessionId(event);
     if (!sessionId) return { changed: false, ignored: true };
-    await refresh();
+    refresh();
+    while (!disposed) {
+      const observed = latestRefresh;
+      const ready = await observed;
+      if (ready && observed === latestRefresh) break;
+    }
+    if (disposed) return { changed: false, ignored: true };
+    const normalized = normalizeAttentionEvent(event);
+    if (normalized?.kind === "status" && ["busy", "retry"].includes(normalized.status)) {
+      if (activityMappingAvailable && activeVisibleSessionRecords(snapshot, sessionId).length) setActivity(sessionId, normalized.status);
+      else clearActivity(sessionId);
+    } else if (normalized) {
+      clearActivity(sessionId);
+    }
     if (!linked.has(sessionId)) return { changed: false, unlinked: true };
     const foreground = isFocused() !== false ? currentSessionId(api) : undefined;
     if (foreground === sessionId && shouldAcknowledge(sessionId) !== false) acknowledgeObserved(sessionId);
@@ -371,6 +434,14 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
     const mostImportant = items.reduce((best, item) => PRIORITY[item.reason] > PRIORITY[best.reason] ? item : best);
     return { count: items.length, reason: mostImportant.reason, items };
   };
+  const aggregateActivity = (matches) => {
+    if (!activityMappingAvailable) return null;
+    const items = [];
+    for (const [sessionId, status] of activity) {
+      if (activeVisibleSessionRecords(snapshot, sessionId).some(matches)) items.push({ sessionId, status });
+    }
+    return items.length ? { count: items.length, items } : null;
+  };
 
   return {
     refresh,
@@ -379,9 +450,23 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
     attentionFor: engine.attentionFor,
     attentionForStage: (workspace, stage) => aggregate((record) => record.workspace.id === workspace && record.session.stage === stage),
     attentionForWorkspace: (workspace) => aggregate((record) => record.workspace.id === workspace),
+    activityFor: (sessionId) => activity.get(sessionId) || null,
+    activityForStage: (workspace, stage) => aggregateActivity((record) => record.workspace.id === workspace && record.session.stage === stage),
+    activityForWorkspace: (workspace) => aggregateActivity((record) => record.workspace.id === workspace),
+    listActivity: () => [...activity].map(([sessionId, status]) => ({ sessionId, status })),
     list: engine.list,
-    subscribe: engine.subscribe,
-    dispose: () => { disposed = true; },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      refreshGeneration += 1;
+      activity.clear();
+      listeners.clear();
+      unsubscribeEngine();
+    },
   };
 };
 

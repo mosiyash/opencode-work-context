@@ -322,16 +322,25 @@ disable this TUI loader; the package does not use an internal keymap fallback.
 
 The optional TUI loader tracks linked OpenCode sessions that need attention.
 Questions, permission requests, errors, and a background session becoming idle
-after observed work remain marked with `[ATTN]` until that native session is
-opened. Attention does not change workspace or stage lifecycle state.
+after observed work remain marked until that native session is opened. Compact
+markers retain both a symbol and a textual reason: `[✓ response complete]`,
+`[? question]`, `[! permission]`, or `[x error]`. Aggregated markers append an
+`xN` session count. Attention does not change workspace or stage lifecycle state.
+
+The stages sidebar separately observes live `busy` and `retry` events for active
+OpenCode sessions mapped to visible work-context stages. A braille loader appears
+beside the lifecycle marker while any such session is working and stops on idle,
+question, permission, or error events. This live state is never persisted or
+inferred from stage status, historical sessions, or unread attention, so startup
+and missed mappings fail closed without a stale loader.
 
 Every loaded TUI instance registers a short-lived user-level activity lease.
 Focus and keyboard activity select the active OpenCode instance independently
 of its project directory. When a session in project A needs attention while the
 user works in project B, A publishes a bounded event under
 `$XDG_RUNTIME_DIR/opencode-work-context/attention-v1` and active B displays a
-native `Work Context` toast. The persistent `[ATTN]` marker remains in project A;
-the toast does not import A's state or enable cross-server navigation.
+native `Work Context` toast. The persistent reason-specific marker remains in
+project A; the toast does not import A's state or enable cross-server navigation.
 
 The channel uses private directories, atomic immutable event files, strict
 schemas, ownership/type/size checks, short event expiry, stale-lease cleanup,
@@ -383,8 +392,8 @@ receives focus or keyboard activity.
 To verify cross-project delivery, install and load the TUI integration in two
 projects, start work in linked session A, then interact with OpenCode B before A
 finishes or asks a question. Expect a `Work Context` toast inside B, one system
-notification, and a persistent `[ATTN]` marker in A. Open A's affected native
-session to clear its marker. Set `notifications.desktop` to `false`, restart
+notification, and a persistent reason-specific marker in A. Open A's affected
+native session to clear its marker. Set `notifications.desktop` to `false`, restart
 OpenCode, and repeat to verify that the toast and marker remain without the
 system notification.
 

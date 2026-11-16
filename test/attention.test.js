@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { attentionForSession, createAttentionEngine, createAttentionTuiController, createPendingNavigationTracker, globalAttentionToast, normalizeAttentionEvent, openAttentionDestination, tui } from "../plugin/attention.js";
+import { attentionForSession, attentionIndicatorText, createAttentionEngine, createAttentionTuiController, createPendingNavigationTracker, globalAttentionToast, normalizeAttentionEvent, openAttentionDestination, tui } from "../plugin/attention.js";
 import { createGlobalAttentionChannel } from "../plugin/global-attention.js";
 import { createTuiFocusTracker } from "../plugin/tui-focus.js";
 import { readTuiState, updateTuiState } from "../plugin/tui-state.js";
@@ -51,6 +51,15 @@ test("compatible v2 request variants normalize without treating session.updated 
   assert.equal(normalizeAttentionEvent(request("permission.v2.asked", "oc-1", "p-v2")).kind, "permission");
   assert.equal(normalizeAttentionEvent({ type: "session.updated", properties: { info: { id: "oc-1" } } }), null);
   assert.equal(normalizeAttentionEvent({ id: "q-data", type: "question.asked", data: { id: "request-data", sessionID: "oc-data" } }).sessionId, "oc-data");
+  assert.equal(normalizeAttentionEvent({ type: "session.status", properties: { info: { id: "oc-info" }, status: { type: "busy" } } }).sessionId, "oc-info");
+});
+
+test("attention indicators retain a reason label and distinct compact marker", () => {
+  assert.equal(attentionIndicatorText({ reason: "idle", count: 1 }), "[✓ response complete]");
+  assert.equal(attentionIndicatorText({ reason: "question", count: 2 }), "[? question x2]");
+  assert.equal(attentionIndicatorText({ reason: "permission", count: 1 }), "[! permission]");
+  assert.equal(attentionIndicatorText({ reason: "error", count: 3 }), "[x error x3]");
+  assert.equal(attentionIndicatorText({ reason: "unknown", count: 1 }), "[! attention]");
 });
 
 test("duplicate delivery and lower-priority signals do not replace attention", () => {
@@ -182,6 +191,192 @@ test("controller excludes attention linked only to archived stages from visible 
     assert.equal(controller.attentionForStage("000001", "02"), null);
     assert.equal(controller.attentionForWorkspace("000001"), null);
   } finally { controller.dispose(); removeRoot(root); }
+});
+
+test("live activity tracks only distinct active sessions mapped to visible stages", async () => {
+  const root = makeRoot();
+  const sessions = [
+    { stage: "01", state: "active", opencode_session_id: "oc-active" },
+    { stage: "01", state: "active", opencode_session_id: "oc-active" },
+    { stage: "01", state: "handed_off", opencode_session_id: "oc-handed" },
+    { stage: "01", state: "closed", opencode_session_id: "oc-closed" },
+    { stage: "01", state: "abandoned", opencode_session_id: "oc-abandoned" },
+    { stage: "01", opencode_session_id: "oc-unknown" },
+    { stage: "02", state: "active", opencode_session_id: "oc-archived" },
+  ];
+  const controller = createAttentionTuiController({
+    api: { route: { current: { name: "home" } } },
+    projectRoot: root,
+    read: async () => ({ ok: true, data: { workspaces: [{
+      id: "000001",
+      stages: [{ id: "01", status: "in_progress" }, { id: "02", status: "archived" }],
+      sessions,
+    }] } }),
+  });
+  try {
+    for (const id of ["oc-active", "oc-handed", "oc-closed", "oc-abandoned", "oc-unknown", "oc-archived", "oc-unmapped"]) {
+      await controller.handle(status(id, "busy", `${id}-busy`));
+    }
+    assert.deepEqual(controller.activityForStage("000001", "01"), {
+      count: 1,
+      items: [{ sessionId: "oc-active", status: "busy" }],
+    });
+    assert.equal(controller.activityForWorkspace("000001").count, 1);
+    assert.deepEqual(controller.listActivity(), [{ sessionId: "oc-active", status: "busy" }]);
+  } finally { controller.dispose(); removeRoot(root); }
+});
+
+test("live activity starts from busy or retry and clears on every response boundary", async () => {
+  const root = makeRoot();
+  const ids = ["oc-idle-status", "oc-idle", "oc-question", "oc-permission", "oc-error"];
+  const controller = createAttentionTuiController({
+    api: { route: { current: { name: "home" } } },
+    projectRoot: root,
+    read: async () => ({ ok: true, data: { workspaces: [{
+      id: "000001",
+      stages: [{ id: "01", status: "in_progress" }],
+      sessions: ids.map((opencode_session_id) => ({ stage: "01", state: "active", opencode_session_id })),
+    }] } }),
+  });
+  try {
+    await controller.handle(status(ids[0], "busy", "busy-0"));
+    await controller.handle(status(ids[1], "retry", "retry-1"));
+    await controller.handle(status(ids[2], "busy", "busy-2"));
+    await controller.handle(status(ids[3], "busy", "busy-3"));
+    await controller.handle(status(ids[4], "busy", "busy-4"));
+    assert.equal(controller.activityForStage("000001", "01").count, 5);
+    await controller.handle(status(ids[0], "idle", "idle-0"));
+    await controller.handle(idle(ids[1], "idle-1"));
+    await controller.handle(request("question.asked", ids[2], "question-2"));
+    await controller.handle(request("permission.asked", ids[3], "permission-3"));
+    await controller.handle(request("session.error", ids[4], "error-4"));
+    assert.equal(controller.activityForStage("000001", "01"), null);
+  } finally { controller.dispose(); removeRoot(root); }
+});
+
+test("live activity is not restored and is pruned when its active mapping disappears", async () => {
+  const root = makeRoot();
+  let state = "active";
+  const read = async () => ({ ok: true, data: { workspaces: [{
+    id: "000001",
+    stages: [{ id: "01", status: "in_progress" }],
+    sessions: [{ stage: "01", state, opencode_session_id: "oc-live" }],
+  }] } });
+  const first = createAttentionTuiController({ api: { route: { current: { name: "home" } } }, projectRoot: root, read });
+  await first.handle(status("oc-live", "busy", "busy-live"));
+  assert.equal(first.activityFor("oc-live"), "busy");
+  state = "handed_off";
+  await first.refresh();
+  assert.equal(first.activityFor("oc-live"), null);
+  first.dispose();
+  const restarted = createAttentionTuiController({ api: { route: { current: { name: "home" } } }, projectRoot: root, read });
+  try {
+    await restarted.refresh();
+    assert.deepEqual(restarted.listActivity(), []);
+  } finally { restarted.dispose(); removeRoot(root); }
+});
+
+test("live activity fails closed when the mapping snapshot becomes unavailable", async () => {
+  const root = makeRoot();
+  let available = true;
+  const controller = createAttentionTuiController({
+    api: { route: { current: { name: "home" } } },
+    projectRoot: root,
+    read: async () => available
+      ? { ok: true, data: { workspaces: [{
+        id: "000001",
+        stages: [{ id: "01", status: "in_progress" }],
+        sessions: [{ stage: "01", state: "active", opencode_session_id: "oc-live" }],
+      }] } }
+      : { ok: false, error: { code: "STORAGE_ERROR" } },
+  });
+  try {
+    await controller.handle(status("oc-live", "busy", "busy-live"));
+    assert.equal(controller.activityFor("oc-live"), "busy");
+    available = false;
+    await controller.refresh();
+    assert.equal(controller.activityFor("oc-live"), null);
+    await controller.handle(status("oc-live", "retry", "retry-live"));
+    assert.deepEqual(controller.listActivity(), []);
+  } finally { controller.dispose(); removeRoot(root); }
+});
+
+test("out-of-order mapping refreshes cannot restore stale live activity", async () => {
+  const root = makeRoot();
+  const pending = [];
+  const controller = createAttentionTuiController({
+    api: { route: { current: { name: "home" } } },
+    projectRoot: root,
+    read: async () => new Promise((resolve) => pending.push(resolve)),
+  });
+  try {
+    const older = controller.refresh();
+    const newer = controller.refresh();
+    pending[1]({ ok: true, data: { workspaces: [{
+      id: "000001",
+      stages: [{ id: "01", status: "in_progress" }],
+      sessions: [{ stage: "01", state: "handed_off", opencode_session_id: "oc-live" }],
+    }] } });
+    assert.equal(await newer, true);
+    pending[0]({ ok: true, data: { workspaces: [{
+      id: "000001",
+      stages: [{ id: "01", status: "in_progress" }],
+      sessions: [{ stage: "01", state: "active", opencode_session_id: "oc-live" }],
+    }] } });
+    assert.equal(await older, false);
+    assert.equal(controller.activityForWorkspace("000001"), null);
+  } finally { controller.dispose(); removeRoot(root); }
+});
+
+test("an event superseded by a mapping refresh is applied against the newest snapshot", async () => {
+  const root = makeRoot();
+  const pending = [];
+  const notifications = [];
+  const controller = createAttentionTuiController({
+    api: { route: { current: { name: "home" } } },
+    projectRoot: root,
+    read: async () => new Promise((resolve) => pending.push(resolve)),
+    onAttention: (change) => notifications.push(change),
+  });
+  try {
+    const handling = controller.handle(request("question.asked", "oc-live", "question-live"));
+    await Promise.resolve();
+    const newer = controller.refresh();
+    pending[1]({ ok: true, data: { workspaces: [{
+      id: "000001",
+      title: "Workspace",
+      stages: [{ id: "01", title: "Stage", status: "in_progress" }],
+      sessions: [{ stage: "01", state: "active", opencode_session_id: "oc-live" }],
+    }] } });
+    await newer;
+    pending[0]({ ok: false, error: { code: "STALE" } });
+    const result = await handling;
+    assert.equal(result.changed, true);
+    assert.equal(controller.attentionFor("oc-live").reason, "question");
+    assert.equal(notifications.length, 1);
+  } finally { controller.dispose(); removeRoot(root); }
+});
+
+test("disposing during an event refresh prevents late activity and attention changes", async () => {
+  const root = makeRoot();
+  let resolveRead;
+  const controller = createAttentionTuiController({
+    api: { route: { current: { name: "home" } } },
+    projectRoot: root,
+    read: async () => new Promise((resolve) => { resolveRead = resolve; }),
+  });
+  const handling = controller.handle(status("oc-live", "busy", "busy-live"));
+  await Promise.resolve();
+  controller.dispose();
+  resolveRead({ ok: true, data: { workspaces: [{
+    id: "000001",
+    stages: [{ id: "01", status: "in_progress" }],
+    sessions: [{ stage: "01", state: "active", opencode_session_id: "oc-live" }],
+  }] } });
+  assert.deepEqual(await handling, { changed: false, ignored: true });
+  assert.deepEqual(controller.listActivity(), []);
+  assert.equal(controller.attentionFor("oc-live"), null);
+  removeRoot(root);
 });
 
 test("controller restores unread attention after restart and acknowledges it when that native session is current", async () => {

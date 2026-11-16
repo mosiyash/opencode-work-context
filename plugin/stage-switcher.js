@@ -1,7 +1,7 @@
 import { contextFor } from "../src/opencode-adapter.js";
 import { isDependencySatisfied } from "../src/stage-status.js";
 import { readTuiState, updateTuiState } from "./tui-state.js";
-import { acknowledgeNavigation, attentionForSession, attentionReasonText } from "./attention.js";
+import { acknowledgeNavigation, attentionForSession, attentionIndicatorText, attentionReasonText } from "./attention.js";
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "archived"]);
 const SESSION_STATE_RANK = { active: 0, handed_off: 1, abandoned: 2, closed: 3 };
@@ -207,7 +207,7 @@ export const createStageSwitcherFlow = (api, { read = readStageSwitcherSnapshot,
       const available = (stage.sessions || []).filter((session) => session.opencode_session_id).length;
       const state = stage.blocked ? `blocked by ${stage.blockers.join(", ")}` : stage.status;
       return {
-        title: `${stage.current ? ">" : " "} ${stage.attention ? "[ATTN] " : ""}${stage.id}. ${stage.title}`,
+        title: `${stage.current ? ">" : " "} ${attentionIndicatorText(stage.attention)} ${stage.id}. ${stage.title}`.replace(/  +/g, " "),
         description: `${stage.attention ? `needs attention: ${attentionReasonText(stage.attention.reason)} (${stage.attention.count}) · ` : ""}${state} · ${available ? `${available} session${available === 1 ? "" : "s"}` : TERMINAL_STATUSES.has(stage.status) || stage.blocked ? "no session available" : "new session"}`,
         category,
         disabled: (TERMINAL_STATUSES.has(stage.status) || stage.blocked) && !available,

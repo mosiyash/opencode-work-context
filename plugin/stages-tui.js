@@ -5,12 +5,14 @@ import { contextFor, titleFor } from "../src/opencode-adapter.js";
 import { renderDependencyTree, renderStagesPanel } from "../src/stages-renderer.js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createSignal } from "solid-js";
-import { attentionReasonText } from "./attention.js";
+import { attentionIndicatorText } from "./attention.js";
 import { createStageSwitcherFlow } from "./stage-switcher.js";
 import { readTuiState, updateTuiState } from "./tui-state.js";
 
 const DEBOUNCE_MS = 150;
 const POLL_MS = 1000;
+const LOADER_MS = 80;
+const LOADER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const PATH_TIMEOUT_MS = 5000;
 const PATH_POLL_MS = 25;
 const WORK_CONTEXT_PREFIX = "work" + "_" + "context_";
@@ -40,14 +42,15 @@ const candidateSummaryText = (workspace) => workspace.candidates && (workspace.c
 export { readStagesSnapshot, renderStagesPanel };
 
 const defaultRuntime = { jsx };
-const renderAttentionText = (value, runtime) => {
-  const parts = value.split(/(\[ATTN[^\]]*\])/g);
-  return parts.length === 1 ? value : parts.filter(Boolean).map((part) => part.startsWith("[ATTN")
-    ? runtime.jsx("b", { children: part })
-    : part);
+const renderAttentionText = (value, indicator, runtime) => {
+  if (!indicator) return value;
+  const parts = value.split(indicator);
+  return parts.length === 1 ? value : parts.flatMap((part, index) => index
+    ? [runtime.jsx("b", { children: indicator }), part]
+    : [part]).filter(Boolean);
 };
 
-const renderStagesContent = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect) => !result?.ok || !result.data?.workspace
+const renderStagesContent = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect, activityFrame = () => LOADER_FRAMES[0]) => !result?.ok || !result.data?.workspace
   ? [
     runtime.jsx("text", { children: runtime.jsx("b", { children: "Stages" }) }),
     ...renderStagesPanel(result).split("\n").slice(1).map((line) => runtime.jsx("text", { children: line })),
@@ -57,7 +60,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
       marginBottom: 1,
       flexDirection: "column",
       children: [
-        runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: `${attention?.attentionForWorkspace?.(result.data.workspace.id) ? "[ATTN] " : ""}${result.data.workspace.title}` }) }),
+        runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: `${attentionIndicatorText(attention?.attentionForWorkspace?.(result.data.workspace.id))} ${result.data.workspace.title}`.trim() }) }),
         runtime.jsx("text", { fg: theme?.current?.textMuted, children: `Workflow · ${result.data.workspace.mode || "standard"}` }),
         candidateSummaryText(result.data.workspace) && runtime.jsx("text", { fg: theme?.current?.textMuted, children: candidateSummaryText(result.data.workspace) }),
       ],
@@ -71,11 +74,12 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
     }),
     ...result.data.stages.map((stage) => {
       const unread = attention?.attentionForStage?.(result.data.workspace.id, stage.id);
+      const working = attention?.activityForStage?.(result.data.workspace.id, stage.id);
       const metadata = showDependencies ? [
         stage.tracker_links?.length && `Tasks: ${stage.tracker_links.map(trackerLinkText).join(", ")}`,
         stage.depends_on?.length && `Deps: ${stage.depends_on.join(", ")}`,
       ].filter(Boolean).join(" · ") : "";
-      const attentionText = unread ? `[ATTN: ${attentionReasonText(unread.reason)}${unread.count > 1 ? ` x${unread.count}` : ""}]` : "";
+      const attentionText = attentionIndicatorText(unread);
       const stageText = [
         `${stage.id}. ${stage.title}`,
         metadata,
@@ -88,17 +92,18 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
           return onStageSelect?.(stage);
         },
         children: [
+          working && runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: theme?.current?.warning, children: activityFrame() }),
           runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
-          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: renderAttentionText(stageText, runtime) }),
-        ],
+          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: renderAttentionText(stageText, attentionText, runtime) }),
+        ].filter(Boolean),
       });
     }),
   ];
 
-export const renderStagesElement = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect) => {
+export const renderStagesElement = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect, activityFrame) => {
   return runtime.jsx("box", {
    flexDirection: "column",
-    children: () => renderStagesContent(typeof result === "function" ? result() : result, theme, runtime, attention, typeof showDependencies === "function" ? showDependencies() : showDependencies, onStageSelect),
+    children: () => renderStagesContent(typeof result === "function" ? result() : result, theme, runtime, attention, typeof showDependencies === "function" ? showDependencies() : showDependencies, onStageSelect, activityFrame),
   });
 };
 
@@ -134,15 +139,40 @@ const disposeRegistration = (registration) => {
   else registration?.dispose?.();
 };
 
-export const createStagesTuiController = ({ projectRoot, read = readStagesSnapshot, debounceMs = DEBOUNCE_MS, pollMs = POLL_MS, createSignal: makeSignal = createSignal, attention } = {}) => {
+export const createStagesTuiController = ({ projectRoot, read = readStagesSnapshot, debounceMs = DEBOUNCE_MS, pollMs = POLL_MS, loaderMs = LOADER_MS, loaderClock = globalThis, createSignal: makeSignal = createSignal, attention } = {}) => {
   const snapshots = new Map();
   const generations = new Map();
   const timers = new Map();
   const pollers = new Map();
   const [version, setVersion] = makeSignal(0);
   const [showDependencies, setShowDependencies] = makeSignal(readTuiState(projectRoot).sidebar_dependencies === true);
+  let loaderFrame = 0;
+  let loaderTimer;
+  let visibleSessionId;
   let disposed = false;
-  const unsubscribeAttention = attention?.subscribe?.(() => setVersion((value) => value + 1));
+  const visibleActivity = () => {
+    const result = snapshots.get(visibleSessionId)?.result;
+    const workspace = result?.ok && result.data?.workspace;
+    return Boolean(workspace && result.data.stages.some((stage) => attention?.activityForStage?.(workspace.id, stage.id)));
+  };
+  const syncLoader = () => {
+    const working = visibleActivity();
+    if (working && !loaderTimer && loaderMs) {
+      loaderTimer = loaderClock.setInterval(() => {
+        loaderFrame = (loaderFrame + 1) % LOADER_FRAMES.length;
+        setVersion((value) => value + 1);
+      }, loaderMs);
+    } else if (!working && loaderTimer) {
+      loaderClock.clearInterval(loaderTimer);
+      loaderTimer = undefined;
+      loaderFrame = 0;
+    }
+  };
+  const unsubscribeAttention = attention?.subscribe?.(() => {
+    syncLoader();
+    setVersion((value) => value + 1);
+  });
+  syncLoader();
 
   const readSnapshot = async (sessionId) => {
     if (disposed || !sessionId) return;
@@ -150,6 +180,7 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
     generations.set(sessionId, currentGeneration);
     const entry = snapshots.get(sessionId) || { result: null, successful: null };
     snapshots.set(sessionId, entry);
+    syncLoader();
     setVersion((value) => value + 1);
     try {
       const result = await read({ projectRoot, sessionId });
@@ -169,6 +200,7 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
         : { ok: false, error: { code: error.code || "STORAGE_ERROR", message: error.message } };
     }
     snapshots.set(sessionId, entry);
+    syncLoader();
     setVersion((value) => value + 1);
   };
 
@@ -189,6 +221,8 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
 
   const resultFor = (sessionId) => {
     version();
+    visibleSessionId = sessionId;
+    syncLoader();
     watch(sessionId);
     const entry = snapshots.get(sessionId);
     if (!entry) {
@@ -202,6 +236,10 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
     load: readSnapshot,
     scheduleRefresh,
     resultFor,
+    activityFrame: () => {
+      version();
+      return LOADER_FRAMES[loaderFrame];
+    },
     showDependencies,
     toggleDependencies: () => {
       const visible = !showDependencies();
@@ -218,6 +256,8 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
       for (const poller of pollers.values()) clearInterval(poller);
       pollers.clear();
       snapshots.clear();
+      if (loaderTimer) loaderClock.clearInterval(loaderTimer);
+      loaderTimer = undefined;
       unsubscribeAttention?.();
     },
   };
@@ -248,7 +288,7 @@ export const resolveProjectRoot = async (api, { timeoutMs = PATH_TIMEOUT_MS, pol
 
 const renderStagesSlot = (controller, theme, sessionId, runtime = defaultRuntime, attention, onStageSelect) => runtime.jsx("box", {
   flexDirection: "column",
-  children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime, attention, controller.showDependencies, onStageSelect),
+  children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime, attention, controller.showDependencies, onStageSelect, controller.activityFrame),
 });
 
 const updateSessionTitle = async (api, projectRoot) => {
@@ -350,6 +390,7 @@ export const tui = async (api, options = {}) => {
     read: api.stagesSnapshotProvider || readStagesSnapshot,
     debounceMs: options.debounceMs,
     pollMs: options.pollMs,
+    loaderMs: options.loaderMs,
     createSignal: options.runtime?.createSignal,
     attention: api.workContextAttention,
   });
@@ -359,8 +400,10 @@ export const tui = async (api, options = {}) => {
   const unregisterDependencyTree = registerDependencyTree(api, controller, () => currentSessionId || ACTIVE_WORKSPACE_SESSION);
   await controller.load(initialSessionId);
   let storageWatcher;
+  const refreshAttention = () => { void api.workContextAttention?.refresh?.(); };
   try {
     storageWatcher = fs.watch(path.join(projectRoot, ".work-context"), { recursive: true }, () => {
+      refreshAttention();
       controller.scheduleRefresh(currentSessionId);
     });
   } catch {
@@ -379,10 +422,14 @@ export const tui = async (api, options = {}) => {
     },
   });
   const unsubscribe = api.event?.on?.("session.updated", (event) => {
+    refreshAttention();
     controller.scheduleRefresh(sessionIdFromEvent(event));
   });
   const unsubscribeTool = api.event?.on?.("message.part.updated", (event) => {
-    if (isCompletedWorkContextTool(event)) controller.scheduleRefresh(sessionIdFromEvent(event));
+    if (isCompletedWorkContextTool(event)) {
+      refreshAttention();
+      controller.scheduleRefresh(sessionIdFromEvent(event));
+    }
   });
 
   let cleaned = false;

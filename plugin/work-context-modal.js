@@ -7,7 +7,7 @@ import { createSignal } from "solid-js";
 import { openStageSwitcher } from "./stage-switcher.js";
 import { openWorkspaceSwitcher } from "./workspace-switcher.js";
 import { openSessionSwitcher } from "./session-switcher.js";
-import { attentionForSession, attentionReasonText } from "./attention.js";
+import { attentionForSession, attentionIndicatorText, attentionReasonText } from "./attention.js";
 
 const COMMAND_NAME = "work_context.open";
 const ACTIONS_COMMAND_NAME = "work_context.actions";
@@ -246,7 +246,7 @@ export const renderWorkContextModal = (controller, theme, runtime = { jsx }, { m
       return runtime.jsx("box", {
         id: `workspace-${workspace.id}`, flexDirection: "row", gap: 1, children: [
           line(runtime, index === selectedWorkspaceIndex ? ">" : " ", { flexShrink: 0, marginRight: 1, fg: index === selectedWorkspaceIndex ? theme?.current?.text : muted }),
-          line(runtime, `${unread ? "[ATTN] " : ""}${workspace.id}  ${workspace.title}`, { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: workspace.id === data?.currentWorkspace ? theme?.current?.warning : theme?.current?.text }),
+           line(runtime, `${attentionIndicatorText(unread)} ${workspace.id}  ${workspace.title}`.trim(), { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: workspace.id === data?.currentWorkspace ? theme?.current?.warning : theme?.current?.text }),
           line(runtime, workspace.status, { flexShrink: 0, fg: muted }),
         ],
       });
@@ -256,7 +256,7 @@ export const renderWorkContextModal = (controller, theme, runtime = { jsx }, { m
       return runtime.jsx("box", {
         id: `stage-${item.id}`, flexDirection: "row", children: [
           line(runtime, index === selectedStageIndex ? ">" : " ", { flexShrink: 0, marginRight: 1, fg: index === selectedStageIndex ? theme?.current?.text : muted }),
-          line(runtime, `${marker(item.status)} ${item.id}. ${item.title}${item.current ? " · current" : ""}${unread ? ` [ATTN: ${attentionReasonText(unread.reason)}${unread.count > 1 ? ` x${unread.count}` : ""}]` : ""}`, { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: item.current ? theme?.current?.warning : theme?.current?.text }),
+           line(runtime, `${marker(item.status)} ${item.id}. ${item.title}${item.current ? " · current" : ""}${unread ? ` ${attentionIndicatorText(unread)}` : ""}`, { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: item.current ? theme?.current?.warning : theme?.current?.text }),
         ],
       });
     }) : [];
@@ -291,7 +291,7 @@ export const renderWorkContextModal = (controller, theme, runtime = { jsx }, { m
             line(runtime, `Sessions  ${(selected.sessions || []).length}`, { fg: muted }),
             ...(selected.sessions || []).map((session) => {
               const unread = controller.attention?.attentionFor?.(session.opencode_session_id);
-              return line(runtime, `${unread ? `[ATTN: ${attentionReasonText(unread.reason)}]  ` : ""}${session.state || "unknown"}  ${session.session_id || "unknown"}  stage ${session.stage || "-"}`, { wrapMode: "word", fg: muted });
+               return line(runtime, `${unread ? `${attentionIndicatorText(unread)}  ` : ""}${session.state || "unknown"}  ${session.session_id || "unknown"}  stage ${session.stage || "-"}`, { wrapMode: "word", fg: muted });
             }),
           ] : []),
         ] }),
@@ -438,7 +438,7 @@ export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read 
     });
     const options = workspaces.flatMap((workspace) => {
       const unread = api.workContextAttention?.attentionForWorkspace?.(workspace.id);
-      const category = `${unread ? "[ATTN] " : ""}${workspace.id} · ${workspace.title} · ${workspace.status}`;
+       const category = `${attentionIndicatorText(unread)} ${workspace.id} · ${workspace.title} · ${workspace.status}`.trim();
       return [
         { title: "Overview", description: workspace.status, footer: progress(workspace), category, value: { type: "workspace", workspace } },
         ...(workspace.stages || []).map((stage) => ({
@@ -474,7 +474,7 @@ export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read 
     showSelect("Stages", entries.map(({ workspace, stage }) => {
       const unread = api.workContextAttention?.attentionForStage?.(workspace.id, stage.id);
       return {
-        title: `${marker(stage.status)} ${unread ? "[ATTN] " : ""}${workspace.id}/${stage.id}  ${stage.title} · ${workspace.title}`,
+         title: `${marker(stage.status)} ${attentionIndicatorText(unread)} ${workspace.id}/${stage.id}  ${stage.title} · ${workspace.title}`.replace(/  +/g, " "),
         description: unread ? `Needs attention: ${attentionReasonText(unread.reason)} (${unread.count}) · ${stage.description || stage.status}` : stage.description || stage.status,
         category: stage.current ? "Current" : labels[stage.status] || stage.status,
         value: { workspace, stage },
@@ -525,7 +525,7 @@ export const createWorkContextActionFlow = (api, { projectRoot, sessionId, read 
       const current = session.opencode_session_id === sessionId || session.session_id === sessionId;
       const unread = attentionForSession(api, session.opencode_session_id);
       return {
-        title: `${unread ? "[ATTN] " : ""}${workspace.id} ${sessionOrdinal(session)}  ${session.summary || "Work session"} · ${workspace.title}`,
+         title: `${attentionIndicatorText(unread)} ${workspace.id} ${sessionOrdinal(session)}  ${session.summary || "Work session"} · ${workspace.title}`.trim(),
         description: `${unread ? `needs attention: ${attentionReasonText(unread.reason)} · ` : ""}${session.state || "unknown"} · ${session.session_id}`,
         footer: session.updated_at || session.started_at,
         category: current ? "Current" : labels[session.state] || session.state || "Unknown",

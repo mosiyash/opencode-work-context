@@ -1,5 +1,5 @@
 import { readWorkContextSnapshot } from "../src/work-context-snapshot.js";
-import { acknowledgeNavigation, attentionForSession, attentionReasonText } from "./attention.js";
+import { acknowledgeNavigation, attentionForSession, attentionIndicatorText, attentionReasonText } from "./attention.js";
 
 const SESSION_STATE_RANK = { active: 0, handed_off: 1, abandoned: 2, closed: 3 };
 
@@ -74,7 +74,7 @@ export const createSessionSwitcherFlow = (api, { read = readWorkContextSnapshot 
       placeholder: "Search sessions",
       options: [
         ...available.map(({ workspace, session }) => ({
-          title: `${attention(session.opencode_session_id) ? "[ATTN] " : ""}${workspace.id} ${session.stage || "-"}/${String(session.ordinal || 0).padStart(2, "0")}  ${session.summary || "Work session"} · ${workspace.title}`,
+          title: `${attentionIndicatorText(attention(session.opencode_session_id))} ${workspace.id} ${session.stage || "-"}/${String(session.ordinal || 0).padStart(2, "0")}  ${session.summary || "Work session"} · ${workspace.title}`.trim(),
           description: `${attention(session.opencode_session_id) ? `needs attention: ${attentionReasonText(attention(session.opencode_session_id).reason)} · ` : ""}${session.state || "unknown"} · ${session.session_id || "unknown"}`,
           footer: session.opencode_session_id,
           category: session.opencode_session_id === currentId ? "Current" : labels[session.state] || session.state || "Unknown",

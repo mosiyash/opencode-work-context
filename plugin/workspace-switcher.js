@@ -1,5 +1,5 @@
 import { readWorkContextSnapshot } from "../src/work-context-snapshot.js";
-import { acknowledgeNavigation, attentionForSession, attentionReasonText } from "./attention.js";
+import { acknowledgeNavigation, attentionForSession, attentionIndicatorText, attentionReasonText } from "./attention.js";
 
 const SESSION_STATE_RANK = { active: 0, handed_off: 1, abandoned: 2, closed: 3 };
 const WORKSPACE_STATUS_RANK = { in_progress: 0, planned: 1, completed: 2, cancelled: 3 };
@@ -69,7 +69,7 @@ export const createWorkspaceSwitcherFlow = (api, { read = readWorkContextSnapsho
       title: "Switch workspace",
       placeholder: "Search workspaces",
       options: workspaces.map((workspace) => ({
-        title: `${workspace.attention ? "[ATTN] " : ""}${workspace.id}  ${workspace.title}${workspace.id === data.currentWorkspace ? " · current" : ""}`,
+        title: `${attentionIndicatorText(workspace.attention)} ${workspace.id}  ${workspace.title}${workspace.id === data.currentWorkspace ? " · current" : ""}`.trim(),
         description: workspace.selectedSession
           ? `${workspace.attention ? `needs attention: ${attentionReasonText(workspace.attention.reason)} (${workspace.attention.count}) · ` : ""}${workspace.status} · ${workspace.selectedSession.state || "unknown"} session`
           : `${workspace.status} · no OpenCode session available`,
