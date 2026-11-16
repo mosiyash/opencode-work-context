@@ -40,3 +40,21 @@ published version and `latest` dist-tag directly in the npm registry.
 
 The Git tag must exactly match the version in `package.json`. Never reuse or
 move a tag that has already been pushed or published.
+
+After a release is published and verified, the final report must include the
+exact released version and upgrade instructions for both supported installation
+models:
+
+- For every pinned local project, run
+  `npx --yes opencode-work-context@<version> init --force` from that project's
+  root, then restart OpenCode.
+- For managed package activation, run
+  `opencode plugin opencode-work-context --force` once from an activated project
+  to update OpenCode's shared managed package cache, then restart OpenCode.
+- The managed runtime cache is shared, but `.opencode/commands/wc.md` is a
+  project-scoped projection. When the release changes the `/wc` contract, run
+  `npx --yes opencode-work-context@<version> activate --force` in each activated
+  project and restart OpenCode afterward.
+
+Replace `<version>` with the verified published version; do not leave a generic
+`latest` placeholder in the release report.
