@@ -219,25 +219,58 @@ test("structured candidate tools expose strategy and stage traceability through 
   } finally { cleanup(root); }
 });
 
-test("read-only snapshots expose only active candidate counts", () => {
+test("read-only snapshots expose active candidate counts and explicit stage relations", () => {
   const root = makeRepository();
   try {
     const context = openStartup(root);
+    context.addStage("999901", "Related stage", { prompt: "Continue related work." });
     fs.writeFileSync(path.join(root, "app.txt"), "snapshot candidate\n");
-    const pending = context.createCandidate("999901", "Pending candidate").data;
-    const ready = context.createCandidate("999901", "Ready candidate").data;
+    const pending = context.createCandidate("999901", "Pending candidate", null, { strategy: "integration", relatedStages: ["01", "02"] }).data;
+    const ready = context.createCandidate("999901", "Ready candidate", null, { strategy: "exact", relatedStages: ["02"] }).data;
     context.captureCandidate("999901", ready.candidate, { paths: ["app.txt"] });
     context.readyCandidate("999901", ready.candidate);
     const discarded = context.createCandidate("999901", "Discarded candidate").data;
     context.discardCandidate("999901", discarded.candidate);
+    fs.writeFileSync(path.join(root, ".work-context", "local", "candidates", "CC-999999.json"), "{invalid\n");
 
     const stages = readStagesSnapshot({ projectRoot: root, sessionId: "session-999901" });
     const workContext = readWorkContextSnapshot({ projectRoot: root, sessionId: "session-999901" });
     assert.deepEqual(stages.data.workspace.candidates, { pending: 1, ready: 1 });
     assert.deepEqual(workContext.data.workspaces[0].candidates, { pending: 1, ready: 1 });
-    assert.match(renderStagesPanel(stages), /Candidates · pending 1 · ready 1/);
-    assert.doesNotMatch(JSON.stringify(stages), /snapshot candidate|CC-000001\.patch|base_head/);
+    assert.deepEqual(stages.data.stages[0].candidates, { draft: 1, ready: 0, items: [{ candidate: pending.candidate, title: "Pending candidate", status: "draft", strategy: "integration", related_stages: ["01", "02"] }] });
+    assert.deepEqual(stages.data.stages[1].candidates.items.map(({ status, strategy }) => ({ status, strategy })), [
+      { status: "draft", strategy: "integration" },
+      { status: "ready", strategy: "exact" },
+    ]);
+    assert.deepEqual({ draft: stages.data.stages[1].candidates.draft, ready: stages.data.stages[1].candidates.ready }, { draft: 1, ready: 1 });
+    assert.deepEqual(workContext.data.workspaces[0].stages[0].candidates, stages.data.stages[0].candidates);
+    assert.match(renderStagesPanel(stages), /Candidates · 1 draft · 1 ready/);
+    assert.match(renderStagesPanel(stages), /Pending: draft · integration · also 02/);
+    assert.match(renderStagesPanel(stages), /Pending: 1 draft · 1 ready/);
+    assert.doesNotMatch(JSON.stringify(stages), /CC-000001\.patch|base_head|selected_paths|snapshot candidate/);
+    context.handoff("999901", "01", "session-999901");
+    const resumed = context.startSession("999901", "01", { sessionId: "resumed", opencodeSessionId: "oc-resumed" });
+    assert.deepEqual(resumed.data.resume.context.pending_candidates, stages.data.stages[0].candidates);
+    assert.match(resumed.data.resume.instruction, /before switching stages or handing off/);
     assert.equal(pending.status, "draft");
+  } finally { cleanup(root); }
+});
+
+test("related candidate projections bound resume metadata without limiting lifecycle counts", () => {
+  const root = makeRepository();
+  try {
+    const context = openStartup(root);
+    for (let index = 0; index < 12; index += 1) {
+      context.createCandidate("999901", `${index}-${"x".repeat(200)}`, null, { relatedStages: ["01"] });
+    }
+    const snapshot = readStagesSnapshot({ projectRoot: root, sessionId: "session-999901" });
+    assert.deepEqual(snapshot.data.workspace.candidates, { pending: 12, ready: 0 });
+    assert.equal(snapshot.data.stages[0].candidates.draft, 12);
+    assert.equal(snapshot.data.stages[0].candidates.items.length, 10);
+    assert.equal(snapshot.data.stages[0].candidates.items[0].title.length, 120);
+    context.handoff("999901", "01", "session-999901");
+    const resumed = context.startSession("999901", "01", { sessionId: "bounded", opencodeSessionId: "oc-bounded" });
+    assert.deepEqual(resumed.data.resume.context.pending_candidates, snapshot.data.stages[0].candidates);
   } finally { cleanup(root); }
 });
 

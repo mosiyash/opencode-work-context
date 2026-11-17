@@ -472,6 +472,8 @@ workspace, every resume also supplies the agent with the startup policy:
 - a shared dirty worktree and concurrent stages are expected;
 - stages do not own files or commits;
 - ready work is captured promptly as an explicit commit candidate;
+- once a coherent commit intent exists, its draft candidate is created or
+  refreshed before switching stages or handing off;
 - exact, shared-foundation, and integration candidates express the intended
   commit boundary without claiming stage ownership;
 - mixed-stage provenance and complete files containing unrelated stage work are
@@ -515,10 +517,21 @@ records without strategy or stage-reference metadata remain readable; new
 candidates default to `exact` with no related stages.
 
 The sidebar reads only candidate metadata and shows a compact
-`Candidates · pending <count> · ready <count>` line when either count is nonzero.
-It does not inspect Git state, patches, paths, or candidate freshness. A `ready`
-label therefore means lifecycle status, not a guarantee that a later publication
-cannot encounter a conflict.
+`Candidates · <count> draft · <count> ready` line when either count is nonzero.
+With sidebar details enabled (`Ctrl+X D`), a stage with explicitly related active
+candidates also shows `Pending:` metadata. One related candidate includes its
+lifecycle status, strategy, and other related stage IDs; several candidates are
+shown as draft and ready counts. Resume exposes the same bounded metadata in
+`resume.context.pending_candidates`, so an agent can continue an existing commit
+intent instead of creating a duplicate. These projections do not assign
+ownership. They never inspect Git state, patches, selected paths, or candidate
+freshness. A `ready` label therefore means lifecycle status, not a guarantee that
+a later publication cannot encounter a conflict, and uncaptured worktree changes
+remain outside this projection. Per-stage projection counts remain complete, but
+resume and snapshot item details are bounded to 10 candidates with titles limited
+to 120 characters. Malformed local candidate records remain strict errors for
+candidate operations but are omitted from best-effort sidebar and resume
+projections so they cannot block unrelated stage work.
 
 Capture accepts either complete repository paths or one exact Git unified patch,
 which permits selecting individual hunks. Candidate metadata and patches are
@@ -541,6 +554,67 @@ If multiple stages have edited the same lines, Work Context cannot retrospective
 separate those edits by provenance. Use an integration candidate only when the
 combined patch is coherent and verified; otherwise stop and establish a safe
 candidate boundary before publication.
+
+### Delivery context
+
+Committing or pushing does not prove that an environment was updated. Delivery is
+a workspace-level concern that may aggregate committed candidates related to many
+stages. Planning-stage resume receives a bounded `delivery_context` when committed
+candidates or environment checkpoints exist. The sidebar renders metadata only:
+
+```text
+Delivery · 4 commits · plan needed
+Delivery · production · 2 tracked pending
+Delivery · production · 0 tracked pending
+```
+
+`tracked pending` compares committed candidate metadata with the recorded local
+checkpoint; it is not a live Git reachability claim. A reset, rebase, force-push,
+or external deployment change requires an explicit range inspection before acting.
+Malformed or inconsistent checkpoint metadata renders `Delivery · unavailable`
+instead of claiming a clean delivery state.
+
+When asked how to deploy, the Planning agent must inspect the exact commit range
+and the repository's own deployment documentation, scripts, infrastructure,
+migrations, container definitions, configuration examples, and CI. It then
+produces an ordered plan with prerequisites, deployment, verification, rollback,
+and unresolved blockers. The package does not encode stack-specific commands and
+does not assume that a push or one release command is sufficient.
+
+Delivery state is local and mode-neutral under
+`.work-context/local/delivery/<workspace>.json`. It stores only environment names,
+confirmed commit hashes, timestamps, and committed candidate ID/hash pairs.
+It never stores deployment commands, command output, hostnames, URLs, credentials,
+tokens, or secret values. Secret and configuration requirements may be discussed
+by name only. Each checkpoint carries an integrity checksum; malformed or edited
+checkpoint data fails closed as unavailable.
+
+Read metadata without inspecting Git:
+
+```text
+/wc delivery read 000123 production
+```
+
+Inspect one explicit immutable range:
+
+```text
+/wc delivery read 000123 production range <from-commit> <to-commit>
+```
+
+The range result is bounded to 500 commits and 500 changed paths and is returned
+only to the explicit operation; changed-path output also has a 4 MiB subprocess
+limit and fails with `DELIVERY_RANGE_TOO_LARGE` instead of consuming unbounded
+memory. Snapshots and sidebar renderers never invoke Git.
+After the user confirms that the target environment was updated successfully,
+record the checkpoint explicitly:
+
+```text
+/wc delivery mark 000123 production <deployed-commit> DELIVERY_CONFIRMED
+```
+
+Marking validates that the commit is reachable from current `HEAD`, records which
+committed candidates are included, and performs no deployment action. Checkpoints
+are per environment, so staging and production can advance independently.
 
 Candidate publication is serialized by the repository-scoped `candidate-git`
 lock. Any operation that needs both locks acquires `candidate-git` before the

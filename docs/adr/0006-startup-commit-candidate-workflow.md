@@ -52,10 +52,20 @@ and publication. Relations are never inferred from Git history, session history,
 touched files, or diffs. Candidate metadata written before these fields existed
 remains readable without migration.
 
-Read-only snapshots expose only pending and ready candidate counts. The stages
-sidebar may render those counts when nonzero. Renderers do not read Git state,
+Read-only snapshots expose draft and ready candidate counts plus bounded metadata
+for active candidates explicitly related to each stage. The stages sidebar
+renders workspace counts when nonzero and per-stage pending metadata only in its
+expanded details mode. Resume includes the same related candidate metadata so an
+agent can continue an existing commit intent before creating another boundary.
+Agents create or refresh a draft candidate once a coherent commit intent exists
+and before switching stages or handing off. Renderers do not read Git state,
 candidate patches, selected paths, or candidate metadata files directly. A
-ready count represents lifecycle state, not current applicability.
+ready count represents lifecycle state, not current applicability, and no
+candidate relation implies stage ownership. Per-stage counts are complete, while
+projected item details are bounded to 10 candidates with titles limited to 120
+characters. Projection is best-effort: malformed local records remain strict
+errors for direct candidate operations but cannot block sidebar rendering or an
+otherwise valid stage resume.
 
 ## Consequences
 

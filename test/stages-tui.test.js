@@ -118,7 +118,7 @@ test("snapshot resolves a session stored with its OpenCode session ID", () => {
   } finally { removeRoot(root); }
 });
 
-test("snapshot hides archived stages without renumbering the remaining stages", () => {
+test("snapshots hide archived stages and their dependencies without renumbering", () => {
   const root = makeRoot();
   try {
     const context = WorkContext.open(root, { actor: "test" });
@@ -126,10 +126,17 @@ test("snapshot hides archived stages without renumbering the remaining stages", 
     context.handoff("999977", "01", "oc-archive");
     context.addStage("999977", "Visible stage");
     context.addStage("999977", "Archived stage");
+    context.addStage("999977", "Dependent stage", { dependsOn: ["03"] });
     context.archiveStage("999977", "03");
     const result = readStagesSnapshot({ projectRoot: root, sessionId: "oc-archive" });
-    assert.deepEqual(result.data.stages.map((stage) => stage.id), ["01", "02"]);
+    assert.deepEqual(result.data.stages.map((stage) => stage.id), ["01", "02", "04"]);
     assert.equal(result.data.stages.some((stage) => stage.status === "archived"), false);
+    assert.deepEqual(result.data.stages.find((stage) => stage.id === "04").depends_on, []);
+
+    const workspaceResult = readWorkContextSnapshot({ projectRoot: root, sessionId: "oc-archive" });
+    const stages = workspaceResult.data.workspaces[0].stages;
+    assert.deepEqual(stages.map((stage) => stage.id), ["01", "02", "04"]);
+    assert.deepEqual(stages.find((stage) => stage.id === "04").depends_on, []);
   } finally { removeRoot(root); }
 });
 
@@ -170,7 +177,7 @@ test("renderer shows compact active candidate counts only when present", () => {
     stages: [],
   } });
 
-  assert.match(startup, /Workflow · startup\nCandidates · pending 1 · ready 2/);
+  assert.match(startup, /Workflow · startup\nCandidates · 1 draft · 2 ready/);
   assert.doesNotMatch(standard, /Candidates/);
 });
 
@@ -293,11 +300,12 @@ test("real TUI loader mounts a live storage update without remount", { skip: !tu
   context.addStage("999978", "Initial stage");
   let slot;
   let dispose;
+  const eventHandlers = {};
   const api = {
     state: { path: { worktree: root } },
     route: { current: { name: "session", params: { sessionID: "oc-live" } } },
      slots: { register: (plugin) => { slot = plugin.slots.sidebar_content; return () => {}; } },
-    event: { on: () => () => {} },
+    event: { on: (type, callback) => { eventHandlers[type] = callback; return () => {}; } },
     lifecycle: { onDispose: (callback) => { dispose = callback; return () => {}; } },
   };
   try {
@@ -306,8 +314,10 @@ test("real TUI loader mounts a live storage update without remount", { skip: !tu
     try {
       await setup.waitForFrame((frame) => frame.includes("02. Initial stage"));
       context.addStage("999978", "Added after mount");
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      await setup.waitForFrame((frame) => frame.includes("03. Added after mount"));
+      eventHandlers["session.updated"]({ properties: { info: { id: "oc-live" } } });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await setup.renderOnce();
+      assert.match(setup.captureCharFrame(), /03\. Added after mount/);
     } finally { setup.renderer.destroy(); }
   } finally {
     dispose?.();
@@ -401,7 +411,22 @@ test("native sidebar renders candidate counts from the snapshot", () => {
     workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "startup", candidates: { pending: 2, ready: 1 } },
     stages: [],
   } }, {}, runtime));
-  assert.match(output, /Workflow · startup\s+Candidates · pending 2 · ready 1\s+Stages/);
+  assert.match(output, /Workflow · startup\s+Candidates · 2 draft · 1 ready\s+Stages/);
+});
+
+test("native sidebar renders metadata-only delivery status", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const planNeeded = renderedText(renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "startup", delivery: { committed: 4, plan_needed: true, environments: [] } },
+    stages: [],
+  } }, {}, runtime));
+  const pending = renderedText(renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "startup", delivery: { committed: 4, plan_needed: false, environments: [{ environment: "production", pending: 2 }] } },
+    stages: [],
+  } }, {}, runtime));
+  assert.match(planNeeded, /Workflow · startup\s+Delivery · 4 commits · plan needed\s+Stages/);
+  assert.match(pending, /Delivery · production · 2 tracked pending/);
+  assert.doesNotMatch(`${planNeeded}${pending}`, /deployed_head|commit_hash|changed_paths/);
 });
 
 test("sidebar omits attention linked only to an archived stage", async () => {
@@ -426,21 +451,30 @@ test("sidebar omits attention linked only to an archived stage", async () => {
   } finally { controller.dispose(); removeRoot(root); }
 });
 
-test("sidebar lists tasks before direct dependencies on a single metadata line", () => {
+test("sidebar details list tasks, dependencies, and related pending candidates", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const output = renderedText(renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
     stages: [
       { id: "01", title: "Planning", status: "completed", depends_on: [] },
-      { id: "02", title: "Build", status: "planned", depends_on: ["01"], tracker_links: [{ provider: "gitlab", iid: 41 }] },
+      { id: "02", title: "Build", status: "planned", depends_on: ["01"], tracker_links: [{ provider: "gitlab", iid: 41 }], candidates: { draft: 1, ready: 0, items: [
+        { candidate: "CC-000001", title: "Integrated build", status: "draft", strategy: "integration", related_stages: ["02", "03"] },
+      ] } },
       { id: "03", title: "Release", status: "planned", depends_on: ["01", "02"] },
     ],
   } }, {}, runtime));
 
   assert.match(output, /01\. Planning/);
   assert.doesNotMatch(output, /01\. Planning\nDeps:/);
-  assert.match(output, /02\. Build\nTasks: GL#41 · Deps: 01/);
+  assert.match(output, /02\. Build\nTasks: GL#41 · Deps: 01\nPending: draft · integration · also 03/);
   assert.match(output, /03\. Release\nDeps: 01, 02/);
+  const compact = renderedText(renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress" },
+    stages: [{ id: "02", title: "Build", status: "planned", candidates: { draft: 1, ready: 0, items: [
+      { candidate: "CC-000001", title: "Integrated build", status: "draft", strategy: "integration", related_stages: ["02", "03"] },
+    ] } }],
+  } }, {}, runtime, undefined, false));
+  assert.doesNotMatch(compact, /Pending:/);
 });
 
 test("sidebar rows expose mouse handlers and route clicks through the selected stage", async () => {
@@ -493,7 +527,7 @@ test("sidebar clicks use the stage switcher flow and report navigation failures"
   }
 });
 
-test("sidebar dependency visibility toggles and persists locally", () => {
+test("sidebar detail visibility toggles and persists locally", () => {
   const root = makeRoot();
   try {
     const controller = createStagesTuiController({ projectRoot: root, pollMs: 0 });
@@ -508,7 +542,7 @@ test("sidebar dependency visibility toggles and persists locally", () => {
   } finally { removeRoot(root); }
 });
 
-test("TUI registers a hotkey to toggle sidebar dependencies", async () => {
+test("TUI registers a hotkey to toggle sidebar details", async () => {
   const root = makeRoot();
   const layers = [];
   let dispose;
@@ -520,7 +554,7 @@ test("TUI registers a hotkey to toggle sidebar dependencies", async () => {
   };
   try {
     await tuiModule.tui(api, { pollMs: 0 });
-    assert.deepEqual(layers[0].bindings, [{ key: "<leader>d", cmd: "work_context.toggle_dependencies", desc: "Toggle sidebar dependencies" }]);
+    assert.deepEqual(layers[0].bindings, [{ key: "<leader>d", cmd: "work_context.toggle_dependencies", desc: "Toggle sidebar details" }]);
     assert.equal(layers[0].commands[0].run(), true);
   } finally {
     dispose?.();

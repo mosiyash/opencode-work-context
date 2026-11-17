@@ -35,8 +35,28 @@ const trackerLinkText = (link) => {
   return `JIRA ${identifier}`;
 };
 const candidateSummaryText = (workspace) => workspace.candidates && (workspace.candidates.pending || workspace.candidates.ready)
-  ? `Candidates · pending ${workspace.candidates.pending} · ready ${workspace.candidates.ready}`
+  ? `Candidates · ${workspace.candidates.pending} draft · ${workspace.candidates.ready} ready`
   : null;
+const deliverySummaryText = (workspace) => {
+  const delivery = workspace.delivery;
+  if (!delivery) return null;
+  if (delivery.unavailable) return "Delivery · unavailable";
+  if (delivery.plan_needed) return `Delivery · ${delivery.committed} commits · plan needed`;
+  if (delivery.environments.length === 1) {
+    const [environment] = delivery.environments;
+    return `Delivery · ${environment.environment} · ${environment.pending} tracked pending`;
+  }
+  const pending = delivery.environments.reduce((total, environment) => total + environment.pending, 0);
+  return `Delivery · ${delivery.environments.length} environments · ${pending} tracked pending`;
+};
+const stageCandidateText = (stage) => {
+  const projection = stage.candidates;
+  if (!projection || !(projection.draft || projection.ready)) return null;
+  if (projection.draft + projection.ready > 1) return `Pending: ${projection.draft} draft · ${projection.ready} ready`;
+  const [candidate] = projection.items;
+  const others = candidate.related_stages.filter((related) => related !== stage.id);
+  return `Pending: ${candidate.status} · ${candidate.strategy}${others.length ? ` · also ${others.join(", ")}` : ""}`;
+};
 
 export { readStagesSnapshot, renderStagesPanel };
 
@@ -56,6 +76,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
         runtime.jsx("text", { fg: theme?.current?.textMuted, children: `Workflow · ${result.data.workspace.mode || "standard"}` }),
         workspaceAttention && runtime.jsx("text", { children: ["Attention · ", runtime.jsx("b", { children: workspaceAttention })] }),
         candidateSummaryText(result.data.workspace) && runtime.jsx("text", { fg: theme?.current?.textMuted, children: candidateSummaryText(result.data.workspace) }),
+        deliverySummaryText(result.data.workspace) && runtime.jsx("text", { fg: theme?.current?.textMuted, children: deliverySummaryText(result.data.workspace) }),
       ].filter(Boolean),
     }),
     runtime.jsx("box", {
@@ -68,10 +89,11 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
     ...result.data.stages.map((stage) => {
       const unread = attention?.attentionForStage?.(result.data.workspace.id, stage.id);
       const working = attention?.activityForStage?.(result.data.workspace.id, stage.id);
-      const metadata = showDependencies ? [
+      const stageMetadata = [
         stage.tracker_links?.length && `Tasks: ${stage.tracker_links.map(trackerLinkText).join(", ")}`,
         stage.depends_on?.length && `Deps: ${stage.depends_on.join(", ")}`,
-      ].filter(Boolean).join(" · ") : "";
+      ].filter(Boolean).join(" · ");
+      const metadata = showDependencies ? [stageMetadata, stageCandidateText(stage)].filter(Boolean).join("\n") : "";
       const attentionSignal = attentionSummaryText(unread);
       const stageText = [
         `${stage.id}. ${stage.title}`,
@@ -286,8 +308,8 @@ const registerDependencyToggle = (api, controller, projectRoot) => {
   if (typeof api?.keymap?.registerLayer !== "function") return () => {};
   const command = {
     name: DEPENDENCIES_COMMAND,
-    title: "Toggle sidebar dependencies",
-    desc: "Show or hide dependency IDs in the stages sidebar",
+    title: "Toggle sidebar details",
+    desc: "Show or hide stage tasks, dependencies, and pending candidates",
     category: "Work Context",
     namespace: "palette",
     run: () => {

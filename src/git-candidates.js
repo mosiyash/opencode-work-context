@@ -10,9 +10,10 @@ const git = (root, args, options = {}) => {
     encoding: options.encoding === null ? null : "utf8",
     env: { ...process.env, ...options.env },
     input: options.input,
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: options.maxBuffer ?? 64 * 1024 * 1024,
   });
   if (result.error?.code === "ENOENT") fail(ERROR_CODES.GIT_UNAVAILABLE, "Git executable is unavailable");
+  if (result.error?.code === "ENOBUFS") fail(options.code || ERROR_CODES.GIT_UNAVAILABLE, options.message || "Git output exceeded the supported limit", { maxBuffer: options.maxBuffer });
   if (result.error) fail(ERROR_CODES.GIT_UNAVAILABLE, "Cannot execute Git", { cause: result.error.message });
   if (result.status !== 0 && !options.allowFailure) {
     fail(options.code || ERROR_CODES.CANDIDATE_INVALID_PATCH, options.message || "Git operation failed", {
@@ -34,6 +35,48 @@ export function repositoryState(projectRoot) {
   });
   if (head.status !== 0) fail(ERROR_CODES.CANDIDATE_STALE_BASE, "Git repository has no valid HEAD");
   return { root, head: head.stdout.trim() };
+}
+
+const assertCommitHash = (value, label) => {
+  if (typeof value !== "string" || !/^[0-9a-f]{40,64}$/.test(value)) fail(ERROR_CODES.INVALID_ARGUMENT, `${label} must be a full commit hash`);
+  return value;
+};
+
+const commitExists = (root, commit) => git(root, ["cat-file", "-e", `${commit}^{commit}`], { allowFailure: true }).status === 0;
+
+export function isCommitAncestor(projectRoot, ancestor, descendant) {
+  const repository = repositoryState(projectRoot);
+  ancestor = assertCommitHash(ancestor, "Ancestor");
+  descendant = assertCommitHash(descendant, "Descendant");
+  if (!commitExists(repository.root, ancestor) || !commitExists(repository.root, descendant)) return false;
+  return git(repository.root, ["merge-base", "--is-ancestor", ancestor, descendant], { allowFailure: true }).status === 0;
+}
+
+export function inspectCommitRange(projectRoot, from, to) {
+  const repository = repositoryState(projectRoot);
+  from = assertCommitHash(from, "Range start");
+  to = assertCommitHash(to, "Range end");
+  if (!commitExists(repository.root, from) || !commitExists(repository.root, to) || !isCommitAncestor(repository.root, from, to)) {
+    fail(ERROR_CODES.DELIVERY_INVALID_RANGE, "Delivery range must contain available commits in ancestor order", { from, to });
+  }
+  const commitCount = Number(git(repository.root, ["rev-list", "--count", `${from}..${to}`]).stdout.trim());
+  const commits = git(repository.root, ["rev-list", "--reverse", `--skip=${Math.max(0, commitCount - 500)}`, "--max-count=500", `${from}..${to}`]).stdout.trim().split("\n").filter(Boolean);
+  const names = git(repository.root, ["diff", "--name-only", "-z", from, to, "--"], {
+    encoding: null,
+    maxBuffer: 4 * 1024 * 1024,
+    code: ERROR_CODES.DELIVERY_RANGE_TOO_LARGE,
+    message: "Delivery changed-path output exceeds the supported 4 MiB limit",
+  }).stdout.toString("utf8").split("\0").filter(Boolean);
+  return {
+    from,
+    to,
+    commit_count: commitCount,
+    commits,
+    commits_truncated: commitCount > commits.length,
+    changed_path_count: names.length,
+    changed_paths: names.slice(0, 500),
+    paths_truncated: names.length > 500,
+  };
 }
 
 function withTemporaryIndex(root, base, fn) {

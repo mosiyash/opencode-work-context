@@ -37,6 +37,8 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `candidate ready <workspace> <candidateId>` -> `work_context_ready_candidate`
 - `candidate commit <workspace> <candidateId> ["message"]` -> `work_context_commit_candidate`
 - `candidate discard <workspace> <candidateId>` -> `work_context_discard_candidate`
+- `delivery read <workspace> [<environment>] [range <from> <to>]` -> `work_context_read_delivery`
+- `delivery mark <workspace> <environment> <commit> DELIVERY_CONFIRMED` -> `work_context_mark_delivery`
 - `workspace finish <workspace>` -> `work_context_workspace_finish`
 - `workspace reopen <workspace> "reason"` -> `work_context_reopen_workspace`
 - `resume <workspace> <stage>` -> `work_context_start_session`
@@ -74,6 +76,8 @@ Supported syntax:
 - `candidate ready <workspace> <candidateId>`
 - `candidate commit <workspace> <candidateId> ["message"]`
 - `candidate discard <workspace> <candidateId>`
+- `delivery read <workspace> [<environment>] [range <from> <to>]`
+- `delivery mark <workspace> <environment> <commit> DELIVERY_CONFIRMED`
 - `workspace finish <workspace>`
 - `workspace reopen <workspace> "reason"`
 - `resume <workspace> <stage>`
@@ -111,7 +115,10 @@ Supported syntax:
 - do not expose raw workspace/stage/session identifiers, ordinals, `ok` flags, or absent error codes in the user-facing resume summary
 - `resume.context.workspace_knowledge` contains every active durable knowledge entry for the workspace; treat it as established shared context, and do not repeat earlier analysis unless an entry is incomplete, contradicted, or needs verification
 - when stage execution state exists, `resume.context.execution_state` is the current stage-local operational checkpoint; continue from it without rewriting the original prompt, and never copy it automatically into workspace knowledge or unrelated stages
-- an associated OpenCode session resumed in a `startup` workspace receives `resume.context.workflow_policy`; follow it as active agent policy: a shared dirty worktree and concurrent stages are expected, stages do not own files or commits, and ready work should be captured promptly into an explicit candidate; prefer an `exact` candidate when safely separable, use `shared_foundation` when several stages use one coherent change, and use `integration` when intertwined changes form one reviewable and testable result; mixed provenance and complete files containing unrelated stage work are not reasons to require prior commits or stop; stop only for a concrete patch conflict, an incoherent candidate boundary, or failed required verification
+- Planning-stage resume may include `resume.context.delivery_context`, a bounded workspace-level summary of committed candidates and environment checkpoints; it is release coordination context, not stage ownership
+- when the user asks how to deploy from Planning, inspect the exact commit range and the repository's own deployment documentation, scripts, infrastructure, migrations, container definitions, configuration examples, and CI; produce ordered prerequisites, deployment, verification, rollback, and unresolved blockers instead of assuming that push or one generic command is sufficient
+- delivery planning must never persist secret values; mention only required secret or configuration names, ask one focused question when environment or baseline is ambiguous, and never mark delivery merely because commit, push, or CI succeeded
+- an associated OpenCode session resumed in a `startup` workspace receives `resume.context.workflow_policy`; follow it as active agent policy: a shared dirty worktree and concurrent stages are expected, stages do not own files or commits, and ready work should be captured promptly into an explicit candidate; once a coherent commit intent exists, create or refresh its draft candidate before switching stages or handing off; on resume inspect `resume.context.pending_candidates` before creating a duplicate or another commit boundary; prefer an `exact` candidate when safely separable, use `shared_foundation` when several stages use one coherent change, and use `integration` when intertwined changes form one reviewable and testable result; mixed provenance and complete files containing unrelated stage work are not reasons to require prior commits or stop; stop only for a concrete patch conflict, an incoherent candidate boundary, or failed required verification
 - standard-mode and unassociated core sessions do not receive startup policy; retain the existing conservative worktree behavior there
 - after presenting the summary, continue work immediately when `resume.next_action` is `start_work`; do not ask for generic confirmation
 - a stage may require confirmation only with an exact standalone `RESUME_CONFIRMATION: required` line in its saved prompt; when `resume.next_action` is `await_confirmation`, present the summary and wait before inspecting or modifying application code
@@ -129,7 +136,8 @@ Supported syntax:
 - `stage reopen <workspace> <stage> "reason"` applies only to a completed stage, preserves its result and completion history, records the reason, changes it to `in_progress`, and does not start a session or affect downstream stages; use an explicit separate-session `resume` to work on it again
 - `stage restore <workspace> <stage> "reason"` applies only to an archived stage and restores its saved pre-archive status. New archives preserve that status; legacy archives restore to `in_progress`. It records the reason, preserves stage content and results, does not start a session, and requires explicit separate-session `resume` when restored to `planned` or `in_progress`.
 - `workspace reopen <workspace> "reason"` applies only to a completed workspace, changes it to `in_progress`, and records durable recovery history. Cancelled workspaces cannot be reopened.
-- candidate operations require `startup` workflow mode and store metadata and patch payloads only under `.work-context/local/`; create accepts an optional strategy and related stages, which are normalized references for traceability only and never ownership or lifecycle; capture requires exactly one explicit list of complete paths or one Git unified patch and never infers stage ownership; commit requires a ready candidate, uses its stored message unless a non-empty override is supplied, serializes Git publication, bypasses hooks and signing, and never uses the ordinary Git index
+- candidate operations require `startup` workflow mode and store metadata and patch payloads only under `.work-context/local/`; create accepts an optional strategy and related stages, which are normalized references for traceability only and never ownership or lifecycle; active candidates explicitly related to the resumed stage appear as bounded metadata in `resume.context.pending_candidates` and in expanded sidebar details; capture requires exactly one explicit list of complete paths or one Git unified patch and never infers stage ownership; commit requires a ready candidate, uses its stored message unless a non-empty override is supplied, serializes Git publication, bypasses hooks and signing, and never uses the ordinary Git index
+- delivery operations are mode-neutral local operational state and never execute deployment; `delivery read` without a range returns metadata only, exact Git inspection requires both immutable `from` and `to` hashes, and `delivery mark` requires the exact `DELIVERY_CONFIRMED` token only after the user confirms successful delivery to that environment
 - `knowledge list|add|update|supersede <workspace> ...`
 
 Arguments: $ARGUMENTS

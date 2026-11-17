@@ -7,6 +7,25 @@ const statusMarker = (status) => ({
 }[status] || "[?]");
 
 const compareStageIds = (left, right) => Number(left.id) - Number(right.id);
+const candidateSummary = (stage) => {
+  const projection = stage.candidates;
+  if (!projection || !(projection.draft || projection.ready)) return null;
+  if (projection.draft + projection.ready > 1) return `Pending: ${projection.draft} draft · ${projection.ready} ready`;
+  const [candidate] = projection.items;
+  const others = candidate.related_stages.filter((related) => related !== stage.id);
+  return `Pending: ${candidate.status} · ${candidate.strategy}${others.length ? ` · also ${others.join(", ")}` : ""}`;
+};
+const deliverySummary = (delivery) => {
+  if (!delivery) return null;
+  if (delivery.unavailable) return "Delivery · unavailable";
+  if (delivery.plan_needed) return `Delivery · ${delivery.committed} commits · plan needed`;
+  if (delivery.environments.length === 1) {
+    const [environment] = delivery.environments;
+    return `Delivery · ${environment.environment} · ${environment.pending} tracked pending`;
+  }
+  const pending = delivery.environments.reduce((total, environment) => total + environment.pending, 0);
+  return `Delivery · ${delivery.environments.length} environments · ${pending} tracked pending`;
+};
 
 /**
  * Render normalized stages as a dependency-to-dependent forest. A stage may
@@ -59,10 +78,13 @@ export function renderStagesPanel(result) {
     `Workflow · ${snapshot.workspace.mode || "standard"}`,
   ];
   const candidates = snapshot.workspace.candidates;
-  if (candidates && (candidates.pending || candidates.ready)) lines.push(`Candidates · pending ${candidates.pending} · ready ${candidates.ready}`);
+  if (candidates && (candidates.pending || candidates.ready)) lines.push(`Candidates · ${candidates.pending} draft · ${candidates.ready} ready`);
+  const delivery = deliverySummary(snapshot.workspace.delivery);
+  if (delivery) lines.push(delivery);
   lines.push("", `Stages · ${snapshot.workspace.status}`);
   for (const stage of snapshot.stages) {
-    lines.push(`${statusMarker(stage.status)} ${stage.id}. ${stage.title}${stage.depends_on?.length ? `\nDeps: ${stage.depends_on.join(", ")}` : ""}`);
+    const pending = candidateSummary(stage);
+    lines.push(`${statusMarker(stage.status)} ${stage.id}. ${stage.title}${stage.depends_on?.length ? `\nDeps: ${stage.depends_on.join(", ")}` : ""}${pending ? `\n${pending}` : ""}`);
   }
   if (result.stale) lines.push(`! stale: ${result.error?.code || "STORAGE_ERROR"}`);
   return lines.join("\n");

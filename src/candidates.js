@@ -8,6 +8,9 @@ import { capturePatch, capturePaths, commitPatch, previewPatch, repositoryState 
 const candidatePattern = /^CC-(\d{6})$/;
 const statuses = new Set(["draft", "ready", "discarded", "committed"]);
 const strategies = new Set(["exact", "shared_foundation", "integration"]);
+const projectionCandidateLimit = 10;
+const projectionTitleLimit = 120;
+const deliveryCandidateLimit = 20;
 const timestamp = (value) => typeof value === "string" && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
 const metadataKeys = ["schema", "candidate", "workspace", "title", "message", "base_head", "status", "created_at", "updated_at", "selected_paths", "patch_file"];
 const optionalMetadataKeys = ["strategy", "related_stages"];
@@ -106,11 +109,63 @@ export class CandidateStore {
   }
 
   summary(workspace) {
-    return this.list(workspace).reduce((summary, candidate) => {
-      if (candidate.status === "draft") summary.pending += 1;
-      if (candidate.status === "ready") summary.ready += 1;
-      return summary;
-    }, { pending: 0, ready: 0 });
+    return this.activeProjection(workspace).summary;
+  }
+
+  projectionRecords(workspace) {
+    workspace = normalizeWorkspaceId(workspace);
+    this.context.storage.readWorkspace(workspace);
+    if (!fs.existsSync(this.directory)) return [];
+    return fs.readdirSync(this.directory)
+      .filter((file) => candidatePattern.test(file.slice(0, -5)) && file.endsWith(".json"))
+      .sort()
+      .flatMap((file) => {
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(this.directory, file), "utf8"));
+          if (data?.workspace !== workspace) return [];
+          return [validateCandidate(data, file.slice(0, -5))];
+        } catch { return []; }
+      });
+  }
+
+  activeProjection(workspace) {
+    const projection = { summary: { pending: 0, ready: 0 }, by_stage: {} };
+    workspace = this.assertStartup(workspace);
+    for (const candidate of this.projectionRecords(workspace)) {
+      if (!["draft", "ready"].includes(candidate.status)) continue;
+      if (candidate.status === "draft") projection.summary.pending += 1;
+      if (candidate.status === "ready") projection.summary.ready += 1;
+      const related = {
+        candidate: candidate.candidate,
+        title: candidate.title.slice(0, projectionTitleLimit),
+        status: candidate.status,
+        strategy: candidate.strategy || "exact",
+        related_stages: candidate.related_stages || [],
+      };
+      for (const stage of related.related_stages) {
+        const stageProjection = projection.by_stage[stage] ||= { draft: 0, ready: 0, items: [] };
+        stageProjection[candidate.status] += 1;
+        if (stageProjection.items.length < projectionCandidateLimit) stageProjection.items.push(related);
+      }
+    }
+    return projection;
+  }
+
+  committedProjection(workspace) {
+    const records = this.projectionRecords(workspace)
+      .filter((candidate) => candidate.status === "committed")
+      .sort((left, right) => left.committed_at.localeCompare(right.committed_at) || left.candidate.localeCompare(right.candidate));
+    return {
+      count: records.length,
+      items: records.slice(-deliveryCandidateLimit).map((candidate) => ({
+        candidate: candidate.candidate,
+        title: candidate.title.slice(0, projectionTitleLimit),
+        strategy: candidate.strategy || "exact",
+        related_stages: candidate.related_stages || [],
+        commit_hash: candidate.commit_hash,
+        committed_at: candidate.committed_at,
+      })),
+    };
   }
 
   capture(workspace, id, input) {

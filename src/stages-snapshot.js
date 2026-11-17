@@ -35,17 +35,24 @@ export function readStagesSnapshot({ projectRoot, sessionId }) {
 
     const workspace = context.storage.readWorkspace(session.workspace).data;
     const mode = workspace.mode || "standard";
-    const candidates = mode === "startup" ? context.candidates().summary(session.workspace) : null;
-    const stages = context.listStages(session.workspace).data.stages
+    const candidateProjection = mode === "startup" ? context.candidates().activeProjection(session.workspace) : null;
+    const deliveryProjection = context.deliveries().projection(session.workspace);
+    const delivery = deliveryProjection.committed.count || deliveryProjection.environments.length || deliveryProjection.unavailable
+      ? { committed: deliveryProjection.committed.count, plan_needed: deliveryProjection.plan_needed, environments: deliveryProjection.environments, ...(deliveryProjection.unavailable ? { unavailable: true } : {}) }
+      : null;
+    const visibleStages = context.listStages(session.workspace).data.stages
       .filter((stage) => stage.status !== "archived")
-      .sort((left, right) => Number(left.stage) - Number(right.stage))
+      .sort((left, right) => Number(left.stage) - Number(right.stage));
+    const visibleStageIds = new Set(visibleStages.map((stage) => stage.stage));
+    const stages = visibleStages
       .map((stage) => ({
         id: stage.stage,
         title: stage.title,
         status: stage.status,
         description: stage.description,
-        depends_on: stage.depends_on,
+        depends_on: stage.depends_on.filter((dependency) => visibleStageIds.has(dependency)),
         tracker_links: stage.tracker_links || [],
+        ...(candidateProjection?.by_stage[stage.stage] ? { candidates: candidateProjection.by_stage[stage.stage] } : {}),
         current: stage.stage === session.stage,
       }));
     const currentStage = stages.some((stage) => stage.current) ? session.stage : null;
@@ -54,7 +61,7 @@ export function readStagesSnapshot({ projectRoot, sessionId }) {
       ok: true,
       data: {
         schema: 1,
-        workspace: { id: workspace.workspace, title: workspace.title, status: workspace.status, mode, ...(candidates ? { candidates } : {}) },
+        workspace: { id: workspace.workspace, title: workspace.title, status: workspace.status, mode, ...(candidateProjection ? { candidates: candidateProjection.summary } : {}), ...(delivery ? { delivery } : {}) },
         stages,
         currentStage,
         generatedAt: new Date().toISOString(),

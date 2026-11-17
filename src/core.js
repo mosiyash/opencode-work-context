@@ -9,6 +9,7 @@ import { nextKnowledgeId, parseKnowledge, renderKnowledge, validateKnowledgeInpu
 import { normalizeStageId, normalizeWorkspaceId } from "./identifiers.js";
 import { isDependencySatisfied } from "./stage-status.js";
 import { CandidateStore } from "./candidates.js";
+import { DeliveryStore } from "./delivery.js";
 import { applyExecutionPatch, assertExecutionSize, executionState, normalizeExecutionState } from "./stage-execution.js";
 
 const actor = (options) => options.actor || "OpenCode";
@@ -35,6 +36,8 @@ const startupWorkflowPolicy = () => ({
   guidance: [
     "A shared dirty worktree and concurrent stages are expected; stages do not own files or commits.",
     "Capture ready work promptly as an explicit commit candidate while unrelated work remains in progress.",
+    "Once a coherent commit intent exists, create or refresh its draft candidate before switching stages or handing off so pending publication remains visible in related stage context.",
+    "On resume, inspect related pending candidates before creating a duplicate or starting another commit boundary.",
     "Choose an exact candidate when separable, a shared foundation candidate when several stages use one change, or an integration candidate when intertwined changes form one coherent reviewable result.",
     "Mixed-stage provenance or complete files containing unrelated stage work are not reasons to stop, require prior commits, or reconstruct ownership after the fact.",
     "Stop only for a concrete patch conflict, an incoherent candidate boundary, or failed required verification, and report it explicitly.",
@@ -50,6 +53,7 @@ const resumePresentationInstruction = ({ confirmationRequired }) => `Before doin
 - State the immediate next action in one sentence.
 ${confirmationRequired ? "- Ask for the explicitly required confirmation and wait before inspecting or changing application code." : "- Then continue with the work immediately. Do not ask for generic confirmation; ask a focused question only when an unresolved decision genuinely blocks progress."}`;
 const executionInstruction = (record) => record ? `\n\nCurrent stage execution state:\n${JSON.stringify(record, null, 2)}\nTreat this bounded stage-local ledger as the current operational checkpoint. Update it after meaningful scope changes, decisions, substantial work, blockers, or verification changes, and before handoff; do not update it for trivial tool calls.` : "";
+const deliveryPlanningInstruction = `\n\nDelivery planning policy:\n- When the user asks how to deploy, treat this as workspace-level delivery planning across all relevant committed changes, not as ownership by the current stage.\n- Inspect the exact commit range and the repository's own deployment documentation, scripts, infrastructure, migrations, container definitions, configuration examples, and CI before proposing commands.\n- Produce an ordered plan covering prerequisites, deployment, verification, rollback, and unresolved blockers. Ask one focused question when the target environment or baseline is genuinely ambiguous.\n- Never persist secret values. Mention only required secret or configuration names.\n- Never mark delivery from a successful commit or push alone. Use explicit delivery confirmation only after the user confirms that the target environment was updated successfully.`;
 const assertNoSymlinkPath = (file) => { let current = path.parse(file).root; for (const part of file.slice(current.length).split(path.sep).filter(Boolean)) { current = path.join(current, part); try { if (fs.lstatSync(current).isSymbolicLink()) fail(ERROR_CODES.STORAGE_ERROR, `Symlink path component is not supported: ${current}`); } catch (error) { if (error.code !== "ENOENT") throw error; break; } } };
 
 function parseIssue(url) {
@@ -248,7 +252,7 @@ export class WorkContext {
              lifecycle: { automatic_finish_allowed: false },
           },
           next_action: "start_work",
-           instruction: `${planningPrompt}${startupWorkflowInstruction(workflowPolicy)}\n\nDo not invoke stage finish unless the user explicitly requests the lifecycle command. Automatic completion is permitted only when lifecycle.automatic_finish_allowed is true, which requires the exact AUTO_STAGE_FINISH: allowed line in this workspace's Planning-stage prompt.`,
+           instruction: `${planningPrompt}${startupWorkflowInstruction(workflowPolicy)}${deliveryPlanningInstruction}\n\nDo not invoke stage finish unless the user explicitly requests the lifecycle command. Automatic completion is permitted only when lifecycle.automatic_finish_allowed is true, which requires the exact AUTO_STAGE_FINISH: allowed line in this workspace's Planning-stage prompt.`,
         },
       }, [workspace, "01"]);
     });
@@ -284,6 +288,7 @@ export class WorkContext {
   }
 
   candidates() { return new CandidateStore(this); }
+  deliveries() { return new DeliveryStore(this); }
 
   createCandidate(workspace, title, message = null, options = {}) {
     return this.transact("candidate-create", () => this.result(this.candidates().create(workspace, title, message, options), ["local:candidates"]));
@@ -316,6 +321,15 @@ export class WorkContext {
     // Operations needing both locks always acquire candidate-git before write.
     return withLock(this.storage.lockPath("candidate-git"), () => this.transact("candidate-commit", () =>
       this.result(this.candidates().commit(workspace, candidate, message, options), ["local:candidates"])
+    ), { session: this.options.sessionId, owner: actor(this.options) });
+  }
+
+  readDelivery(workspace, options = {}) { return { ok: true, data: this.deliveries().readContext(workspace, options) }; }
+
+  markDelivery(workspace, environment, commit, confirmation) {
+    this.storage.assertSafeRoots();
+    return withLock(this.storage.lockPath("candidate-git"), () => this.transact("delivery-mark", () =>
+      this.result(this.deliveries().mark(workspace, environment, commit, confirmation), ["local:delivery"])
     ), { session: this.options.sessionId, owner: actor(this.options) });
   }
 
@@ -362,6 +376,9 @@ export class WorkContext {
        const workspaceRecord = this.storage.readWorkspace(workspace).data;
        const workspaceTitle = workspaceRecord.title;
        const workflowPolicy = workspaceMode(workspaceRecord) === "startup" && options.opencodeSessionId ? startupWorkflowPolicy() : null;
+       const pendingCandidates = workflowPolicy ? this.candidates().activeProjection(workspace).by_stage[stage] || null : null;
+       const deliveryContext = stage === "01" ? this.deliveries().projection(workspace) : null;
+       const hasDeliveryContext = deliveryContext && (deliveryContext.committed.count || deliveryContext.environments.length || deliveryContext.unavailable);
       const workspaceKnowledge = activeKnowledge(this.listKnowledge(workspace).data);
       const execution = this.storage.readStageExecution(workspace, stage);
       const automaticFinish = automaticFinishAllowed(this.storage, workspace);
@@ -394,12 +411,14 @@ export class WorkContext {
             now: hasPrompt ? stageRecord.data.prompt : "First clarify the task and work plan with the user.",
             workspace_knowledge: workspaceKnowledge,
             ...(execution ? { execution_state: execution } : {}),
+            ...(pendingCandidates ? { pending_candidates: pendingCandidates } : {}),
+            ...(hasDeliveryContext ? { delivery_context: deliveryContext } : {}),
              ...(workflowPolicy ? { workflow_policy: workflowPolicy } : {}),
              lifecycle: { automatic_finish_allowed: automaticFinish },
           },
           next_action: hasPrompt ? confirmationRequired ? "await_confirmation" : "start_work" : "ask_questions",
           instruction: `${hasPrompt
-             ? `${resumePresentationInstruction({ confirmationRequired })}\n\nSaved working prompt:\n${stageRecord.data.prompt}${executionInstruction(execution)}${startupWorkflowInstruction(workflowPolicy)}`
+             ? `${resumePresentationInstruction({ confirmationRequired })}\n\nSaved working prompt:\n${stageRecord.data.prompt}${executionInstruction(execution)}${startupWorkflowInstruction(workflowPolicy)}${stage === "01" ? deliveryPlanningInstruction : ""}`
             : `This stage has no non-empty prompt. Give the user a concise plain-language summary of the stage title and goal, then ask focused questions needed to define the intended outcome and scope. Do not inspect or modify application code yet. Do not report raw operation metadata or identifiers.`}\n\nDo not invoke stage finish unless the user explicitly requests the lifecycle command. Automatic completion is permitted only when lifecycle.automatic_finish_allowed is true, which requires the exact AUTO_STAGE_FINISH: allowed line in this workspace's Planning-stage prompt.`,
         },
       }, [workspace, stage]);
@@ -805,8 +824,8 @@ export class WorkContext {
   help(command = "") {
     return this.result({
       command,
-      syntax: "/wc [create|list|workspace list|workspace rename|workspace mode|candidate create|candidate capture|candidate preview|candidate show|candidate list|candidate ready|candidate commit|candidate discard|workspace finish|workspace reopen|resume|stage add|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage execution read|stage execution replace|stage execution update|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
-       note: "stage execution state is a bounded stage-local operational checkpoint; replace and update require the current revision and active stage session, while read is available without mutation; checklist state never completes a stage, and explicit stage finish reports remaining execution work while preserving the final ledger; associated OpenCode sessions in startup-mode workspaces receive the shared-worktree and commit-candidate policy on resume; standard mode remains conservative; candidate strategies are exact, shared_foundation, and integration, with optional related stage references for traceability only; commit candidates are local-only and require startup workflow mode; capture and commit use isolated Git indexes and never alter the ordinary index; candidate commit uses the stored message unless an explicit non-empty override is provided, and bypasses Git hooks and signing; stage finish requires an explicit user lifecycle request unless the Planning-stage prompt contains the exact line AUTO_STAGE_FINISH: allowed; stage reopen requires a completed stage and a reason; stage restore requires an archived stage and a reason, returns its saved pre-archive status (or in_progress for legacy archives), and requires explicit separate-session resume when actionable; workspace reopen requires a completed workspace and a reason.",
+      syntax: "/wc [create|list|workspace list|workspace rename|workspace mode|candidate create|candidate capture|candidate preview|candidate show|candidate list|candidate ready|candidate commit|candidate discard|delivery read|delivery mark|workspace finish|workspace reopen|resume|stage add|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage execution read|stage execution replace|stage execution update|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
+       note: "delivery context is workspace-level local operational state; exact Git range inspection requires explicit immutable from and to hashes, while marking an environment requires DELIVERY_CONFIRMED after successful delivery and never executes deployment commands or stores secrets; stage execution state is a bounded stage-local operational checkpoint; replace and update require the current revision and active stage session, while read is available without mutation; checklist state never completes a stage, and explicit stage finish reports remaining execution work while preserving the final ledger; associated OpenCode sessions in startup-mode workspaces receive the shared-worktree and commit-candidate policy on resume; standard mode remains conservative; candidate strategies are exact, shared_foundation, and integration, with optional related stage references for traceability only; active candidates related to the resumed stage appear in resume.context.pending_candidates; commit candidates are local-only and require startup workflow mode; capture and commit use isolated Git indexes and never alter the ordinary index; candidate commit uses the stored message unless an explicit non-empty override is provided, and bypasses Git hooks and signing; stage finish requires an explicit user lifecycle request unless the Planning-stage prompt contains the exact line AUTO_STAGE_FINISH: allowed; stage reopen requires a completed stage and a reason; stage restore requires an archived stage and a reason, returns its saved pre-archive status (or in_progress for legacy archives), and requires explicit separate-session resume when actionable; workspace reopen requires a completed workspace and a reason.",
     }, []);
   }
 

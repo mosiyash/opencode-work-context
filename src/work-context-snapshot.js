@@ -32,23 +32,31 @@ const readWorkspace = (context, record, currentSession) => {
     : sessions.find((session) => session.session_id === currentSession?.session_id);
   const currentStage = matchingSession?.stage || null;
   const mode = record.mode || "standard";
-  const candidates = mode === "startup" ? context.candidates().summary(record.workspace) : null;
+  const candidateProjection = mode === "startup" ? context.candidates().activeProjection(record.workspace) : null;
+  const deliveryProjection = context.deliveries().projection(record.workspace);
+  const delivery = deliveryProjection.committed.count || deliveryProjection.environments.length || deliveryProjection.unavailable
+    ? { committed: deliveryProjection.committed.count, plan_needed: deliveryProjection.plan_needed, environments: deliveryProjection.environments, ...(deliveryProjection.unavailable ? { unavailable: true } : {}) }
+    : null;
+  const visibleStages = listed.stages
+    .filter((stage) => stage.status !== "archived")
+    .sort((left, right) => Number(left.stage) - Number(right.stage));
+  const visibleStageIds = new Set(visibleStages.map((stage) => stage.stage));
   return {
     id: record.workspace,
     title: record.title,
     status: record.status,
     mode,
-    ...(candidates ? { candidates } : {}),
-    stages: listed.stages
-      .filter((stage) => stage.status !== "archived")
-      .sort((left, right) => Number(left.stage) - Number(right.stage))
+    ...(candidateProjection ? { candidates: candidateProjection.summary } : {}),
+    ...(delivery ? { delivery } : {}),
+    stages: visibleStages
       .map((stage) => ({
         id: stage.stage,
         title: stage.title,
         status: stage.status,
         description: stage.description,
-        depends_on: stage.depends_on,
+        depends_on: stage.depends_on.filter((dependency) => visibleStageIds.has(dependency)),
         tracker_links: stage.tracker_links || [],
+        ...(candidateProjection?.by_stage[stage.stage] ? { candidates: candidateProjection.by_stage[stage.stage] } : {}),
         current: stage.stage === currentStage,
       })),
     currentStage,
