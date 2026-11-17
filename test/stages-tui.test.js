@@ -6,7 +6,8 @@ import test from "node:test";
 import { testRender } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { WorkContext, readStagesSnapshot, readWorkContextSnapshot, renderDependencyTree, renderStagesPanel } from "../src/index.js";
-import tuiModule, { createStagesTuiController, dependencyTreeOptions, openDependencyTreeDialog, renderStagesElement, sessionIdForSlot } from "../plugin/stages-tui.js";
+import tuiModule, { createStagesTuiController, dependencyTreeOptions, openDependencyTreeDialog, renderStagesElement, resolveProjectRoot, sessionIdForSlot } from "../plugin/stages-tui.js";
+import { withProjectRoot } from "../plugin/project-root.js";
 import realTuiLoader from "../.opencode/tui-plugins/work-context-stages.js";
 import { appendPromptCommand, buildWorkContextActionCommand, createWorkContextActionFlow, createWorkContextModalController, filterWorkspaces, insertPromptCommand, prepareWorkContextCommand, registerWorkContextModal, renderWorkContextModal, WORK_CONTEXT_ACTIONS } from "../plugin/work-context-modal.js";
 import { createStageSwitcherFlow, readStageSwitcherSnapshot, recentStageIds, rememberRecentStage, selectStageSession, startStageSession, switchToStage } from "../plugin/stage-switcher.js";
@@ -757,6 +758,141 @@ test("TUI waits for a late worktree path and does not initialize storage before 
   } finally { dispose?.(); removeRoot(root); }
 });
 
+test("TUI resolves the location directory when OpenCode reports the non-Git root sentinel", async () => {
+  const root = makeRoot();
+  let locationCalls = 0;
+  try {
+    const resolved = await resolveProjectRoot({
+      state: { path: { worktree: "/" } },
+      slots: { register: () => {} },
+      client: { location: { get: async () => {
+        locationCalls += 1;
+        return { data: { directory: root } };
+      } } },
+    }, { timeoutMs: 20, pollMs: 1 });
+    assert.equal(resolved, root);
+    assert.equal(locationCalls, 1);
+  } finally { removeRoot(root); }
+});
+
+test("TUI supports nested location project directories for non-Git projects", async () => {
+  const root = makeRoot();
+  try {
+    const resolved = await resolveProjectRoot({
+      state: { path: { worktree: "/" } },
+      slots: { register: () => {} },
+      client: { location: { get: async () => ({ data: { project: { directory: root } } }) } },
+    }, { timeoutMs: 20, pollMs: 1 });
+    assert.equal(resolved, root);
+  } finally { removeRoot(root); }
+});
+
+test("TUI ignores root sentinels in both host path fields", async () => {
+  const root = makeRoot();
+  try {
+    const resolved = await resolveProjectRoot({
+      state: { path: { worktree: "/", directory: "/" } },
+      client: { location: { get: async () => ({ data: { directory: root } }) } },
+    }, { timeoutMs: 20, pollMs: 1 });
+    assert.equal(resolved, root);
+  } finally { removeRoot(root); }
+});
+
+test("TUI times out safely when non-Git location data is unavailable", async () => {
+  let locationCalls = 0;
+  const resolved = await resolveProjectRoot({
+    state: { path: { worktree: "/" } },
+    slots: { register: () => {} },
+    client: { location: { get: async () => {
+      locationCalls += 1;
+      return { data: {} };
+    } } },
+  }, { timeoutMs: 10, pollMs: 1 });
+  assert.equal(resolved, null);
+  assert.equal(locationCalls >= 1, true);
+});
+
+test("TUI bounds a hanging non-Git location request by its timeout", async () => {
+  const started = Date.now();
+  const resolved = await resolveProjectRoot({
+    state: { path: { worktree: "/" } },
+    client: { location: { get: async () => new Promise(() => {}) } },
+  }, { timeoutMs: 10, pollMs: 1 });
+  assert.equal(resolved, null);
+  assert.equal(Date.now() - started < 100, true);
+});
+
+test("TUI resolves a non-Git location directory that becomes available late", async () => {
+  const root = makeRoot();
+  let locationCalls = 0;
+  try {
+    const resolved = await resolveProjectRoot({
+      state: { path: { worktree: "/" } },
+      slots: { register: () => {} },
+      client: { location: { get: async () => {
+        locationCalls += 1;
+        return locationCalls < 3 ? { data: {} } : { data: { directory: root } };
+      } } },
+    }, { timeoutMs: 20, pollMs: 1 });
+    assert.equal(resolved, root);
+    assert.equal(locationCalls, 3);
+  } finally { removeRoot(root); }
+});
+
+test("TUI uses a real worktree without requesting location", async () => {
+  const root = makeRoot();
+  try {
+    const resolved = await resolveProjectRoot({
+      state: { path: { worktree: root } },
+      slots: { register: () => {} },
+      client: { location: { get: async () => { throw new Error("location should not be requested"); } } },
+    });
+    assert.equal(resolved, root);
+  } finally { removeRoot(root); }
+});
+
+test("TUI supports hosts that provide only a project directory", async () => {
+  const root = makeRoot();
+  try {
+    const resolved = await resolveProjectRoot({ state: { path: { directory: root } } });
+    assert.equal(resolved, root);
+  } finally { removeRoot(root); }
+});
+
+test("TUI sidebar reads a workspace from the non-Git location directory", async () => {
+  const root = makeRoot();
+  const context = WorkContext.open(root, { actor: "test" });
+  context.createWorkspace("Non-Git workspace", { workspace: "999968", sessionId: "oc-non-git" });
+  context.addStage("999968", "Target stage");
+  context.startSession("999968", "02", { sessionId: "wc-target", opencodeSessionId: "oc-target" });
+  let snapshotRoot;
+  let dispose;
+  let slot;
+  const navigated = [];
+  const api = {
+    state: { path: { worktree: "/" } },
+    route: { current: { name: "session", params: { sessionID: "oc-non-git" } }, navigate: (...args) => navigated.push(args) },
+    slots: { register: (plugin) => { slot = plugin.slots.sidebar_content; return () => {}; } },
+    client: { location: { get: async () => ({ data: { directory: root } }) } },
+    lifecycle: { onDispose: (callback) => { dispose = callback; return () => {}; } },
+    stagesSnapshotProvider: async ({ projectRoot, sessionId }) => {
+      snapshotRoot = projectRoot;
+      return readStagesSnapshot({ projectRoot, sessionId });
+    },
+  };
+  try {
+    await tuiModule.tui(api, { pollMs: 0, runtime: { jsx: (type, props) => ({ type, props }) } });
+    assert.equal(snapshotRoot, root);
+    const sidebar = slot({}, { session_id: "oc-non-git" });
+    assert.match(renderedText(sidebar), /Non-Git workspace/);
+    await sidebar.props.children.props.children()[3].props.onMouseDown({ button: 0 });
+    assert.deepEqual(navigated, [["session", { sessionID: "oc-target" }]]);
+  } finally {
+    dispose?.();
+    removeRoot(root);
+  }
+});
+
 test("sidebar content is mounted under a host-owned root", async () => {
   const root = makeRoot();
   let slot;
@@ -1085,6 +1221,16 @@ test("action modal appends through the public TUI endpoint without submitting", 
   const api = { state: { path: { directory: "/tmp/project" } }, client: { tui: { appendPrompt: async (...args) => calls.push(args) } } };
   assert.deepEqual(await appendPromptCommand(api, "/wc list"), { ok: true, command: "/wc list", submitted: false });
   assert.deepEqual(calls, [[{ directory: "/tmp/project", text: "/wc list" }, { throwOnError: true }]]);
+});
+
+test("action modal uses the resolved project root instead of stale host paths", async () => {
+  const calls = [];
+  const api = withProjectRoot({
+    state: { path: { directory: "/", worktree: "/" } },
+    client: { tui: { appendPrompt: async (...args) => calls.push(args) } },
+  }, "/tmp/resolved-project");
+  await appendPromptCommand(api, "/wc list");
+  assert.deepEqual(calls, [[{ directory: "/tmp/resolved-project", text: "/wc list" }, { throwOnError: true }]]);
 });
 
 test("action modal uses native dialogs to prepare an add-stage command", async () => {

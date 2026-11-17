@@ -7,6 +7,7 @@ export * from "./projections.js";
 export * from "./title.js";
 export * from "./core.js";
 export * from "./knowledge.js";
+export * from "./stage-execution.js";
 export * from "./stages-snapshot.js";
 export * from "./stages-renderer.js";
 export * from "./work-context-snapshot.js";

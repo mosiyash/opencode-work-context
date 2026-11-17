@@ -7,6 +7,7 @@ import { createAttentionActivator } from "./attention-activation.js";
 import { createDesktopNotifier } from "./notifier.js";
 import { createTuiFocusTracker } from "./tui-focus.js";
 import { readTuiState, updateTuiState } from "./tui-state.js";
+import { resolveProjectRoot } from "./project-root.js";
 
 const ATTENTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_SEEN_EVENTS = 500;
@@ -489,7 +490,7 @@ export const createAttentionTuiController = ({ api, projectRoot, read = readWork
 export const tui = async (api, options = {}) => {
   if (!api?.event?.on) return;
   if (activeControllers.has(api) || api[ACTIVE_ATTENTION_KEY]) return activeControllers.get(api) || api[ACTIVE_ATTENTION_KEY];
-  const projectRoot = api.state?.path?.worktree || api.state?.path?.directory;
+  const projectRoot = await resolveProjectRoot(api, options);
   if (!projectRoot) return;
   const ownsDesktopNotifier = !options.desktopNotifier;
   const desktopNotifier = options.desktopNotifier || createDesktopNotifier({ enabled: desktopNotificationsEnabled(projectRoot), ...options.notifierOptions });

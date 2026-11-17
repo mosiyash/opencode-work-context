@@ -8,13 +8,12 @@ import { createSignal } from "solid-js";
 import { attentionSummaryText } from "./attention.js";
 import { createStageSwitcherFlow } from "./stage-switcher.js";
 import { readTuiState, updateTuiState } from "./tui-state.js";
+import { resolveProjectRoot, withProjectRoot } from "./project-root.js";
 
 const DEBOUNCE_MS = 150;
 const POLL_MS = 1000;
 const LOADER_MS = 80;
 const LOADER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const PATH_TIMEOUT_MS = 5000;
-const PATH_POLL_MS = 25;
 const WORK_CONTEXT_PREFIX = "work" + "_" + "context_";
 const activeTuiInstances = new WeakMap();
 const ACTIVE_TUI_KEY = Symbol.for("opencode-work-context.stages-tui");
@@ -262,28 +261,7 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
   };
 };
 
-const sleep = (milliseconds, signal) => new Promise((resolve) => {
-  const timer = setTimeout(resolve, milliseconds);
-  const onAbort = () => { clearTimeout(timer); resolve(); };
-  signal?.addEventListener("abort", onAbort, { once: true });
-  if (signal) setTimeout(() => signal.removeEventListener("abort", onAbort), milliseconds);
-});
-
-export const resolveProjectRoot = async (api, { timeoutMs = PATH_TIMEOUT_MS, pollMs = PATH_POLL_MS } = {}) => {
-  if (!api?.slots?.register) return null;
-  const signal = api.lifecycle?.signal;
-  const deadline = Date.now() + timeoutMs;
-  while (!signal?.aborted && Date.now() <= deadline) {
-    if (api.state?.path?.worktree) return api.state.path.worktree;
-    try {
-      const location = await api.client?.location?.get?.({});
-      const directory = location?.data?.directory || location?.data?.project?.directory;
-      if (directory) return directory;
-    } catch {}
-    await sleep(pollMs, signal);
-  }
-  return null;
-};
+export { resolveProjectRoot } from "./project-root.js";
 
 const renderStagesSlot = (controller, theme, sessionId, runtime = defaultRuntime, attention, onStageSelect) => runtime.jsx("box", {
   flexDirection: "column",
@@ -376,8 +354,10 @@ const ACTIVE_WORKSPACE_SESSION = "__active_" + "work" + "_context_workspace__";
 // Optional TUI entry point. It is deliberately not imported by the server plugin.
 export const tui = async (api, options = {}) => {
   if (activeTuiInstances.has(api) || api?.[ACTIVE_TUI_KEY]) return activeTuiInstances.get(api) || api[ACTIVE_TUI_KEY];
+  if (!api?.slots?.register) return;
   const projectRoot = await resolveProjectRoot(api, options);
   if (!projectRoot) return;
+  const projectApi = withProjectRoot(api, projectRoot);
 
   const initialSessionId = api.route?.current?.name === "session"
     ? api.route.current.params?.sessionID
@@ -393,7 +373,7 @@ export const tui = async (api, options = {}) => {
     createSignal: options.runtime?.createSignal,
     attention: api.workContextAttention,
   });
-  const stageSwitcher = createStageSwitcherFlow(api);
+  const stageSwitcher = createStageSwitcherFlow(projectApi);
   const unregisterDependencyToggle = registerDependencyToggle(api, controller, projectRoot);
   let currentSessionId = initialSessionId;
   const unregisterDependencyTree = registerDependencyTree(api, controller, () => currentSessionId || ACTIVE_WORKSPACE_SESSION);

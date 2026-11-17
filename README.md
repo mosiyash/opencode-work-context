@@ -101,6 +101,27 @@ Resume a stage with:
 /wc resume 000001 02
 ```
 
+Long-running stages may keep a bounded execution ledger separate from the
+original prompt, workspace knowledge, session summaries, and final result. It
+tracks current scope, completed and remaining work, stage-local decisions,
+blockers, and pending verification. Read it before changing it, then use the
+returned revision as an optimistic concurrency guard:
+
+```text
+/wc stage execution read 000001 02
+/wc stage execution replace 000001 02 0 "{\"scope\":[\"Add CSV export\"],\"remaining\":[\"Implement endpoint\",\"Add tests\"]}"
+/wc stage execution update 000001 02 1 "{\"add\":{\"completed\":[\"Implement endpoint\"]},\"remove\":{\"remaining\":[\"Implement endpoint\"]}}"
+```
+
+`replace` replaces the complete logical state; any omitted section becomes empty. `update`
+atomically adds and removes exact normalized items. Mutations require the active
+stage session. A stale revision fails with `EXECUTION_REVISION_CONFLICT` rather
+than overwriting newer work. Each section is limited to 50 items, the complete
+state to 200 items and 32,768 serialized bytes, and each item to 500 characters.
+Update the ledger at meaningful boundaries, not after every edit. Checklist
+state never completes a stage: explicit stage finish reports unfinished ledger
+entries as warnings and preserves the final record.
+
 After updating the npm package, refresh the generated slash-command contract
 without touching project configuration or loaders:
 
@@ -277,6 +298,9 @@ Installed files and project state:
 - `.work-context/local/` in `.gitignore` for personal session events.
 - `<workspace>/KNOWLEDGE.md` is the canonical durable knowledge ledger and is
   created on the first explicit knowledge operation.
+- `<workspace>/stages/<stage>.execution.json` is the optional canonical,
+  stage-local execution ledger and is created on the first explicit replacement
+  or incremental update.
 
 The optional stages panel, action modal, and stage switcher are a separate TUI plugin. `init` installs a
 project-local loader outside OpenCode's server-plugin autoscan at
@@ -407,6 +431,8 @@ Tools are registered by the installed server export and are not copied into the
 project. Core and storage remain in the installed package; projects should not
 copy `src/` or `tools/`. `.work-context` Markdown, JSONL, `INDEX.md`, and
 `SESSIONS.md` are generated projections and must never be edited manually.
+Canonical execution JSON is also owned by structured tools and must not be
+edited directly.
 Tracker links support GitLab issues (`/-/issues/<number>`) and work items
 (`/-/work_items/<number>`), GitHub issues (`/issues/<number>`), and Jira issues
 (`/browse/KEY-123`). They are URL-based references only; the plugin does not
@@ -422,6 +448,11 @@ Every stage start/resume includes all active entries in
 workspace-wide context and avoid repeating earlier analysis unless an entry is
 incomplete, contradicted, or requires verification. Superseded entries and full
 stage results are not injected into later stages.
+When a stage has execution state, resume also includes it in
+`resume.context.execution_state` and highlights it as the current operational
+checkpoint. The ledger remains local to that stage and is not injected into
+unrelated stages or promoted to workspace knowledge. Existing stages without a
+ledger retain their previous resume shape and are not rewritten.
 Finishing a stage closes its current session and may report downstream stages
 whose prompts need review, but it never starts or resumes one of them. Any
 downstream work begins only in a separate OpenCode session through an explicit

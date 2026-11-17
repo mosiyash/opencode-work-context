@@ -168,6 +168,35 @@ test("structured tools accept unpadded IDs and return canonical IDs", async () =
   }
 });
 
+test("stage execution tools replace, update, read, and return stable revision errors", async () => {
+  const fixture = createFixture();
+  try {
+    const { context } = fixture;
+    context.createWorkspace("Execution tools", { workspace: "999911", sessionId: "internal", opencodeSessionId: "oc-execution" });
+    const executeContext = { directory: fixture.root, worktree: fixture.root, sessionID: "oc-execution", metadata: async () => {} };
+
+    const replaced = JSON.parse((await tools.work_context_replace_stage_execution.execute({
+      expectedRevision: 0,
+      state: { scope: ["Ship the feature"], remaining: ["Implement it"] },
+    }, executeContext)).output);
+    assert.equal(replaced.ok, true);
+    assert.equal(replaced.data.revision, 1);
+
+    const updated = JSON.parse((await tools.work_context_update_stage_execution.execute({
+      expectedRevision: 1,
+      add: { completed: ["Implement it"] },
+      remove: { remaining: ["Implement it"] },
+    }, executeContext)).output);
+    assert.equal(updated.data.revision, 2);
+
+    const read = JSON.parse((await tools.work_context_read_stage_execution.execute({}, executeContext)).output);
+    assert.deepEqual(read.data.completed, ["Implement it"]);
+    const stale = JSON.parse((await tools.work_context_update_stage_execution.execute({ expectedRevision: 1, add: { remaining: ["Stale"] } }, executeContext)).output);
+    assert.equal(stale.ok, false);
+    assert.equal(stale.error.code, "EXECUTION_REVISION_CONFLICT");
+  } finally { fixture.cleanup(); }
+});
+
 test("recovery tools require reasons and return canonical recovery results", async () => {
   const fixture = createFixture();
   try {

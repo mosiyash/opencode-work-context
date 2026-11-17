@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { WorkContextError, ERROR_CODES, fail } from "./errors.js";
 import { parseFrontmatter, renderMarkdown } from "./markdown.js";
+import { validateExecutionRecord } from "./stage-execution.js";
 
 const now = () => new Date().toISOString();
 const ensure = (dir) => fs.mkdirSync(dir, { recursive: true });
@@ -148,10 +149,23 @@ export class FileStorage {
   workspaceFile(id) { return path.join(this.workspaceDir(id), "workspace.md"); }
   knowledgeFile(id) { return path.join(this.workspaceDir(id), "KNOWLEDGE.md"); }
   stageFile(id, stage) { return path.join(this.workspaceDir(id), "stages", `${stage}.md`); }
+  stageExecutionFile(id, stage) { return path.join(this.workspaceDir(id), "stages", `${stage}.execution.json`); }
   sessionFile() { return path.join(this.personalRoot, "sessions.jsonl"); }
   lockPath(name = "write") { return path.join(this.root, ".locks", `${name}.lock`); }
   readWorkspace(id) { const record = this.readCanonical(this.workspaceFile(id)); validateMetadata(record.data, "workspace", id); return record; }
   readStage(id, stage) { const record = this.readCanonical(this.stageFile(id, stage)); validateMetadata(record.data, "stage", id, stage); return record; }
+  readStageExecution(id, stage) {
+    try { return validateExecutionRecord(JSON.parse(fs.readFileSync(this.stageExecutionFile(id, stage), "utf8")), id, stage); }
+    catch (error) {
+      if (error.code === "ENOENT") return null;
+      if (error.code === ERROR_CODES.STORAGE_ERROR) throw error;
+      fail(ERROR_CODES.STORAGE_ERROR, "Invalid stage execution state", { cause: error.message });
+    }
+  }
+  writeStageExecution(id, stage, record) {
+    validateExecutionRecord(record, id, stage);
+    atomicWrite(this.stageExecutionFile(id, stage), `${JSON.stringify(record, null, 2)}\n`);
+  }
   readKnowledge(id) { try { return fs.readFileSync(this.knowledgeFile(id), "utf8"); } catch (error) { if (error.code === "ENOENT") return null; throw error; } }
   transactionFile() { return path.join(this.root, ".locks", "transaction.json"); }
   writeTransaction(snapshot) { atomicWrite(this.transactionFile(), JSON.stringify({ schema: 1, files: snapshot.files.map((item) => ({ file: item.file, content: item.content.toString("base64") })), externalRoots: snapshot.externalRoots }) + "\n"); }

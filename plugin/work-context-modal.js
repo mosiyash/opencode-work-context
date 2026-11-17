@@ -8,6 +8,7 @@ import { openStageSwitcher } from "./stage-switcher.js";
 import { openWorkspaceSwitcher } from "./workspace-switcher.js";
 import { openSessionSwitcher } from "./session-switcher.js";
 import { attentionForSession, attentionIndicatorText, attentionReasonText } from "./attention.js";
+import { resolveProjectRoot, withProjectRoot } from "./project-root.js";
 
 const COMMAND_NAME = "work_context.open";
 const ACTIONS_COMMAND_NAME = "work_context.actions";
@@ -585,13 +586,14 @@ export const openCompatibilityDialog = (api, runtime = {}, options = {}) => {
   return true;
 };
 
-export const registerWorkContextModal = (api, runtime = {}) => {
+export const registerWorkContextModal = (api, runtime = {}, options = {}) => {
   if (typeof api?.keymap?.registerLayer !== "function") return { supported: false, dispose: () => {} };
-  const command = { name: COMMAND_NAME, title: "Open Work Context", desc: "Open work-context navigation and actions", category: "Work Context", namespace: "palette", run: () => openWorkContextActionDialog(api, runtime) };
-  const stageCommand = { name: "work_context.stage", title: "Switch Work Context Stage", desc: "Open a stage session in the current workspace", category: "Work Context", namespace: "palette", run: () => openStageSwitcher(api) };
-  const workspaceCommand = { name: "work_context.workspace", title: "Switch Work Context Workspace", desc: "Open a workspace session", category: "Work Context", namespace: "palette", run: () => openWorkspaceSwitcher(api) };
-  const sessionCommand = { name: "work_context.session", title: "Switch Work Context Session", desc: "Open an active or historical work session", category: "Work Context", namespace: "palette", run: () => openSessionSwitcher(api) };
-  const actions = { name: ACTIONS_COMMAND_NAME, title: "Open Work Context Actions", desc: "Prepare a work-context command", category: "Work Context", namespace: "palette", run: () => openWorkContextActionDialog(api, runtime) };
+  const projectApi = withProjectRoot(api, options.projectRoot);
+  const command = { name: COMMAND_NAME, title: "Open Work Context", desc: "Open work-context navigation and actions", category: "Work Context", namespace: "palette", run: () => openWorkContextActionDialog(projectApi, runtime) };
+  const stageCommand = { name: "work_context.stage", title: "Switch Work Context Stage", desc: "Open a stage session in the current workspace", category: "Work Context", namespace: "palette", run: () => openStageSwitcher(projectApi) };
+  const workspaceCommand = { name: "work_context.workspace", title: "Switch Work Context Workspace", desc: "Open a workspace session", category: "Work Context", namespace: "palette", run: () => openWorkspaceSwitcher(projectApi) };
+  const sessionCommand = { name: "work_context.session", title: "Switch Work Context Session", desc: "Open an active or historical work session", category: "Work Context", namespace: "palette", run: () => openSessionSwitcher(projectApi) };
+  const actions = { name: ACTIONS_COMMAND_NAME, title: "Open Work Context Actions", desc: "Prepare a work-context command", category: "Work Context", namespace: "palette", run: () => openWorkContextActionDialog(projectApi, runtime) };
   const registration = api.keymap.registerLayer({
     commands: [command, stageCommand, workspaceCommand, sessionCommand, actions],
     bindings: [
@@ -606,7 +608,10 @@ export const registerWorkContextModal = (api, runtime = {}) => {
 
 export const tui = async (api, options = {}) => {
   activeTuiInstances.get(api)?.();
-  const registration = registerWorkContextModal(api, options.runtime || options);
+  if (typeof api?.keymap?.registerLayer !== "function") return;
+  const projectRoot = await resolveProjectRoot(api, options);
+  if (!projectRoot) return;
+  const registration = registerWorkContextModal(api, options.runtime || options, { projectRoot });
   if (!registration.supported) return;
   let disposed = false;
   const cleanup = () => {

@@ -48,6 +48,9 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `stage update [<workspace>] [<stage>] "description"` -> `work_context_update_stage`
 - `stage update-prompt [<workspace>] [<stage>] "prompt"` -> `work_context_update_stage_prompt`
 - `stage update-result [<workspace>] [<stage>] "result"` -> `work_context_update_stage_result`
+- `stage execution read [<workspace>] [<stage>]` -> `work_context_read_stage_execution`
+- `stage execution replace [<workspace>] [<stage>] <expectedRevision> "state JSON"` -> `work_context_replace_stage_execution`
+- `stage execution update [<workspace>] [<stage>] <expectedRevision> "changes JSON"` -> `work_context_update_stage_execution`
 - `stage archive [<workspace>] [<stage>]` -> `work_context_archive_stage`
 - `stage handoff [<workspace>] [<stage>]` -> `work_context_handoff_stage`
 - `stage abandon [<workspace>] [<stage>]` -> `work_context_abandon_stage`
@@ -82,6 +85,9 @@ Supported syntax:
 - `stage update [<workspace>] [<stage>] "description"`
 - `stage update-prompt [<workspace>] [<stage>] "prompt"`
 - `stage update-result [<workspace>] [<stage>] "result"`
+- `stage execution read [<workspace>] [<stage>]`
+- `stage execution replace [<workspace>] [<stage>] <expectedRevision> "state JSON"`
+- `stage execution update [<workspace>] [<stage>] <expectedRevision> "changes JSON"`
 - `stage archive [<workspace>] [<stage>]`
 - `stage handoff [<workspace>] [<stage>]`
 - `stage abandon [<workspace>] [<stage>]`
@@ -96,10 +102,15 @@ Supported syntax:
 - explicit workspace and stage positions accept canonical padded IDs or unpadded positive integers (`1..999999` and `1..99`); results and generated commands remain padded
 - zero, signs, decimals, whitespace, overlong values, and other non-digit identifier forms are invalid; a lone unpadded workspace ID is not reinterpreted under the one-identifier rule
 - `stage update-result` replaces an existing result and does not create a result for an unfinished stage
+- stage execution state has `scope`, `completed`, `remaining`, `decisions`, `blockers`, and `verification` string-array sections; `replace` accepts the complete state object, while `update` accepts an object with `add` and/or `remove` section objects
+- read stage execution state first and pass its revision as `expectedRevision`; absent legacy state has revision `0`, and a stale mutation returns `EXECUTION_REVISION_CONFLICT` without changing newer state
+- execution mutations require the active stage session, trim and deduplicate items, reject overlap between `completed` and `remaining`, and enforce bounded item counts, lengths, and serialized size
+- update execution state after meaningful scope changes, decisions, substantial work, blockers, or verification changes and before handoff; do not update it for every trivial edit or tool call
 - `resume` returns `resume.presentation` and `resume.context`; before doing any work, report a concise human-oriented summary in the user's language with the stage title, a plain-language Goal, previous progress when useful, and the immediate next action
 - when the saved prompt contains several clear deliverables, add `In this stage we will` with 2-5 short outcome-oriented bullets derived only from the prompt, previous result, and workspace knowledge; do not invent scope, and omit this block for a small stage
 - do not expose raw workspace/stage/session identifiers, ordinals, `ok` flags, or absent error codes in the user-facing resume summary
 - `resume.context.workspace_knowledge` contains every active durable knowledge entry for the workspace; treat it as established shared context, and do not repeat earlier analysis unless an entry is incomplete, contradicted, or needs verification
+- when stage execution state exists, `resume.context.execution_state` is the current stage-local operational checkpoint; continue from it without rewriting the original prompt, and never copy it automatically into workspace knowledge or unrelated stages
 - an associated OpenCode session resumed in a `startup` workspace receives `resume.context.workflow_policy`; follow it as active agent policy: a shared dirty worktree and concurrent stages are expected, stages do not own files or commits, and ready work should be captured promptly into an explicit candidate; prefer an `exact` candidate when safely separable, use `shared_foundation` when several stages use one coherent change, and use `integration` when intertwined changes form one reviewable and testable result; mixed provenance and complete files containing unrelated stage work are not reasons to require prior commits or stop; stop only for a concrete patch conflict, an incoherent candidate boundary, or failed required verification
 - standard-mode and unassociated core sessions do not receive startup policy; retain the existing conservative worktree behavior there
 - after presenting the summary, continue work immediately when `resume.next_action` is `start_work`; do not ask for generic confirmation
@@ -114,6 +125,7 @@ Supported syntax:
 - automatic completion is allowed only when the current workspace's Planning-stage prompt contains an exact standalone line `AUTO_STAGE_FINISH: allowed`; otherwise leave the stage in progress and report that the work is ready for the user's lifecycle decision
 - `stage finish` closes and completes only the current stage session; it never starts, resumes, or binds the same OpenCode session to a downstream stage
 - `stage finish` always validates the Knowledge Base and returns total and active entry counts plus downstream unfinished stages for informational prompt review; do not begin a downstream stage until the user explicitly resumes it in a separate OpenCode session
+- execution checklist state never finishes a stage; explicit `stage finish` reports remaining items, blockers, and pending verification as warnings and preserves the final execution record for history
 - `stage reopen <workspace> <stage> "reason"` applies only to a completed stage, preserves its result and completion history, records the reason, changes it to `in_progress`, and does not start a session or affect downstream stages; use an explicit separate-session `resume` to work on it again
 - `stage restore <workspace> <stage> "reason"` applies only to an archived stage and restores its saved pre-archive status. New archives preserve that status; legacy archives restore to `in_progress`. It records the reason, preserves stage content and results, does not start a session, and requires explicit separate-session `resume` when restored to `planned` or `in_progress`.
 - `workspace reopen <workspace> "reason"` applies only to a completed workspace, changes it to `in_progress`, and records durable recovery history. Cancelled workspaces cannot be reopened.
