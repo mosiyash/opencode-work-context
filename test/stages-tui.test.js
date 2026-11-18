@@ -386,9 +386,9 @@ test("sidebar keeps workspace title clean and renders a grouped attention summar
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const output = renderedText(renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "B2B platform", status: "in_progress", mode: "startup" },
-    stages: [],
+    stages: [{ id: "01", title: "Visible", status: "in_progress", depends_on: [] }],
   } }, {}, runtime, {
-    attentionForWorkspace: () => ({ count: 7, reason: "error", items: [
+    attentionForStage: () => ({ count: 7, reason: "error", items: [
       { sessionId: "error", reason: "error" },
       { sessionId: "permission-1", reason: "permission" },
       { sessionId: "permission-2", reason: "permission" },
@@ -400,6 +400,44 @@ test("sidebar keeps workspace title clean and renders a grouped attention summar
   }));
   assert.match(output, /^B2B platform\s+Workflow · startup\s+Attention ·\s+×1 !2 \?1 ✓3\s+Stages/);
   assert.doesNotMatch(output, /^\[/);
+});
+
+test("sidebar header is the unique union of attention represented by visible stage rows", async () => {
+  const root = makeRoot();
+  const controller = createAttentionTuiController({
+    api: { route: { current: { name: "home" } } },
+    projectRoot: root,
+    read: async () => ({ ok: true, data: { workspaces: [{
+      id: "000001",
+      stages: [
+        { id: "01", title: "Visible", status: "in_progress" },
+        { id: "02", title: "Stale", status: "in_progress" },
+      ],
+      sessions: [
+        { stage: "01", state: "closed", opencode_session_id: "oc-visible-1" },
+        { stage: "01", state: "abandoned", opencode_session_id: "oc-visible-2" },
+        { stage: "01", state: "closed", opencode_session_id: "oc-visible-1" },
+        { stage: "02", state: "closed", opencode_session_id: "oc-stale" },
+      ],
+    }] } }),
+  });
+  try {
+    await controller.handle({ type: "session.status", properties: { sessionID: "oc-visible-1", status: { type: "busy" } } });
+    await controller.handle({ type: "session.idle", properties: { sessionID: "oc-visible-1" } });
+    await controller.handle({ type: "session.status", properties: { sessionID: "oc-visible-2", status: { type: "busy" } } });
+    await controller.handle({ type: "session.idle", properties: { sessionID: "oc-visible-2" } });
+    await controller.handle({ type: "session.status", properties: { sessionID: "oc-stale", status: { type: "busy" } } });
+    await controller.handle({ type: "session.idle", properties: { sessionID: "oc-stale" } });
+
+    assert.equal(controller.attentionForWorkspace("000001").count, 3);
+    const runtime = { jsx: (type, props) => ({ type, props }) };
+    const output = renderedText(renderStagesElement({ ok: true, data: {
+      workspace: { id: "000001", title: "Demo", status: "in_progress" },
+      stages: [{ id: "01", title: "Visible", status: "in_progress", depends_on: [] }],
+    } }, {}, runtime, controller));
+    assert.match(output, /Attention ·\s+✓2[\s\S]*✓2 \[•\] 01\. Visible/);
+    assert.doesNotMatch(output, /✓3|Stale/);
+  } finally { controller.dispose(); removeRoot(root); }
 });
 
 test("native sidebar renders the workflow mode below the workspace title", () => {
@@ -1681,7 +1719,7 @@ test("sidebar and modal render attention without theme color support", async () 
   const attention = {
     subscribe: () => () => {},
     attentionForWorkspace: (id) => id === "000001" ? { count: 1, reason: "permission" } : null,
-    attentionForStage: (workspace, stage) => workspace === "000001" && stage === "02" ? { count: 1, reason: "permission" } : null,
+    attentionForStage: (workspace, stage) => workspace === "000001" && stage === "02" ? { count: 1, reason: "permission", items: [{ sessionId: "oc-unread", reason: "permission" }] } : null,
     attentionFor: (id) => id === "oc-unread" ? { reason: "permission" } : null,
   };
   const runtime = { jsx: (type, props) => ({ type, props }) };

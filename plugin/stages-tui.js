@@ -58,6 +58,15 @@ const stageCandidateText = (stage) => {
   return `Pending: ${candidate.status} · ${candidate.strategy}${others.length ? ` · also ${others.join(", ")}` : ""}`;
 };
 const capitalize = (value) => value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
+const visibleAttentionSnapshot = (attention, workspace, stages) => {
+  const byStage = new Map(stages.map((stage) => [stage.id, attention?.attentionForStage?.(workspace, stage.id) || null]));
+  const bySession = new Map();
+  for (const unread of byStage.values()) {
+    for (const item of unread?.items || []) bySession.set(item.sessionId, item);
+  }
+  const items = [...bySession.values()];
+  return { byStage, workspace: items.length ? { count: items.length, items } : null };
+};
 
 export { readStagesSnapshot, renderStagesPanel };
 
@@ -67,7 +76,8 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
     runtime.jsx("text", { children: runtime.jsx("b", { children: "Stages" }) }),
     ...renderStagesPanel(result).split("\n").slice(1).map((line) => runtime.jsx("text", { children: line })),
   ];
-  const workspaceAttention = attentionSummaryText(attention?.attentionForWorkspace?.(result.data.workspace.id), { alwaysCount: true });
+  const attentionSnapshot = visibleAttentionSnapshot(attention, result.data.workspace.id, result.data.stages);
+  const workspaceAttention = attentionSummaryText(attentionSnapshot.workspace, { alwaysCount: true });
   return [
     runtime.jsx("box", {
       marginBottom: 1,
@@ -88,7 +98,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
       ],
     }),
     ...result.data.stages.flatMap((stage) => {
-      const unread = attention?.attentionForStage?.(result.data.workspace.id, stage.id);
+      const unread = attentionSnapshot.byStage.get(stage.id);
       const working = attention?.activityForStage?.(result.data.workspace.id, stage.id);
       const recommendation = stage.execution_profile && stage.execution_depth && stage.recommended_model
         ? `${capitalize(stage.execution_profile)} · ${capitalize(stage.execution_depth)} · ${capitalize(stage.recommended_model)}`
