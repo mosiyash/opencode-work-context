@@ -405,6 +405,15 @@ test("native sidebar renders the workflow mode below the workspace title", () =>
   assert.match(output, /Demo\s+Workflow · startup\s+Stages/);
 });
 
+test("native sidebar renders compact capability profiles", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const output = renderedText(renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "standard" },
+    stages: [{ id: "01", title: "Design", status: "planned", depends_on: [], execution_profile: "architecture", review_profile: "security" }],
+  } }, {}, runtime));
+  assert.match(output, /01\. Design\s+Profiles: execution architecture · review security/);
+});
+
 test("native sidebar renders candidate counts from the snapshot", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const output = renderedText(renderStagesElement({ ok: true, data: {
@@ -1003,11 +1012,13 @@ test("package exports preserve server and TUI plugin entry points", async () => 
   const serverEntry = await import("opencode-work-context/server");
   const tui = await import("opencode-work-context/tui");
   const adapter = await import("opencode-work-context/adapter");
+  const profilesTool = await import("opencode-work-context/tools/work_context_set_stage_profiles");
   assert.equal(typeof server.default, "function");
   assert.equal(typeof serverEntry.default.server, "function");
   assert.equal(typeof tui.default.tui, "function");
   assert.equal(typeof adapter.contextFor, "function");
   assert.equal(typeof adapter.readStagesSnapshot, "function");
+  assert.equal(typeof profilesTool.default.execute, "function");
   assert.equal(packageManifest.exports["./plugin"], "./plugin/work-context.js");
   assert.equal(packageManifest.exports["./server"], "./plugin/server.js");
   assert.equal(packageManifest.exports["./tui"], "./plugin/tui.js");
@@ -1208,6 +1219,20 @@ test("work-context modal renderer exposes empty, filter, and navigation state", 
     const children = element.props.children();
     assert.equal(children.some((item) => item.props?.children === "No workspaces found."), true);
     assert.equal(children.some((item) => item.props?.children?.some?.((child) => String(child.props?.children).includes("type to filter"))), true);
+  } finally { controller.dispose(); }
+});
+
+test("work-context modal details render capability profiles without changing stage order", async () => {
+  const controller = createWorkContextModalController({ read: async () => ({ ok: true, data: { workspaces: [
+    { id: "000001", title: "Profiles", status: "in_progress", stages: [{ id: "01", title: "Implementation", description: "Build it", status: "planned", execution_profile: "implementation", review_profile: "review" }], sessions: [] },
+  ], currentWorkspace: "000001" } }) });
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.handleKey({ key: "Enter" });
+    const output = renderedText(renderWorkContextModal(controller, {}, runtime));
+    assert.match(output, /Implementation/);
+    assert.match(output, /Profiles\s+execution implementation · review review/);
   } finally { controller.dispose(); }
 });
 

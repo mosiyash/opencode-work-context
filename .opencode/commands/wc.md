@@ -44,6 +44,7 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `resume <workspace> <stage>` -> `work_context_start_session`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE` -> `work_context_force_close_session`
 - `stage add [<workspace>] ...` -> `work_context_add_stage` (optional `prompt`; a detailed local prompt is expected for stages created from planning, while shared context belongs in workspace knowledge)
+- `stage profiles [<workspace>] [<stage>] [execution <routine|implementation|architecture|security|review|clear>] [review <routine|implementation|architecture|security|review|clear>]` -> `work_context_set_stage_profiles`
 - `stage reopen <workspace> <stage> "reason"` -> `work_context_reopen_stage`
 - `stage restore <workspace> <stage> "reason"` -> `work_context_restore_stage`
 - `stage rename [<workspace>] [<stage>] "title"` -> `work_context_rename_stage`
@@ -82,7 +83,8 @@ Supported syntax:
 - `workspace reopen <workspace> "reason"`
 - `resume <workspace> <stage>`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE`
-- `stage add [<workspace>] "title" ["prompt"]`
+- `stage add [<workspace>] "title" ["prompt"] [execution <routine|implementation|architecture|security|review>] [review <routine|implementation|architecture|security|review>]`
+- `stage profiles [<workspace>] [<stage>] [execution <routine|implementation|architecture|security|review|clear>] [review <routine|implementation|architecture|security|review|clear>]`
 - `stage reopen <workspace> <stage> "reason"`
 - `stage restore <workspace> <stage> "reason"`
 - `stage rename [<workspace>] [<stage>] "title"`
@@ -106,6 +108,10 @@ Supported syntax:
 - explicit workspace and stage positions accept canonical padded IDs or unpadded positive integers (`1..999999` and `1..99`); results and generated commands remain padded
 - zero, signs, decimals, whitespace, overlong values, and other non-digit identifier forms are invalid; a lone unpadded workspace ID is not reinterpreted under the one-identifier rule
 - `stage update-result` replaces an existing result and does not create a result for an unfinished stage
+- capability profiles are portable stage intent only; `stage profiles` must provide execution, review, or both, omitted fields remain unchanged, and `clear` removes that field
+- `capability_profiles.mode` in `.work-context/config.yaml` is `advisory` by default or `off`; off mode preserves metadata but omits profile presentation, resolution, and mapping warnings
+- advisory mappings are read only from `.work-context/local/capability-profiles.json` as `{ "schema": 1, "mappings": { "implementation": "opaque-user-target" } }`; invalid entries are ignored with bounded warnings and missing mappings report `No mapping configured; continuing with the current model.`
+- capability recommendations never select a model or agent, create a replacement session, block resume, or persist mapping targets in tracked workspace data
 - stage execution state has `scope`, `completed`, `remaining`, `decisions`, `blockers`, and `verification` string-array sections; `replace` accepts the complete state object, while `update` accepts an object with `add` and/or `remove` section objects
 - read stage execution state first and pass its revision as `expectedRevision`; absent legacy state has revision `0`, and a stale mutation returns `EXECUTION_REVISION_CONFLICT` without changing newer state
 - execution mutations require the active stage session, trim and deduplicate items, reject overlap between `completed` and `remaining`, and enforce bounded item counts, lengths, and serialized size

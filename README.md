@@ -51,6 +51,7 @@ Then create a task and its first stage in OpenCode:
 /wc create "Add CSV export to analytics report"
 /wc stage rename 000001 01 "Planning"
 /wc stage add 000001 "Update the export endpoint" "Inspect the current endpoint, implement CSV export, add regression tests, and verify the result."
+/wc stage profiles 000001 02 execution implementation review review
 /wc resume 000001 02
 ```
 
@@ -100,6 +101,41 @@ Resume a stage with:
 ```text
 /wc resume 000001 02
 ```
+
+### Capability Profiles
+
+Stages can carry optional vendor-neutral `execution_profile` and
+`review_profile` recommendations. The supported values are `routine`,
+`implementation`, `architecture`, `security`, and `review`. Set or clear them
+without changing other stage metadata:
+
+```text
+/wc stage profiles 000001 02 execution implementation review review
+/wc stage profiles 000001 02 review clear
+```
+
+Profiles are advisory by default. Set `capability_profiles.mode: off` in
+`.work-context/config.yaml` to hide and skip profile resolution while preserving
+the stage metadata. User-specific targets belong only in the ignored
+`.work-context/local/capability-profiles.json` file:
+
+```json
+{
+  "schema": 1,
+  "mappings": {
+    "implementation": "my-coding-target",
+    "review": "my-review-target"
+  }
+}
+```
+
+Targets are bounded opaque identifiers; they do not require or persist a model
+provider. Invalid local entries are ignored with a bounded warning. If no valid
+mapping exists, resume reports `No mapping configured; continuing with the
+current model.` The plugin never changes the active model or agent, creates a
+replacement session, or writes mapping targets into tracked stage data,
+knowledge, projections, or session events. `init`, `activate`, and
+`sync-command` do not overwrite files below `.work-context/local/`.
 
 Long-running stages may keep a bounded execution ledger separate from the
 original prompt, workspace knowledge, session summaries, and final result. It

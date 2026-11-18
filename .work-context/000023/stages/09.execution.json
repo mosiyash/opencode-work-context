@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "workspace": "000023",
+  "stage": "09",
+  "revision": 2,
+  "created_at": "2026-11-18T06:55:20.104Z",
+  "updated_at": "2026-11-18T07:02:04.057Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Implement vendor-neutral execution and review capability profiles",
+    "Resolve project-local opaque mappings during advisory resume",
+    "Expose compact advisory metadata in sidebar and modal",
+    "Document commands, configuration, and safety boundaries"
+  ],
+  "completed": [
+    "Added strict profile and mode validation",
+    "Added explicit set, partial update, and clear operation",
+    "Added advisory resume resolution with current-model fallback",
+    "Added advisory-only snapshot, sidebar, and modal hints",
+    "Added command, README, ADR, and focused test coverage",
+    "Hardened local mapping reads against non-regular, oversized, and unbounded warning input",
+    "Completed full unit, integration, TUI, language, package, and diff verification"
+  ],
+  "remaining": [],
+  "decisions": [
+    "Use .work-context/local/capability-profiles.json as the per-project user-local mapping boundary",
+    "Keep installer-generated project configuration unchanged; absent mode defaults to advisory",
+    "Represent local targets as bounded opaque identifiers and never select a model or agent"
+  ],
+  "blockers": [],
+  "verification": [
+    "npm test passed: 289 passed, 2 skipped",
+    "npm run test:integration passed: 21 passed",
+    "npm run test:tui passed: 100 passed",
+    "npm run check:language passed",
+    "npm pack --dry-run passed and includes the new tool and capability module",
+    "git diff --check passed"
+  ]
+}

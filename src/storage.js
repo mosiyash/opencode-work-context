@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { WorkContextError, ERROR_CODES, fail } from "./errors.js";
 import { parseFrontmatter, renderMarkdown } from "./markdown.js";
 import { validateExecutionRecord } from "./stage-execution.js";
+import { CAPABILITY_PROFILES } from "./capability-profiles.js";
 
 const now = () => new Date().toISOString();
 const ensure = (dir) => fs.mkdirSync(dir, { recursive: true });
@@ -89,7 +90,7 @@ const validateEventStream = (events) => {
   }
 };
 function validateMetadata(data, kind, workspace, stage = null) {
-  const allowed = kind === "workspace" ? ["schema", "workspace", "title", "status", "mode", "created_at", "updated_at", "tracker_links", "reopen_history"] : ["schema", "workspace", "stage", "title", "status", "goal", "prompt", "depends_on", "owner", "created_at", "updated_at", "tracker_links", "reopen_history", "archive_history"];
+  const allowed = kind === "workspace" ? ["schema", "workspace", "title", "status", "mode", "created_at", "updated_at", "tracker_links", "reopen_history"] : ["schema", "workspace", "stage", "title", "status", "goal", "prompt", "depends_on", "owner", "execution_profile", "review_profile", "created_at", "updated_at", "tracker_links", "reopen_history", "archive_history"];
   if (Object.keys(data).some((key) => !allowed.includes(key)) || data.schema !== 1 || !requiredString(data, "workspace") || !/^\d{6}$/.test(data.workspace) || data.workspace !== workspace) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
   if (!requiredString(data, "title") || !validTimestamp(data.created_at) || !validTimestamp(data.updated_at) || Date.parse(data.updated_at) < Date.parse(data.created_at) || !Array.isArray(data.tracker_links)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
   if (!validTrackerLinks(data.tracker_links) || data.tracker_links.some((link) => !link.provider.trim() || !link.project.trim() || ((link.provider === "gitlab" || link.provider === "github") ? (!Number.isInteger(link.iid) || link.iid < 1) : !link.key?.trim()))) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} tracker links`);
@@ -103,6 +104,8 @@ function validateMetadata(data, kind, workspace, stage = null) {
     || data.depends_on.includes(data.stage) || data.depends_on.some((item) => typeof item !== "string" || !/^\d{2}$/.test(item))
     || (data.reopen_history !== undefined && !validReopenHistory(data.reopen_history))
     || (data.archive_history !== undefined && !validArchiveHistory(data.archive_history))
+    || (data.execution_profile !== undefined && !CAPABILITY_PROFILES.includes(data.execution_profile))
+    || (data.review_profile !== undefined && !CAPABILITY_PROFILES.includes(data.review_profile))
   );
   if (invalidWorkspaceHistory || invalidStageMetadata) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
 }
@@ -134,7 +137,7 @@ export class FileStorage {
   constructor(projectRoot, config = {}) {
     this.projectRoot = projectRoot;
     const storage = config.storage || {};
-    this.config = { mode: "hybrid", root: ".work-context", personal_root: ".work-context/local", title: { issue_prefix: "short" }, tracker: { provider: null }, ...config, ...storage, title: { issue_prefix: "short", ...(config.title || {}) }, tracker: { provider: null, ...(config.tracker || {}) } };
+    this.config = { mode: "hybrid", root: ".work-context", personal_root: ".work-context/local", title: { issue_prefix: "short" }, tracker: { provider: null }, capability_profiles: { mode: "advisory" }, ...config, ...storage, title: { issue_prefix: "short", ...(config.title || {}) }, tracker: { provider: null, ...(config.tracker || {}) }, capability_profiles: { mode: "advisory", ...(config.capability_profiles || {}) } };
     this.root = path.resolve(projectRoot, this.config.root);
     this.personalRoot = path.resolve(projectRoot, this.config.personal_root);
     const project = path.resolve(projectRoot);
@@ -302,7 +305,7 @@ export class FileStorage {
 
 export function loadConfig(projectRoot, configFile = path.resolve(projectRoot, ".work-context", "config.yaml")) {
   if (!fs.existsSync(configFile)) return {};
-  const data = Object.assign(Object.create(null), { storage: Object.create(null), title: Object.create(null), tracker: Object.create(null), notifications: Object.create(null) });
+  const data = Object.assign(Object.create(null), { storage: Object.create(null), title: Object.create(null), tracker: Object.create(null), notifications: Object.create(null), capability_profiles: Object.create(null) });
   let section = null;
   for (const line of fs.readFileSync(configFile, "utf8").split("\n")) {
     if (!line.trim() || line.trim().startsWith("#")) continue;
@@ -310,7 +313,8 @@ export function loadConfig(projectRoot, configFile = path.resolve(projectRoot, "
     if (!match[1]) { section = match[3] ? null : match[2]; if (match[3]) data[match[2]] = scalarConfig(match[3]); else if (!data[match[2]] || typeof data[match[2]] !== "object") data[match[2]] = Object.create(null); continue; }
     if (section && data[section] && typeof data[section] === "object") data[section][match[2]] = scalarConfig(match[3]);
   }
-  if (Object.keys(data).some((key) => !["schema", "storage", "title", "tracker", "notifications"].includes(key)) || Object.keys(data.storage).some((key) => !["mode", "root", "personal_root"].includes(key)) || Object.keys(data.title).some((key) => key !== "issue_prefix") || Object.keys(data.tracker).some((key) => key !== "provider") || !data.notifications || typeof data.notifications !== "object" || Array.isArray(data.notifications) || Object.keys(data.notifications).some((key) => key !== "desktop") || data.schema !== 1 || !data.storage || !["personal", "shared-git", "hybrid"].includes(data.storage.mode) || typeof data.storage.root !== "string" || typeof data.storage.personal_root !== "string" || !data.title || !["none", "short", "full"].includes(data.title.issue_prefix) || !data.tracker || (data.tracker.provider !== null && typeof data.tracker.provider !== "string") || (data.notifications.desktop !== undefined && typeof data.notifications.desktop !== "boolean")) fail(ERROR_CODES.STORAGE_ERROR, "Invalid work-context config");
+  if (Object.keys(data).some((key) => !["schema", "storage", "title", "tracker", "notifications", "capability_profiles"].includes(key)) || Object.keys(data.storage).some((key) => !["mode", "root", "personal_root"].includes(key)) || Object.keys(data.title).some((key) => key !== "issue_prefix") || Object.keys(data.tracker).some((key) => key !== "provider") || !data.notifications || typeof data.notifications !== "object" || Array.isArray(data.notifications) || Object.keys(data.notifications).some((key) => key !== "desktop") || !data.capability_profiles || typeof data.capability_profiles !== "object" || Array.isArray(data.capability_profiles) || Object.keys(data.capability_profiles).some((key) => key !== "mode") || (data.capability_profiles.mode !== undefined && !["advisory", "off"].includes(data.capability_profiles.mode)) || data.schema !== 1 || !data.storage || !["personal", "shared-git", "hybrid"].includes(data.storage.mode) || typeof data.storage.root !== "string" || typeof data.storage.personal_root !== "string" || !data.title || !["none", "short", "full"].includes(data.title.issue_prefix) || !data.tracker || (data.tracker.provider !== null && typeof data.tracker.provider !== "string") || (data.notifications.desktop !== undefined && typeof data.notifications.desktop !== "boolean")) fail(ERROR_CODES.STORAGE_ERROR, "Invalid work-context config");
+  data.capability_profiles.mode ||= "advisory";
   return data;
 }
 const scalarConfig = (value) => value === "null" ? null : value === "[]" ? [] : value === "{}" ? {} : /^(true|false)$/.test(value) ? value === "true" : /^-?\d+(\.\d+)?$/.test(value) ? Number(value) : value;

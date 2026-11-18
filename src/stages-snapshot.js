@@ -1,4 +1,5 @@
 import { WorkContext } from "./core.js";
+import { stageCapabilityProfiles } from "./capability-profiles.js";
 
 const emptySnapshot = () => ({
   schema: 1,
@@ -52,6 +53,7 @@ export function readStagesSnapshot({ projectRoot, sessionId }) {
         description: stage.description,
         depends_on: stage.depends_on.filter((dependency) => visibleStageIds.has(dependency)),
         tracker_links: stage.tracker_links || [],
+        ...stageCapabilityProfiles(context.storage, stage),
         ...(candidateProjection?.by_stage[stage.stage] ? { candidates: candidateProjection.by_stage[stage.stage] } : {}),
         current: stage.stage === session.stage,
       }));

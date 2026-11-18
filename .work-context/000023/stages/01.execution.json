@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "workspace": "000023",
+  "stage": "01",
+  "revision": 1,
+  "created_at": "2026-11-17T19:18:54.484Z",
+  "updated_at": "2026-11-17T19:18:54.484Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Plan delivery.explain and delivery.doctor without functional implementation",
+    "Record durable architecture, security, limits, evidence, and compatibility decisions",
+    "Create six implementation stages with file scope, dependencies, completion criteria, and focused tests"
+  ],
+  "completed": [
+    "Audited existing delivery range, candidate metadata, config parser, plugin boundaries, installer, command projection, and tests",
+    "Verified OpenCode 1.19.5 loader knows resolved plugin identity but public PluginInput does not expose loaded module URL or version",
+    "Recorded five durable knowledge entries",
+    "Created six dependency-ordered implementation stages"
+  ],
+  "remaining": [
+    "User lifecycle decision for Planning stage"
+  ],
+  "decisions": [
+    "Keep doctor delivery-scoped while allowing package-runtime evidence",
+    "Treat current module origin/version as self-reported and host attestation as unavailable",
+    "Use explicit 50% rename/copy similarity and response-local opaque path tokens",
+    "Use producer-selected contract version 1.0 with strict major and additive minor compatibility"
+  ],
+  "blockers": [],
+  "verification": [
+    "Workspace knowledge contains contract, limits, redaction, doctor trust, and recommendation decisions",
+    "Stages cover contracts/Git, explain, recommendations, exposure, doctor, and final ADR/security/integration"
+  ]
+}

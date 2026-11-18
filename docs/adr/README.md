@@ -9,6 +9,7 @@ This directory records the package and OpenCode integration decisions.
 - [ADR-0006: Startup commit candidate workflow](0006-startup-commit-candidate-workflow.md)
 - [ADR-0007: Stage-local execution ledger](0007-stage-execution-ledger.md)
 - [ADR-0008: Workspace delivery context](0008-workspace-delivery-context.md)
+- [ADR-0009: Vendor-neutral capability profiles](0009-vendor-neutral-capability-profiles.md)
 
 The filesystem core and storage implementation remain the package source of
 truth. Server and TUI integrations import package exports, and projects do not

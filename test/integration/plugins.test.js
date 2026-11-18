@@ -65,6 +65,34 @@ test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
   }
 });
 
+test("capability profile tools create, update, clear, and advise without switching sessions", async () => {
+  const fixture = createFixture();
+  try {
+    const { context, root } = fixture;
+    context.createWorkspace("Capability integration", { workspace: "999899", sessionId: "planning" });
+    context.handoff("999899", "01", "planning");
+    const executeContext = { directory: root, worktree: root, sessionID: "planning", metadata: async () => {} };
+
+    const added = JSON.parse((await tools.work_context_add_stage.execute({
+      workspace: "999899",
+      title: "Profiled stage",
+      prompt: "Implement it.",
+      executionProfile: "implementation",
+      reviewProfile: "review",
+    }, executeContext)).output);
+    assert.deepEqual(added.data.capability_profiles, { mode: "advisory", execution_profile: "implementation", review_profile: "review" });
+
+    const updated = JSON.parse((await tools.work_context_set_stage_profiles.execute({ workspace: "999899", stage: "02", reviewProfile: null }, executeContext)).output);
+    assert.deepEqual(updated.data.capability_profiles, { mode: "advisory", execution_profile: "implementation" });
+    const resumed = JSON.parse((await tools.work_context_start_session.execute({ workspace: "999899", stage: "02" }, executeContext)).output);
+    assert.equal(resumed.data.resume.context.capability_profiles.execution.source, "current");
+    assert.equal(resumed.data.resume.context.capability_profiles.execution.message, "No mapping configured; continuing with the current model.");
+    assert.equal(context.storage.readEvents().filter((event) => event.event === "session.started").length, 2);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("resume tool exposes startup policy without changing standard-mode instructions", async () => {
   const fixture = createFixture();
   try {

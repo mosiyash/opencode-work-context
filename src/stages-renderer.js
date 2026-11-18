@@ -26,6 +26,10 @@ const deliverySummary = (delivery) => {
   const pending = delivery.environments.reduce((total, environment) => total + environment.pending, 0);
   return `Delivery · ${delivery.environments.length} environments · ${pending} tracked pending`;
 };
+const profileSummary = (stage) => {
+  const profiles = [stage.execution_profile && `execution ${stage.execution_profile}`, stage.review_profile && `review ${stage.review_profile}`].filter(Boolean);
+  return profiles.length ? `Profiles: ${profiles.join(" · ")}` : null;
+};
 
 /**
  * Render normalized stages as a dependency-to-dependent forest. A stage may
@@ -84,7 +88,8 @@ export function renderStagesPanel(result) {
   lines.push("", `Stages · ${snapshot.workspace.status}`);
   for (const stage of snapshot.stages) {
     const pending = candidateSummary(stage);
-    lines.push(`${statusMarker(stage.status)} ${stage.id}. ${stage.title}${stage.depends_on?.length ? `\nDeps: ${stage.depends_on.join(", ")}` : ""}${pending ? `\n${pending}` : ""}`);
+    const profiles = profileSummary(stage);
+    lines.push(`${statusMarker(stage.status)} ${stage.id}. ${stage.title}${profiles ? `\n${profiles}` : ""}${stage.depends_on?.length ? `\nDeps: ${stage.depends_on.join(", ")}` : ""}${pending ? `\n${pending}` : ""}`);
   }
   if (result.stale) lines.push(`! stale: ${result.error?.code || "STORAGE_ERROR"}`);
   return lines.join("\n");
