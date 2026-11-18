@@ -27,8 +27,9 @@ const deliverySummary = (delivery) => {
   return `Delivery · ${delivery.environments.length} environments · ${pending} tracked pending`;
 };
 const profileSummary = (stage) => {
-  const profiles = [stage.execution_profile && `execution ${stage.execution_profile}`, stage.review_profile && `review ${stage.review_profile}`].filter(Boolean);
-  return profiles.length ? `Profiles: ${profiles.join(" · ")}` : null;
+  return stage.execution_profile && stage.execution_depth && stage.recommended_model
+    ? `${stage.execution_profile} · ${stage.execution_depth} · ${stage.recommended_model}`
+    : null;
 };
 
 /**

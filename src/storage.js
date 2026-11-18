@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { WorkContextError, ERROR_CODES, fail } from "./errors.js";
 import { parseFrontmatter, renderMarkdown } from "./markdown.js";
 import { validateExecutionRecord } from "./stage-execution.js";
-import { CAPABILITY_PROFILES } from "./capability-profiles.js";
+import { CAPABILITY_CLASSIFICATIONS, CAPABILITY_DEPTHS, CAPABILITY_PROFILES } from "./capability-profiles.js";
 
 const now = () => new Date().toISOString();
 const ensure = (dir) => fs.mkdirSync(dir, { recursive: true });
@@ -90,7 +90,7 @@ const validateEventStream = (events) => {
   }
 };
 function validateMetadata(data, kind, workspace, stage = null) {
-  const allowed = kind === "workspace" ? ["schema", "workspace", "title", "status", "mode", "created_at", "updated_at", "tracker_links", "reopen_history"] : ["schema", "workspace", "stage", "title", "status", "goal", "prompt", "depends_on", "owner", "execution_profile", "review_profile", "created_at", "updated_at", "tracker_links", "reopen_history", "archive_history"];
+  const allowed = kind === "workspace" ? ["schema", "workspace", "title", "status", "mode", "created_at", "updated_at", "tracker_links", "reopen_history"] : ["schema", "workspace", "stage", "title", "status", "goal", "prompt", "depends_on", "owner", "execution_profile", "execution_depth", "execution_classification", "review_profile", "created_at", "updated_at", "tracker_links", "reopen_history", "archive_history"];
   if (Object.keys(data).some((key) => !allowed.includes(key)) || data.schema !== 1 || !requiredString(data, "workspace") || !/^\d{6}$/.test(data.workspace) || data.workspace !== workspace) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
   if (!requiredString(data, "title") || !validTimestamp(data.created_at) || !validTimestamp(data.updated_at) || Date.parse(data.updated_at) < Date.parse(data.created_at) || !Array.isArray(data.tracker_links)) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
   if (!validTrackerLinks(data.tracker_links) || data.tracker_links.some((link) => !link.provider.trim() || !link.project.trim() || ((link.provider === "gitlab" || link.provider === "github") ? (!Number.isInteger(link.iid) || link.iid < 1) : !link.key?.trim()))) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} tracker links`);
@@ -105,7 +105,12 @@ function validateMetadata(data, kind, workspace, stage = null) {
     || (data.reopen_history !== undefined && !validReopenHistory(data.reopen_history))
     || (data.archive_history !== undefined && !validArchiveHistory(data.archive_history))
     || (data.execution_profile !== undefined && !CAPABILITY_PROFILES.includes(data.execution_profile))
+    || (data.execution_depth !== undefined && !CAPABILITY_DEPTHS.includes(data.execution_depth))
+    || (data.execution_classification !== undefined && !CAPABILITY_CLASSIFICATIONS.includes(data.execution_classification))
     || (data.review_profile !== undefined && !CAPABILITY_PROFILES.includes(data.review_profile))
+    || (data.execution_depth !== undefined && data.execution_profile === undefined)
+    || (data.execution_classification !== undefined && (data.execution_profile === undefined || data.execution_depth === undefined))
+    || (data.execution_profile !== undefined && data.execution_depth !== undefined && data.execution_classification === undefined)
   );
   if (invalidWorkspaceHistory || invalidStageMetadata) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${kind} metadata`);
 }

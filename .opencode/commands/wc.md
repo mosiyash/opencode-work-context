@@ -43,8 +43,12 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `workspace reopen <workspace> "reason"` -> `work_context_reopen_workspace`
 - `resume <workspace> <stage>` -> `work_context_start_session`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE` -> `work_context_force_close_session`
-- `stage add [<workspace>] ...` -> `work_context_add_stage` (optional `prompt`; a detailed local prompt is expected for stages created from planning, while shared context belongs in workspace knowledge)
-- `stage profiles [<workspace>] [<stage>] [execution <routine|implementation|architecture|security|review|clear>] [review <routine|implementation|architecture|security|review|clear>]` -> `work_context_set_stage_profiles`
+- `profiles show` -> `work_context_show_capability_profiles`
+- `profiles setup` -> ask the user questions, then `work_context_configure_capability_profiles`
+- `profiles reset` -> ask for confirmation, then `work_context_reset_capability_profiles`
+- `stage add [<workspace>] ...` -> `work_context_add_stage` (optional `prompt`; infer missing execution capability and depth from the complete stage context before calling the tool)
+- `stage profiles [<workspace>] [<stage>] [execution <routine|implementation|architecture|security|review> depth <light|standard|deep>|clear] [review <routine|implementation|architecture|security|review|clear>]` -> `work_context_set_stage_profiles`
+- `stage profiles refresh <workspace> [<stage>] [--include-explicit]` -> inspect current stage context, infer classifications, then `work_context_refresh_stage_profiles`
 - `stage reopen <workspace> <stage> "reason"` -> `work_context_reopen_stage`
 - `stage restore <workspace> <stage> "reason"` -> `work_context_restore_stage`
 - `stage rename [<workspace>] [<stage>] "title"` -> `work_context_rename_stage`
@@ -83,8 +87,12 @@ Supported syntax:
 - `workspace reopen <workspace> "reason"`
 - `resume <workspace> <stage>`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE`
-- `stage add [<workspace>] "title" ["prompt"] [execution <routine|implementation|architecture|security|review>] [review <routine|implementation|architecture|security|review>]`
-- `stage profiles [<workspace>] [<stage>] [execution <routine|implementation|architecture|security|review|clear>] [review <routine|implementation|architecture|security|review|clear>]`
+- `profiles show`
+- `profiles setup`
+- `profiles reset`
+- `stage add [<workspace>] "title" ["prompt"] [execution <routine|implementation|architecture|security|review> depth <light|standard|deep>] [review <routine|implementation|architecture|security|review>]`
+- `stage profiles [<workspace>] [<stage>] [execution <routine|implementation|architecture|security|review> depth <light|standard|deep>|clear] [review <routine|implementation|architecture|security|review|clear>]`
+- `stage profiles refresh <workspace> [<stage>] [--include-explicit]`
 - `stage reopen <workspace> <stage> "reason"`
 - `stage restore <workspace> <stage> "reason"`
 - `stage rename [<workspace>] [<stage>] "title"`
@@ -108,9 +116,15 @@ Supported syntax:
 - explicit workspace and stage positions accept canonical padded IDs or unpadded positive integers (`1..999999` and `1..99`); results and generated commands remain padded
 - zero, signs, decimals, whitespace, overlong values, and other non-digit identifier forms are invalid; a lone unpadded workspace ID is not reinterpreted under the one-identifier rule
 - `stage update-result` replaces an existing result and does not create a result for an unfinished stage
-- capability profiles are portable stage intent only; `stage profiles` must provide execution, review, or both, omitted fields remain unchanged, and `clear` removes that field
+- execution recommendations have two independent portable fields: capability (`routine`, `implementation`, `architecture`, `security`, `review`) and depth (`light`, `standard`, `deep`)
+- when stage creation does not explicitly name capability and depth, infer both from title, description, prompt, dependencies, active workspace knowledge, and current execution state; pass `classification: inferred`; explicit user values pass `classification: explicit`
+- core and read-only UI never infer classifications; do not use keyword heuristics, mutate during resume, or invent values when the stage prompt is not actionable
+- `stage profiles` makes an explicit assignment; execution capability and depth are set or cleared together, omitted fields remain unchanged, and review remains optional metadata that does not control subagents or resolve a model
+- `stage profiles refresh` re-evaluates actionable missing/inferred stages from their complete current context and applies all computed recommendations in one structured call; skip completed/archived stages and preserve explicit assignments unless `--include-explicit` was requested
 - `capability_profiles.mode` in `.work-context/config.yaml` is `advisory` by default or `off`; off mode preserves metadata but omits profile presentation, resolution, and mapping warnings
-- advisory mappings are read only from `.work-context/local/capability-profiles.json` as `{ "schema": 1, "mappings": { "implementation": "opaque-user-target" } }`; invalid entries are ignored with bounded warnings and missing mappings report `No mapping configured; continuing with the current model.`
+- advisory mappings are local depth-to-model labels, for example `{ "schema": 1, "mappings": { "light": "Luna", "standard": "Terra", "deep": "Sol" } }`; invalid entries are ignored with bounded warnings and missing mappings resolve to `current model`
+- `profiles setup` must use interactive questions for mode and light/standard/deep labels, apply mode and mappings in separate atomic structured calls, then offer to refresh unfinished stages; `profiles reset` requires explicit confirmation and removes mappings without changing stage metadata or mode
+- expanded stage details show one unlabeled line `<capability> · <depth> · <model>`; review metadata is not displayed as a model recommendation
 - capability recommendations never select a model or agent, create a replacement session, block resume, or persist mapping targets in tracked workspace data
 - stage execution state has `scope`, `completed`, `remaining`, `decisions`, `blockers`, and `verification` string-array sections; `replace` accepts the complete state object, while `update` accepts an object with `add` and/or `remove` section objects
 - read stage execution state first and pass its revision as `expectedRevision`; absent legacy state has revision `0`, and a stale mutation returns `EXECUTION_REVISION_CONFLICT` without changing newer state

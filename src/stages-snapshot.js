@@ -1,5 +1,5 @@
 import { WorkContext } from "./core.js";
-import { stageCapabilityProfiles } from "./capability-profiles.js";
+import { capabilityProfileMode, readCapabilityMappings, stageCapabilityProfiles } from "./capability-profiles.js";
 
 const emptySnapshot = () => ({
   schema: 1,
@@ -45,6 +45,7 @@ export function readStagesSnapshot({ projectRoot, sessionId }) {
       .filter((stage) => stage.status !== "archived")
       .sort((left, right) => Number(left.stage) - Number(right.stage));
     const visibleStageIds = new Set(visibleStages.map((stage) => stage.stage));
+    const capabilityMappings = capabilityProfileMode(context.storage) === "advisory" ? readCapabilityMappings(context.storage) : null;
     const stages = visibleStages
       .map((stage) => ({
         id: stage.stage,
@@ -53,7 +54,7 @@ export function readStagesSnapshot({ projectRoot, sessionId }) {
         description: stage.description,
         depends_on: stage.depends_on.filter((dependency) => visibleStageIds.has(dependency)),
         tracker_links: stage.tracker_links || [],
-        ...stageCapabilityProfiles(context.storage, stage),
+        ...stageCapabilityProfiles(context.storage, stage, capabilityMappings),
         ...(candidateProjection?.by_stage[stage.stage] ? { candidates: candidateProjection.by_stage[stage.stage] } : {}),
         current: stage.stage === session.stage,
       }));

@@ -1,5 +1,5 @@
 import { WorkContext } from "./core.js";
-import { stageCapabilityProfiles } from "./capability-profiles.js";
+import { capabilityProfileMode, readCapabilityMappings, stageCapabilityProfiles } from "./capability-profiles.js";
 
 const emptySnapshot = () => ({
   schema: 1,
@@ -25,7 +25,7 @@ const sessionFor = (context, sessionId) => {
     || context.sessionByOpenCodeId(sessionId, null, null, null);
 };
 
-const readWorkspace = (context, record, currentSession) => {
+const readWorkspace = (context, record, currentSession, capabilityMappings) => {
   const listed = context.listStages(record.workspace).data;
   const sessions = listed.sessions;
   const matchingSession = currentSession?.workspace === record.workspace
@@ -57,7 +57,7 @@ const readWorkspace = (context, record, currentSession) => {
         description: stage.description,
         depends_on: stage.depends_on.filter((dependency) => visibleStageIds.has(dependency)),
         tracker_links: stage.tracker_links || [],
-        ...stageCapabilityProfiles(context.storage, stage),
+        ...stageCapabilityProfiles(context.storage, stage, capabilityMappings),
         ...(candidateProjection?.by_stage[stage.stage] ? { candidates: candidateProjection.by_stage[stage.stage] } : {}),
         current: stage.stage === currentStage,
       })),
@@ -72,9 +72,10 @@ export function readWorkContextSnapshot({ projectRoot, sessionId } = {}) {
   try {
     const context = WorkContext.openExisting(projectRoot, { sessionId, actor: "OpenCode TUI" });
     const currentSession = sessionFor(context, sessionId);
+    const capabilityMappings = capabilityProfileMode(context.storage) === "advisory" ? readCapabilityMappings(context.storage) : null;
     const workspaces = context.listWorkspaces().data
       .sort((left, right) => left.workspace.localeCompare(right.workspace))
-      .map((record) => readWorkspace(context, record, currentSession));
+      .map((record) => readWorkspace(context, record, currentSession, capabilityMappings));
     const currentWorkspace = currentSession?.workspace
       && workspaces.some((workspace) => workspace.id === currentSession.workspace)
       ? currentSession.workspace

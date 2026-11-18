@@ -405,13 +405,19 @@ test("native sidebar renders the workflow mode below the workspace title", () =>
   assert.match(output, /Demo\s+Workflow · startup\s+Stages/);
 });
 
-test("native sidebar renders compact capability profiles", () => {
+test("native sidebar renders one compact capability recommendation in details", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const output = renderedText(renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "standard" },
-    stages: [{ id: "01", title: "Design", status: "planned", depends_on: [], execution_profile: "architecture", review_profile: "security" }],
+    stages: [{ id: "01", title: "Design", status: "planned", depends_on: [], execution_profile: "architecture", execution_depth: "deep", recommended_model: "Sol", review_profile: "security" }],
   } }, {}, runtime));
-  assert.match(output, /01\. Design\s+Profiles: execution architecture · review security/);
+  assert.match(output, /01\. Design\s+architecture · deep · Sol/);
+  assert.doesNotMatch(output, /security|Profiles:|Execution:/);
+  const collapsed = renderedText(renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "standard" },
+    stages: [{ id: "01", title: "Design", status: "planned", depends_on: [], execution_profile: "architecture", execution_depth: "deep", recommended_model: "Sol" }],
+  } }, {}, runtime, undefined, false));
+  assert.doesNotMatch(collapsed, /architecture · deep · Sol/);
 });
 
 test("native sidebar renders candidate counts from the snapshot", () => {
@@ -1013,12 +1019,16 @@ test("package exports preserve server and TUI plugin entry points", async () => 
   const tui = await import("opencode-work-context/tui");
   const adapter = await import("opencode-work-context/adapter");
   const profilesTool = await import("opencode-work-context/tools/work_context_set_stage_profiles");
+  const refreshProfilesTool = await import("opencode-work-context/tools/work_context_refresh_stage_profiles");
+  const configureProfilesTool = await import("opencode-work-context/tools/work_context_configure_capability_profiles");
   assert.equal(typeof server.default, "function");
   assert.equal(typeof serverEntry.default.server, "function");
   assert.equal(typeof tui.default.tui, "function");
   assert.equal(typeof adapter.contextFor, "function");
   assert.equal(typeof adapter.readStagesSnapshot, "function");
   assert.equal(typeof profilesTool.default.execute, "function");
+  assert.equal(typeof refreshProfilesTool.default.execute, "function");
+  assert.equal(typeof configureProfilesTool.default.execute, "function");
   assert.equal(packageManifest.exports["./plugin"], "./plugin/work-context.js");
   assert.equal(packageManifest.exports["./server"], "./plugin/server.js");
   assert.equal(packageManifest.exports["./tui"], "./plugin/tui.js");
@@ -1222,9 +1232,9 @@ test("work-context modal renderer exposes empty, filter, and navigation state", 
   } finally { controller.dispose(); }
 });
 
-test("work-context modal details render capability profiles without changing stage order", async () => {
+test("work-context modal details render one capability recommendation without changing stage order", async () => {
   const controller = createWorkContextModalController({ read: async () => ({ ok: true, data: { workspaces: [
-    { id: "000001", title: "Profiles", status: "in_progress", stages: [{ id: "01", title: "Implementation", description: "Build it", status: "planned", execution_profile: "implementation", review_profile: "review" }], sessions: [] },
+    { id: "000001", title: "Profiles", status: "in_progress", stages: [{ id: "01", title: "Implementation", description: "Build it", status: "planned", execution_profile: "implementation", execution_depth: "standard", recommended_model: "Terra", review_profile: "review" }], sessions: [] },
   ], currentWorkspace: "000001" } }) });
   const runtime = { jsx: (type, props) => ({ type, props }) };
   try {
@@ -1232,7 +1242,8 @@ test("work-context modal details render capability profiles without changing sta
     controller.handleKey({ key: "Enter" });
     const output = renderedText(renderWorkContextModal(controller, {}, runtime));
     assert.match(output, /Implementation/);
-    assert.match(output, /Profiles\s+execution implementation · review review/);
+    assert.match(output, /implementation · standard · Terra/);
+    assert.doesNotMatch(output, /review review|Execution:/);
   } finally { controller.dispose(); }
 });
 

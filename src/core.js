@@ -11,13 +11,20 @@ import { isDependencySatisfied } from "./stage-status.js";
 import { CandidateStore } from "./candidates.js";
 import { DeliveryStore } from "./delivery.js";
 import { applyExecutionPatch, assertExecutionSize, executionState, normalizeExecutionState } from "./stage-execution.js";
-import { CAPABILITY_PROFILES, capabilityProfileMode, capabilityRecommendations } from "./capability-profiles.js";
+import { CAPABILITY_CLASSIFICATIONS, CAPABILITY_DEPTHS, CAPABILITY_MAPPINGS_FILE, CAPABILITY_PROFILES, capabilityProfileMode, capabilityRecommendations, readCapabilityMappings, validateCapabilityMappings } from "./capability-profiles.js";
 
 const actor = (options) => options.actor || "OpenCode";
 const workspaceMode = (data) => data.mode || "standard";
 const assertCapabilityProfile = (value, name) => {
   if (value !== undefined && value !== null && !CAPABILITY_PROFILES.includes(value)) fail(ERROR_CODES.INVALID_ARGUMENT, `${name} must be one of: ${CAPABILITY_PROFILES.join(", ")}`);
 };
+const assertCapabilityDepth = (value, name) => {
+  if (value !== undefined && value !== null && !CAPABILITY_DEPTHS.includes(value)) fail(ERROR_CODES.INVALID_ARGUMENT, `${name} must be one of: ${CAPABILITY_DEPTHS.join(", ")}`);
+};
+const assertCapabilityClassification = (value) => {
+  if (value !== undefined && !CAPABILITY_CLASSIFICATIONS.includes(value)) fail(ERROR_CODES.INVALID_ARGUMENT, `classification must be one of: ${CAPABILITY_CLASSIFICATIONS.join(", ")}`);
+};
+const capabilityData = (storage, stage) => ({ mode: capabilityProfileMode(storage), ...(stage.execution_profile ? { execution_profile: stage.execution_profile } : {}), ...(stage.execution_depth ? { execution_depth: stage.execution_depth } : {}), ...(stage.execution_classification ? { execution_classification: stage.execution_classification } : {}), ...(stage.review_profile ? { review_profile: stage.review_profile } : {}) });
 const activeKnowledge = (records) => records
   .filter((record) => record.status === "active")
   .map(({ id: knowledgeId, title, kind, text, sources }) => ({ id: knowledgeId, title, kind, text, sources }));
@@ -439,7 +446,10 @@ export class WorkContext {
     const dependsOn = (options.dependsOn || []).map(normalizeStageId);
     if (new Set(dependsOn).size !== dependsOn.length) fail(ERROR_CODES.INVALID_ARGUMENT, "dependsOn must contain unique stage IDs");
     assertCapabilityProfile(options.executionProfile, "executionProfile");
+    assertCapabilityDepth(options.executionDepth, "executionDepth");
+    assertCapabilityClassification(options.classification);
     assertCapabilityProfile(options.reviewProfile, "reviewProfile");
+    if (Boolean(options.executionProfile) !== Boolean(options.executionDepth)) fail(ERROR_CODES.INVALID_ARGUMENT, "executionProfile and executionDepth must be provided together");
     return this.transact(`workspace-${workspace}`, () => {
       const stages = this.listStages(workspace).data.stages;
       if (stages.length >= 99) fail(ERROR_CODES.INVALID_STATE, "A workspace cannot contain more than 99 stages");
@@ -448,11 +458,11 @@ export class WorkContext {
       if (dependsOn.some((dependency) => !stages.some((item) => item.stage === dependency))) fail(ERROR_CODES.INVALID_ARGUMENT, "dependsOn must reference existing stages");
       const now = new Date().toISOString();
       const prompt = options.prompt?.trim() || undefined;
-      const metadata = { schema: 1, workspace, stage, title: title.trim(), status: "planned", goal: options.goal || title.trim(), ...(prompt ? { prompt } : {}), depends_on: dependsOn, owner: options.owner || actor(this.options), ...(options.executionProfile ? { execution_profile: options.executionProfile } : {}), ...(options.reviewProfile ? { review_profile: options.reviewProfile } : {}), created_at: now, updated_at: now, tracker_links: [] };
+      const metadata = { schema: 1, workspace, stage, title: title.trim(), status: "planned", goal: options.goal || title.trim(), ...(prompt ? { prompt } : {}), depends_on: dependsOn, owner: options.owner || actor(this.options), ...(options.executionProfile ? { execution_profile: options.executionProfile, execution_depth: options.executionDepth, execution_classification: options.classification || "explicit" } : {}), ...(options.reviewProfile ? { review_profile: options.reviewProfile } : {}), created_at: now, updated_at: now, tracker_links: [] };
       this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), metadata, body(title, options.goal || title, prompt));
       generateProjections(this.storage);
       const capabilityProfiles = metadata.execution_profile || metadata.review_profile
-        ? { capability_profiles: { mode: capabilityProfileMode(this.storage), ...(metadata.execution_profile ? { execution_profile: metadata.execution_profile } : {}), ...(metadata.review_profile ? { review_profile: metadata.review_profile } : {}) } }
+        ? { capability_profiles: capabilityData(this.storage, metadata) }
         : {};
       return this.result({ workspace, stage, status: "planned", session_started: false, resume_required: true, ...capabilityProfiles }, [stage]);
     });
@@ -462,25 +472,124 @@ export class WorkContext {
     workspace = normalizeWorkspaceId(workspace);
     stage = normalizeStageId(stage);
     const hasExecution = Object.hasOwn(profiles, "executionProfile");
+    const hasDepth = Object.hasOwn(profiles, "executionDepth");
     const hasReview = Object.hasOwn(profiles, "reviewProfile");
-    if (!hasExecution && !hasReview) fail(ERROR_CODES.INVALID_ARGUMENT, "At least one profile must be set or cleared");
+    if (!hasExecution && !hasDepth && !hasReview) fail(ERROR_CODES.INVALID_ARGUMENT, "At least one profile or depth must be set or cleared");
     assertCapabilityProfile(profiles.executionProfile, "executionProfile");
+    assertCapabilityDepth(profiles.executionDepth, "executionDepth");
     assertCapabilityProfile(profiles.reviewProfile, "reviewProfile");
+    if ((profiles.executionProfile === null) !== (profiles.executionDepth === null) && (profiles.executionProfile === null || profiles.executionDepth === null)) fail(ERROR_CODES.INVALID_ARGUMENT, "Clear executionProfile and executionDepth together");
     return this.transact(`stage-${workspace}-${stage}`, () => {
       const record = this.storage.readStage(workspace, stage);
       let changed = false;
-      for (const [provided, input, key] of [[hasExecution, profiles.executionProfile, "execution_profile"], [hasReview, profiles.reviewProfile, "review_profile"]]) {
+      for (const [provided, input, key] of [[hasExecution, profiles.executionProfile, "execution_profile"], [hasDepth, profiles.executionDepth, "execution_depth"], [hasReview, profiles.reviewProfile, "review_profile"]]) {
         if (!provided) continue;
         if (input === null) {
           if (record.data[key] !== undefined) { delete record.data[key]; changed = true; }
         } else if (record.data[key] !== input) { record.data[key] = input; changed = true; }
       }
+      if ((hasExecution || hasDepth) && record.data.execution_profile && record.data.execution_depth && record.data.execution_classification !== "explicit") { record.data.execution_classification = "explicit"; changed = true; }
+      if ((hasExecution || hasDepth) && !record.data.execution_profile && !record.data.execution_depth && record.data.execution_classification !== undefined) { delete record.data.execution_classification; changed = true; }
+      if (Boolean(record.data.execution_profile) !== Boolean(record.data.execution_depth)) fail(ERROR_CODES.INVALID_ARGUMENT, "executionProfile and executionDepth must both be set or cleared");
       if (changed) {
         record.data.updated_at = new Date().toISOString();
         this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), record.data, record.body);
         generateProjections(this.storage);
       }
-      return this.result({ workspace, stage, capability_profiles: { mode: capabilityProfileMode(this.storage), ...(record.data.execution_profile ? { execution_profile: record.data.execution_profile } : {}), ...(record.data.review_profile ? { review_profile: record.data.review_profile } : {}) } }, changed ? [workspace, stage] : []);
+      return this.result({ workspace, stage, capability_profiles: capabilityData(this.storage, record.data) }, changed ? [workspace, stage] : []);
+    });
+  }
+
+  refreshStageProfiles(workspace, recommendations, options = {}) {
+    workspace = normalizeWorkspaceId(workspace);
+    if (!Array.isArray(recommendations) || !recommendations.length || recommendations.length > 99) fail(ERROR_CODES.INVALID_ARGUMENT, "recommendations must contain 1 to 99 stage classifications");
+    const normalized = recommendations.map((item) => {
+      const stage = normalizeStageId(item.stage);
+      assertCapabilityProfile(item.executionProfile, "executionProfile");
+      assertCapabilityDepth(item.executionDepth, "executionDepth");
+      if (!item.executionProfile || !item.executionDepth) fail(ERROR_CODES.INVALID_ARGUMENT, "Each recommendation requires executionProfile and executionDepth");
+      return { stage, executionProfile: item.executionProfile, executionDepth: item.executionDepth };
+    });
+    if (new Set(normalized.map((item) => item.stage)).size !== normalized.length) fail(ERROR_CODES.INVALID_ARGUMENT, "recommendations must contain unique stage IDs");
+    return this.transact(`workspace-${workspace}`, () => {
+      const updated = [];
+      const unchanged = [];
+      const skipped = [];
+      for (const recommendation of normalized) {
+        const record = this.storage.readStage(workspace, recommendation.stage);
+        if (["completed", "archived", "cancelled"].includes(record.data.status)) { skipped.push({ stage: recommendation.stage, reason: "terminal" }); continue; }
+        if (record.data.execution_classification === "explicit" && !options.includeExplicit) { skipped.push({ stage: recommendation.stage, reason: "explicit" }); continue; }
+        const before = { profile: record.data.execution_profile || null, depth: record.data.execution_depth || null, classification: record.data.execution_classification || null };
+        const after = { profile: recommendation.executionProfile, depth: recommendation.executionDepth, classification: "inferred" };
+        if (before.profile === after.profile && before.depth === after.depth && before.classification === after.classification) { unchanged.push(recommendation.stage); continue; }
+        record.data.execution_profile = after.profile;
+        record.data.execution_depth = after.depth;
+        record.data.execution_classification = after.classification;
+        record.data.updated_at = new Date().toISOString();
+        this.storage.writeMarkdown(this.storage.stageFile(workspace, recommendation.stage), record.data, record.body);
+        updated.push({ stage: recommendation.stage, before, after });
+      }
+      if (updated.length) generateProjections(this.storage);
+      return this.result({ workspace, updated, unchanged, skipped }, updated.length ? [workspace, ...updated.map((item) => item.stage)] : []);
+    });
+  }
+
+  showCapabilityProfiles() {
+    const local = readCapabilityMappings(this.storage);
+    return this.result({ mode: capabilityProfileMode(this.storage), mappings: local.mappings, warnings: local.warnings }, []);
+  }
+
+  configureCapabilityProfiles(options = {}) {
+    if (options.mode === undefined && options.mappings === undefined) fail(ERROR_CODES.INVALID_ARGUMENT, "mode or mappings is required");
+    if (options.mode !== undefined && options.mappings !== undefined) fail(ERROR_CODES.INVALID_ARGUMENT, "Configure mode and mappings in separate atomic calls");
+    if (options.mode !== undefined && !["advisory", "off"].includes(options.mode)) fail(ERROR_CODES.INVALID_ARGUMENT, "mode must be advisory or off");
+    if (options.mappings !== undefined && !validateCapabilityMappings(options.mappings)) fail(ERROR_CODES.INVALID_ARGUMENT, `mappings may contain only ${CAPABILITY_DEPTHS.join(", ")} with bounded non-empty string values`);
+    return withLock(this.storage.lockPath("capability-profiles"), () => {
+      this.storage.assertNoSymlinks();
+      const changed = [];
+      const configFile = path.join(this.storage.projectRoot, ".work-context", "config.yaml");
+      const mappingFile = path.join(this.storage.personalRoot, CAPABILITY_MAPPINGS_FILE);
+      const previousConfig = fs.readFileSync(configFile);
+      let previousMapping = null;
+      if (fs.existsSync(mappingFile)) {
+        if (!fs.lstatSync(mappingFile).isFile()) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${CAPABILITY_MAPPINGS_FILE} path`);
+        previousMapping = fs.readFileSync(mappingFile);
+      }
+      try {
+        if (options.mode !== undefined && options.mode !== capabilityProfileMode(this.storage)) {
+          const current = fs.readFileSync(configFile, "utf8");
+          const section = `capability_profiles:\n  mode: ${options.mode}\n`;
+          const next = /^capability_profiles:\n(?:  .*\n)*/m.test(current)
+            ? current.replace(/^capability_profiles:\n(?:  .*\n)*/m, section)
+            : `${current.trimEnd()}\n${section}`;
+          atomicWrite(configFile, next);
+          changed.push(configFile);
+        }
+        if (options.mappings !== undefined) {
+          atomicWrite(mappingFile, `${JSON.stringify({ schema: 1, mappings: options.mappings }, null, 2)}\n`);
+          changed.push(mappingFile);
+        }
+      } catch (error) {
+        try { atomicWrite(configFile, previousConfig.toString("utf8")); } catch {}
+        try {
+          if (previousMapping) atomicWrite(mappingFile, previousMapping.toString("utf8"));
+          else fs.rmSync(mappingFile, { force: true });
+        } catch {}
+        throw error;
+      }
+      if (options.mode !== undefined) this.storage.config.capability_profiles.mode = options.mode;
+      const local = readCapabilityMappings(this.storage);
+      return this.result({ mode: capabilityProfileMode(this.storage), mappings: local.mappings, warnings: local.warnings }, changed);
+    }, { owner: actor(this.options), session: this.options.sessionId || null });
+  }
+
+  resetCapabilityProfiles(confirmation) {
+    if (confirmation !== "RESET_PROFILES") fail(ERROR_CODES.CONFIRMATION_REQUIRED, "Reset requires RESET_PROFILES confirmation");
+    return this.transact("capability-profiles", () => {
+      const file = path.join(this.storage.personalRoot, CAPABILITY_MAPPINGS_FILE);
+      const existed = fs.existsSync(file);
+      if (existed) fs.rmSync(file);
+      return this.result({ mode: capabilityProfileMode(this.storage), mappings: {} }, existed ? [file] : []);
     });
   }
 
@@ -862,8 +971,8 @@ export class WorkContext {
   help(command = "") {
     return this.result({
       command,
-      syntax: "/wc [create|list|workspace list|workspace rename|workspace mode|candidate create|candidate capture|candidate preview|candidate show|candidate list|candidate ready|candidate commit|candidate discard|delivery read|delivery mark|workspace finish|workspace reopen|resume|stage add|stage profiles|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage execution read|stage execution replace|stage execution update|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
-       note: "capability profiles are vendor-neutral advisory metadata; mappings are local-only, missing mappings continue with the current model, off mode suppresses presentation and resolution, and no profile operation changes the active model, agent, or session; delivery context is workspace-level local operational state; exact Git range inspection requires explicit immutable from and to hashes, while marking an environment requires DELIVERY_CONFIRMED after successful delivery and never executes deployment commands or stores secrets; stage execution state is a bounded stage-local operational checkpoint; replace and update require the current revision and active stage session, while read is available without mutation; checklist state never completes a stage, and explicit stage finish reports remaining execution work while preserving the final ledger; associated OpenCode sessions in startup-mode workspaces receive the shared-worktree and commit-candidate policy on resume; standard mode remains conservative; candidate strategies are exact, shared_foundation, and integration, with optional related stage references for traceability only; active candidates related to the resumed stage appear in resume.context.pending_candidates; commit candidates are local-only and require startup workflow mode; capture and commit use isolated Git indexes and never alter the ordinary index; candidate commit uses the stored message unless an explicit non-empty override is provided, and bypasses Git hooks and signing; stage finish requires an explicit user lifecycle request unless the Planning-stage prompt contains the exact line AUTO_STAGE_FINISH: allowed; stage reopen requires a completed stage and a reason; stage restore requires an archived stage and a reason, returns its saved pre-archive status (or in_progress for legacy archives), and requires explicit separate-session resume when actionable; workspace reopen requires a completed workspace and a reason.",
+      syntax: "/wc [create|list|workspace list|workspace rename|workspace mode|candidate create|candidate capture|candidate preview|candidate show|candidate list|candidate ready|candidate commit|candidate discard|delivery read|delivery mark|profiles show|profiles setup|profiles reset|workspace finish|workspace reopen|resume|stage add|stage profiles|stage profiles refresh|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage execution read|stage execution replace|stage execution update|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
+       note: "execution recommendations combine a vendor-neutral capability with light, standard, or deep depth; Planning agents infer missing values before stage creation, ordinary refresh updates missing/inferred classifications while preserving explicit assignments, and local depth mappings resolve only an advisory model label; profiles setup gathers mode and mappings through questions, off mode suppresses presentation and resolution, and no profile operation changes a model, agent, reviewer, or session; delivery context is workspace-level local operational state; exact Git range inspection runs only for explicit immutable hashes; stage execution state is a bounded stage-local operational checkpoint; associated startup sessions receive the shared-worktree candidate policy; stage finish requires an explicit user lifecycle request unless Planning contains AUTO_STAGE_FINISH: allowed; recovery operations preserve lifecycle history.",
     }, []);
   }
 

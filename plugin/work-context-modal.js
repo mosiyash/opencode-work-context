@@ -289,7 +289,7 @@ export const renderWorkContextModal = (controller, theme, runtime = { jsx }, { m
           ...(controller.details() && stage ? [
             line(runtime, "Details", { marginTop: 1, fg: muted }),
             line(runtime, stage.description || "No description.", { wrapMode: "word", fg: theme?.current?.text }),
-            (stage.execution_profile || stage.review_profile) && line(runtime, `Profiles  ${[stage.execution_profile && `execution ${stage.execution_profile}`, stage.review_profile && `review ${stage.review_profile}`].filter(Boolean).join(" · ")}`, { wrapMode: "word", fg: muted }),
+            stage.execution_profile && stage.execution_depth && stage.recommended_model && line(runtime, `${stage.execution_profile} · ${stage.execution_depth} · ${stage.recommended_model}`, { wrapMode: "word", fg: muted }),
             line(runtime, `Sessions  ${(selected.sessions || []).length}`, { fg: muted }),
             ...(selected.sessions || []).map((session) => {
               const unread = controller.attention?.attentionFor?.(session.opencode_session_id);

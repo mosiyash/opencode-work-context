@@ -78,15 +78,20 @@ test("capability profile tools create, update, clear, and advise without switchi
       title: "Profiled stage",
       prompt: "Implement it.",
       executionProfile: "implementation",
+      executionDepth: "standard",
+      classification: "inferred",
       reviewProfile: "review",
     }, executeContext)).output);
-    assert.deepEqual(added.data.capability_profiles, { mode: "advisory", execution_profile: "implementation", review_profile: "review" });
+    assert.deepEqual(added.data.capability_profiles, { mode: "advisory", execution_profile: "implementation", execution_depth: "standard", execution_classification: "inferred", review_profile: "review" });
 
-    const updated = JSON.parse((await tools.work_context_set_stage_profiles.execute({ workspace: "999899", stage: "02", reviewProfile: null }, executeContext)).output);
-    assert.deepEqual(updated.data.capability_profiles, { mode: "advisory", execution_profile: "implementation" });
+    const configured = JSON.parse((await tools.work_context_configure_capability_profiles.execute({ mappings: { light: "Luna", standard: "Terra", deep: "Sol" } }, executeContext)).output);
+    assert.equal(configured.data.mappings.standard, "Terra");
+    const refreshed = JSON.parse((await tools.work_context_refresh_stage_profiles.execute({ workspace: "999899", recommendations: [{ stage: "02", executionProfile: "architecture", executionDepth: "deep" }] }, executeContext)).output);
+    assert.equal(refreshed.data.updated[0].after.depth, "deep");
+    const updated = JSON.parse((await tools.work_context_set_stage_profiles.execute({ workspace: "999899", stage: "02", executionDepth: "standard", reviewProfile: null }, executeContext)).output);
+    assert.deepEqual(updated.data.capability_profiles, { mode: "advisory", execution_profile: "architecture", execution_depth: "standard", execution_classification: "explicit" });
     const resumed = JSON.parse((await tools.work_context_start_session.execute({ workspace: "999899", stage: "02" }, executeContext)).output);
-    assert.equal(resumed.data.resume.context.capability_profiles.execution.source, "current");
-    assert.equal(resumed.data.resume.context.capability_profiles.execution.message, "No mapping configured; continuing with the current model.");
+    assert.equal(resumed.data.resume.context.capability_profiles.execution.target, "Terra");
     assert.equal(context.storage.readEvents().filter((event) => event.event === "session.started").length, 2);
   } finally {
     fixture.cleanup();

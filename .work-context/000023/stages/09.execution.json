@@ -2,15 +2,20 @@
   "schema": 1,
   "workspace": "000023",
   "stage": "09",
-  "revision": 2,
+  "revision": 4,
   "created_at": "2026-11-18T06:55:20.104Z",
-  "updated_at": "2026-11-18T07:02:04.057Z",
+  "updated_at": "2026-11-18T07:44:21.448Z",
   "updated_by": "OpenCode",
   "scope": [
     "Implement vendor-neutral execution and review capability profiles",
     "Resolve project-local opaque mappings during advisory resume",
     "Expose compact advisory metadata in sidebar and modal",
-    "Document commands, configuration, and safety boundaries"
+    "Document commands, configuration, and safety boundaries",
+    "Separate execution capability from model depth",
+    "Support agent-inferred and explicit classification provenance",
+    "Add batch recommendation refresh for missing or inferred stages",
+    "Add question-driven setup, show, and reset operations",
+    "Render one compact resolved recommendation in expanded stage details"
   ],
   "completed": [
     "Added strict profile and mode validation",
@@ -19,21 +24,35 @@
     "Added advisory-only snapshot, sidebar, and modal hints",
     "Added command, README, ADR, and focused test coverage",
     "Hardened local mapping reads against non-regular, oversized, and unbounded warning input",
-    "Completed full unit, integration, TUI, language, package, and diff verification"
+    "Completed full unit, integration, TUI, language, package, and diff verification",
+    "Refactored execution recommendations to independent capability and depth",
+    "Added inferred versus explicit classification provenance with legacy profile-only reads",
+    "Added atomic batch refresh that preserves explicit assignments and skips terminal stages",
+    "Added question-driven setup/show/reset command contract and structured local configuration tools",
+    "Added compact capability, depth, and resolved model line to expanded sidebar and modal details",
+    "Updated README, ADR, help, package command projection, wrappers, and focused/integration/TUI tests",
+    "Completed final security and correctness audit with no remaining high or medium findings"
   ],
   "remaining": [],
   "decisions": [
     "Use .work-context/local/capability-profiles.json as the per-project user-local mapping boundary",
     "Keep installer-generated project configuration unchanged; absent mode defaults to advisory",
-    "Represent local targets as bounded opaque identifiers and never select a model or agent"
+    "Represent local targets as bounded opaque identifiers and never select a model or agent",
+    "Use execution depths light, standard, and deep",
+    "Map depth rather than capability to local model labels",
+    "Planning agents infer missing classification before stage creation; core does not use keyword heuristics or invoke a model",
+    "Preserve explicit classifications during ordinary refresh",
+    "Keep review profile optional but exclude it from model resolution and sidebar presentation",
+    "Render capability, depth, and resolved model as one unlabeled dot-separated detail line",
+    "Provide interactive profiles setup through agent questions and structured storage tools"
   ],
   "blockers": [],
   "verification": [
-    "npm test passed: 289 passed, 2 skipped",
+    "npm test passed: 292 passed, 2 skipped",
     "npm run test:integration passed: 21 passed",
-    "npm run test:tui passed: 100 passed",
+    "npm run test:tui passed: 100 passed on isolated final run",
     "npm run check:language passed",
-    "npm pack --dry-run passed and includes the new tool and capability module",
+    "npm pack --dry-run passed with all new tool wrappers",
     "git diff --check passed"
   ]
 }

@@ -90,7 +90,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
       const unread = attention?.attentionForStage?.(result.data.workspace.id, stage.id);
       const working = attention?.activityForStage?.(result.data.workspace.id, stage.id);
       const stageMetadata = [
-        (stage.execution_profile || stage.review_profile) && `Profiles: ${[stage.execution_profile && `execution ${stage.execution_profile}`, stage.review_profile && `review ${stage.review_profile}`].filter(Boolean).join(" · ")}`,
+        stage.execution_profile && stage.execution_depth && stage.recommended_model && `${stage.execution_profile} · ${stage.execution_depth} · ${stage.recommended_model}`,
         stage.tracker_links?.length && `Tasks: ${stage.tracker_links.map(trackerLinkText).join(", ")}`,
         stage.depends_on?.length && `Deps: ${stage.depends_on.join(", ")}`,
       ].filter(Boolean).join(" · ");

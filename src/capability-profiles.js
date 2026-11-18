@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const CAPABILITY_PROFILES = Object.freeze(["routine", "implementation", "architecture", "security", "review"]);
+export const CAPABILITY_DEPTHS = Object.freeze(["light", "standard", "deep"]);
+export const CAPABILITY_CLASSIFICATIONS = Object.freeze(["inferred", "explicit"]);
 export const CAPABILITY_PROFILE_MODES = Object.freeze(["advisory", "off"]);
 export const CAPABILITY_MAPPINGS_FILE = "capability-profiles.json";
 const MAX_MAPPING_BYTES = 16 * 1024;
@@ -34,35 +36,43 @@ export function readCapabilityMappings(storage) {
   const addWarning = (message) => { if (warnings.length < MAX_WARNINGS) warnings.push(warning(message)); };
   if (Object.keys(input).some((key) => !["schema", "mappings"].includes(key))) addWarning(`Ignoring unknown top-level keys in ${CAPABILITY_MAPPINGS_FILE}.`);
   const mappings = {};
-  for (const [profile, target] of Object.entries(input.mappings)) {
-    const safeProfile = profile.replace(/[\u0000-\u001f\u007f]/g, "?").slice(0, 40);
-    if (!CAPABILITY_PROFILES.includes(profile)) addWarning(`Ignoring unknown capability mapping: ${safeProfile}.`);
-    else if (!validTarget(target)) addWarning(`Ignoring invalid target for capability mapping: ${profile}.`);
-    else mappings[profile] = target;
+  for (const [depth, target] of Object.entries(input.mappings)) {
+    const safeDepth = depth.replace(/[\u0000-\u001f\u007f]/g, "?").slice(0, 40);
+    if (!CAPABILITY_DEPTHS.includes(depth)) addWarning(`Ignoring unknown capability depth mapping: ${safeDepth}.`);
+    else if (!validTarget(target)) addWarning(`Ignoring invalid target for capability depth mapping: ${depth}.`);
+    else mappings[depth] = target;
   }
   return { mappings, warnings };
 }
 
-export function capabilityRecommendations(storage, stage) {
+export function capabilityRecommendations(storage, stage, localMappings) {
   if (capabilityProfileMode(storage) === "off") return null;
-  const declared = [
-    ["execution", stage.execution_profile],
-    ["review", stage.review_profile],
-  ].filter(([, profile]) => profile);
-  if (!declared.length) return null;
-  const { mappings, warnings } = readCapabilityMappings(storage);
-  const recommendations = Object.fromEntries(declared.map(([kind, profile]) => {
-    const target = mappings[profile];
-    return [kind, target
-      ? { profile, source: "mapping", target }
-      : { profile, source: "current", message: "No mapping configured; continuing with the current model." }];
-  }));
-  return { mode: "advisory", ...recommendations, ...(warnings.length ? { warnings } : {}) };
+  if (!stage.execution_profile || !stage.execution_depth) return null;
+  const { mappings, warnings } = localMappings || readCapabilityMappings(storage);
+  const target = mappings[stage.execution_depth];
+  return {
+    mode: "advisory",
+    execution: target
+      ? { profile: stage.execution_profile, depth: stage.execution_depth, classification: stage.execution_classification || "explicit", source: "mapping", target }
+      : { profile: stage.execution_profile, depth: stage.execution_depth, classification: stage.execution_classification || "explicit", source: "current", message: "No mapping configured; continuing with the current model." },
+    ...(stage.review_profile ? { review: { profile: stage.review_profile } } : {}),
+    ...(warnings.length ? { warnings } : {}),
+  };
 }
 
-export const stageCapabilityProfiles = (storage, stage) => capabilityProfileMode(storage) === "advisory"
-  ? {
-      ...(stage.execution_profile ? { execution_profile: stage.execution_profile } : {}),
-      ...(stage.review_profile ? { review_profile: stage.review_profile } : {}),
-    }
-  : {};
+export const stageCapabilityProfiles = (storage, stage, localMappings) => {
+  if (capabilityProfileMode(storage) !== "advisory") return {};
+  const recommendation = capabilityRecommendations(storage, stage, localMappings)?.execution;
+  return {
+    ...(stage.execution_profile ? { execution_profile: stage.execution_profile } : {}),
+    ...(stage.execution_depth ? { execution_depth: stage.execution_depth } : {}),
+    ...(stage.execution_classification ? { execution_classification: stage.execution_classification } : {}),
+    ...(stage.review_profile ? { review_profile: stage.review_profile } : {}),
+    ...(recommendation ? { recommended_model: recommendation.target || "current model" } : {}),
+  };
+};
+
+export function validateCapabilityMappings(mappings) {
+  if (!mappings || typeof mappings !== "object" || Array.isArray(mappings) || Object.keys(mappings).some((key) => !CAPABILITY_DEPTHS.includes(key))) return false;
+  return Object.values(mappings).every(validTarget);
+}
