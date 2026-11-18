@@ -26,9 +26,26 @@ const deliverySummary = (delivery) => {
   const pending = delivery.environments.reduce((total, environment) => total + environment.pending, 0);
   return `Delivery · ${delivery.environments.length} environments · ${pending} tracked pending`;
 };
+const capitalize = (value) => value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
+export const formatStageIds = (ids = []) => {
+  const ranges = [];
+  let run = [];
+  const flush = () => {
+    if (!run.length) return;
+    ranges.push(run.length >= 3 ? `${run[0]}—${run.at(-1)}` : run.join(", "));
+    run = [];
+  };
+  for (const id of ids) {
+    const previous = run.at(-1);
+    if (previous && Number(id) !== Number(previous) + 1) flush();
+    run.push(id);
+  }
+  flush();
+  return ranges.join(", ");
+};
 const profileSummary = (stage) => {
   return stage.execution_profile && stage.execution_depth && stage.recommended_model
-    ? `${stage.execution_profile} · ${stage.execution_depth} · ${stage.recommended_model}`
+    ? `${capitalize(stage.execution_profile)} · ${capitalize(stage.execution_depth)} · ${capitalize(stage.recommended_model)}`
     : null;
 };
 
@@ -90,7 +107,7 @@ export function renderStagesPanel(result) {
   for (const stage of snapshot.stages) {
     const pending = candidateSummary(stage);
     const profiles = profileSummary(stage);
-    lines.push(`${statusMarker(stage.status)} ${stage.id}. ${stage.title}${profiles ? `\n${profiles}` : ""}${stage.depends_on?.length ? `\nDeps: ${stage.depends_on.join(", ")}` : ""}${pending ? `\n${pending}` : ""}`);
+    lines.push(`${statusMarker(stage.status)} ${stage.id}. ${stage.title}${profiles ? `\n${profiles}` : ""}${stage.depends_on?.length ? `\nDeps: ${formatStageIds(stage.depends_on)}` : ""}${pending ? `\n${pending}` : ""}`);
   }
   if (result.stale) lines.push(`! stale: ${result.error?.code || "STORAGE_ERROR"}`);
   return lines.join("\n");

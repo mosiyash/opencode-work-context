@@ -209,7 +209,7 @@ test("advisory snapshots expose one compact resolved recommendation", () => {
     context.startSession("900001", "02", { sessionId: "advisory" });
     const snapshot = readStagesSnapshot({ projectRoot: root, sessionId: "advisory" });
     assert.equal(snapshot.data.stages[1].recommended_model, "Sol");
-    assert.match(renderStagesPanel(snapshot), /architecture · deep · Sol/);
+    assert.match(renderStagesPanel(snapshot), /Architecture · Deep · Sol/);
     assert.doesNotMatch(renderStagesPanel(snapshot), /security/);
   } finally { removeRoot(root); }
 });

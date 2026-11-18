@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { testRender } from "@opentui/solid";
 import { createSignal } from "solid-js";
-import { WorkContext, readStagesSnapshot, readWorkContextSnapshot, renderDependencyTree, renderStagesPanel } from "../src/index.js";
+import { formatStageIds, WorkContext, readStagesSnapshot, readWorkContextSnapshot, renderDependencyTree, renderStagesPanel } from "../src/index.js";
 import tuiModule, { createStagesTuiController, dependencyTreeOptions, openDependencyTreeDialog, renderStagesElement, resolveProjectRoot, sessionIdForSlot } from "../plugin/stages-tui.js";
 import { withProjectRoot } from "../plugin/project-root.js";
 import realTuiLoader from "../.opencode/tui-plugins/work-context-stages.js";
@@ -26,6 +26,12 @@ const renderedText = (value) => {
   if (Array.isArray(value)) return value.map(renderedText).join(" ");
   return renderedText(value.props?.children);
 };
+
+test("stage ID display compacts only runs of three or more", () => {
+  assert.equal(formatStageIds(["02", "03", "04", "05", "06"]), "02—06");
+  assert.equal(formatStageIds(["01", "02"]), "01, 02");
+  assert.equal(formatStageIds(["01", "03", "04", "05", "07"]), "01, 03—05, 07");
+});
 
 test("snapshot is read-only when storage is absent", () => {
   const root = makeRoot();
@@ -407,11 +413,17 @@ test("native sidebar renders the workflow mode below the workspace title", () =>
 
 test("native sidebar renders one compact capability recommendation in details", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
-  const output = renderedText(renderStagesElement({ ok: true, data: {
+  const theme = { current: { text: "primary", textMuted: "muted", warning: "warning" } };
+  const element = renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "standard" },
-    stages: [{ id: "01", title: "Design", status: "planned", depends_on: [], execution_profile: "architecture", execution_depth: "deep", recommended_model: "Sol", review_profile: "security" }],
-  } }, {}, runtime));
-  assert.match(output, /01\. Design\s+architecture · deep · Sol/);
+    stages: [{ id: "01", title: "Design", status: "planned", depends_on: ["02"], execution_profile: "architecture", execution_depth: "deep", recommended_model: "Sol", review_profile: "security" }],
+  } }, theme, runtime);
+  const output = renderedText(element);
+  const rows = element.props.children();
+  assert.equal(rows[2].props.children[2].props.fg, "primary");
+  assert.equal(rows[3].props.children[2].props.fg, "muted");
+  assert.match(output, /01\. Design\s+Architecture · Deep · Sol\s+Deps: 02/);
+  assert.doesNotMatch(output, /Sol ·\s+Deps/);
   assert.doesNotMatch(output, /security|Profiles:|Execution:/);
   const collapsed = renderedText(renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "standard" },
@@ -481,8 +493,8 @@ test("sidebar details list tasks, dependencies, and related pending candidates",
 
   assert.match(output, /01\. Planning/);
   assert.doesNotMatch(output, /01\. Planning\nDeps:/);
-  assert.match(output, /02\. Build\nTasks: GL#41 · Deps: 01\nPending: draft · integration · also 03/);
-  assert.match(output, /03\. Release\nDeps: 01, 02/);
+  assert.match(output, /02\. Build\s+Tasks: GL#41 · Deps: 01\nPending: draft · integration · also 03/);
+  assert.match(output, /03\. Release\s+Deps: 01, 02/);
   const compact = renderedText(renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
     stages: [{ id: "02", title: "Build", status: "planned", candidates: { draft: 1, ready: 0, items: [
@@ -1242,7 +1254,7 @@ test("work-context modal details render one capability recommendation without ch
     controller.handleKey({ key: "Enter" });
     const output = renderedText(renderWorkContextModal(controller, {}, runtime));
     assert.match(output, /Implementation/);
-    assert.match(output, /implementation · standard · Terra/);
+    assert.match(output, /Implementation · Standard · Terra/);
     assert.doesNotMatch(output, /review review|Execution:/);
   } finally { controller.dispose(); }
 });

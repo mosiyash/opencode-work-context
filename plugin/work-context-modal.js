@@ -21,6 +21,7 @@ const POLL_MS = 1000;
 const MARKERS = { planned: "[ ]", in_progress: "[•]", completed: "[✓]", cancelled: "[!]" };
 const COMMANDS = { list: "list", resume: "resume", handoff: "stage handoff", finish: "stage finish" };
 const activeTuiInstances = new WeakMap();
+const capitalize = (value) => value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 
 export const WORK_CONTEXT_ACTIONS = [
   { value: "help", title: "Help", description: "Show work-context command help", category: "General" },
@@ -289,7 +290,7 @@ export const renderWorkContextModal = (controller, theme, runtime = { jsx }, { m
           ...(controller.details() && stage ? [
             line(runtime, "Details", { marginTop: 1, fg: muted }),
             line(runtime, stage.description || "No description.", { wrapMode: "word", fg: theme?.current?.text }),
-            stage.execution_profile && stage.execution_depth && stage.recommended_model && line(runtime, `${stage.execution_profile} · ${stage.execution_depth} · ${stage.recommended_model}`, { wrapMode: "word", fg: muted }),
+            stage.execution_profile && stage.execution_depth && stage.recommended_model && line(runtime, `${capitalize(stage.execution_profile)} · ${capitalize(stage.execution_depth)} · ${capitalize(stage.recommended_model)}`, { wrapMode: "word", fg: muted }),
             line(runtime, `Sessions  ${(selected.sessions || []).length}`, { fg: muted }),
             ...(selected.sessions || []).map((session) => {
               const unread = controller.attention?.attentionFor?.(session.opencode_session_id);

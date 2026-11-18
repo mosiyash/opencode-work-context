@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readStagesSnapshot } from "../src/stages-snapshot.js";
 import { contextFor, titleFor } from "../src/opencode-adapter.js";
-import { renderDependencyTree, renderStagesPanel } from "../src/stages-renderer.js";
+import { formatStageIds, renderDependencyTree, renderStagesPanel } from "../src/stages-renderer.js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createSignal } from "solid-js";
 import { attentionSummaryText } from "./attention.js";
@@ -57,6 +57,7 @@ const stageCandidateText = (stage) => {
   const others = candidate.related_stages.filter((related) => related !== stage.id);
   return `Pending: ${candidate.status} · ${candidate.strategy}${others.length ? ` · also ${others.join(", ")}` : ""}`;
 };
+const capitalize = (value) => value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 
 export { readStagesSnapshot, renderStagesPanel };
 
@@ -86,37 +87,47 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
         runtime.jsx("text", { fg: theme?.current?.textMuted, children: ` · ${result.data.workspace.status}` }),
       ],
     }),
-    ...result.data.stages.map((stage) => {
+    ...result.data.stages.flatMap((stage) => {
       const unread = attention?.attentionForStage?.(result.data.workspace.id, stage.id);
       const working = attention?.activityForStage?.(result.data.workspace.id, stage.id);
+      const recommendation = stage.execution_profile && stage.execution_depth && stage.recommended_model
+        ? `${capitalize(stage.execution_profile)} · ${capitalize(stage.execution_depth)} · ${capitalize(stage.recommended_model)}`
+        : null;
       const stageMetadata = [
-        stage.execution_profile && stage.execution_depth && stage.recommended_model && `${stage.execution_profile} · ${stage.execution_depth} · ${stage.recommended_model}`,
         stage.tracker_links?.length && `Tasks: ${stage.tracker_links.map(trackerLinkText).join(", ")}`,
-        stage.depends_on?.length && `Deps: ${stage.depends_on.join(", ")}`,
+        stage.depends_on?.length && `Deps: ${formatStageIds(stage.depends_on)}`,
       ].filter(Boolean).join(" · ");
-      const metadata = showDependencies ? [stageMetadata, stageCandidateText(stage)].filter(Boolean).join("\n") : "";
+      const metadata = showDependencies ? [recommendation, stageMetadata, stageCandidateText(stage)].filter(Boolean).join("\n") : "";
       const attentionSignal = attentionSummaryText(unread);
-      const stageText = [
-        `${stage.id}. ${stage.title}`,
-        metadata,
-      ].filter(Boolean).join("\n");
-      return runtime.jsx("box", {
+      const current = stage.current || stage.id === result.data.currentStage;
+      const onMouseDown = (event) => {
+        if (event?.button != null && event.button !== 0) return;
+        return onStageSelect?.(stage);
+      };
+      const titleRow = runtime.jsx("box", {
         flexDirection: "row",
-        onMouseDown: (event) => {
-          if (event?.button != null && event.button !== 0) return;
-          return onStageSelect?.(stage);
-        },
+        onMouseDown,
         children: [
           runtime.jsx("text", {
             flexShrink: 0,
             marginRight: 1,
-            fg: working || stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted,
+            fg: working || current ? theme?.current?.warning : theme?.current?.textMuted,
             children: working ? activityFrame() : attentionSignal ? runtime.jsx("b", { children: attentionSignal }) : " ",
           }),
-          runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
-          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: stage.current || stage.id === result.data.currentStage ? theme?.current?.warning : theme?.current?.textMuted, children: stageText }),
+          runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: current ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
+          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: current ? theme?.current?.warning : theme?.current?.text, children: `${stage.id}. ${stage.title}` }),
         ],
       });
+      const metadataRow = metadata && runtime.jsx("box", {
+        flexDirection: "row",
+        onMouseDown,
+        children: [
+          runtime.jsx("text", { flexShrink: 0, marginRight: 1, children: " " }),
+          runtime.jsx("text", { flexShrink: 0, marginRight: 1, children: "   " }),
+          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: theme?.current?.textMuted, children: metadata }),
+        ],
+      });
+      return [titleRow, metadataRow].filter(Boolean);
     }),
   ];
 };
