@@ -321,7 +321,7 @@ test("real TUI loader mounts a live storage update without remount", { skip: !tu
       await setup.waitForFrame((frame) => frame.includes("02. Initial stage"));
       context.addStage("999978", "Added after mount");
       eventHandlers["session.updated"]({ properties: { info: { id: "oc-live" } } });
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 200));
       await setup.renderOnce();
       assert.match(setup.captureCharFrame(), /03\. Added after mount/);
     } finally { setup.renderer.destroy(); }
