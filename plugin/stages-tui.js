@@ -49,6 +49,11 @@ const deliverySummaryText = (workspace) => {
   const pending = delivery.environments.reduce((total, environment) => total + environment.pending, 0);
   return `Delivery · ${delivery.environments.length} environments · ${pending} tracked pending`;
 };
+const workspaceSummaryText = (workspace, attention) => [
+  attention && `Attention · ${attention}`,
+  candidateSummaryText(workspace),
+  deliverySummaryText(workspace),
+].filter(Boolean).join(" · ");
 const stageCandidateText = (stage) => {
   const projection = stage.candidates;
   if (!projection || !(projection.draft || projection.ready)) return null;
@@ -78,17 +83,16 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
   ];
   const attentionSnapshot = visibleAttentionSnapshot(attention, result.data.workspace.id, result.data.stages);
   const workspaceAttention = attentionSummaryText(attentionSnapshot.workspace, { alwaysCount: true });
+  const workspaceSummary = workspaceSummaryText(result.data.workspace, workspaceAttention);
   return [
     runtime.jsx("box", {
       marginBottom: 1,
       flexDirection: "column",
-      children: [
-        runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: result.data.workspace.title }) }),
-        runtime.jsx("text", { fg: theme?.current?.textMuted, children: `Workflow · ${result.data.workspace.mode || "standard"}` }),
-        workspaceAttention && runtime.jsx("text", { children: ["Attention · ", runtime.jsx("b", { children: workspaceAttention })] }),
-        candidateSummaryText(result.data.workspace) && runtime.jsx("text", { fg: theme?.current?.textMuted, children: candidateSummaryText(result.data.workspace) }),
-        deliverySummaryText(result.data.workspace) && runtime.jsx("text", { fg: theme?.current?.textMuted, children: deliverySummaryText(result.data.workspace) }),
-      ].filter(Boolean),
+        children: [
+          runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: result.data.workspace.title }) }),
+          runtime.jsx("text", { fg: theme?.current?.textMuted, children: `Workflow · ${result.data.workspace.mode || "standard"}` }),
+          workspaceSummary && runtime.jsx("text", { wrapMode: "word", fg: theme?.current?.textMuted, children: workspaceSummary }),
+        ].filter(Boolean),
     }),
     runtime.jsx("box", {
       flexDirection: "row",
@@ -114,7 +118,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
         if (event?.button != null && event.button !== 0) return;
         return onStageSelect?.(stage);
       };
-      const titleRow = runtime.jsx("box", {
+      const stageRow = runtime.jsx("box", {
         flexDirection: "row",
         onMouseDown,
         children: [
@@ -125,19 +129,18 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
             children: working ? activityFrame() : attentionSignal ? runtime.jsx("b", { children: attentionSignal }) : " ",
           }),
           runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: current ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
-          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: current ? theme?.current?.warning : theme?.current?.text, children: `${stage.id}. ${stage.title}` }),
+          runtime.jsx("box", {
+            flexGrow: 1,
+            flexShrink: 1,
+            flexDirection: "column",
+            children: [
+              runtime.jsx("text", { wrapMode: "word", fg: current ? theme?.current?.warning : theme?.current?.text, children: `${stage.id}. ${stage.title}` }),
+              metadata && runtime.jsx("text", { wrapMode: "word", fg: theme?.current?.textMuted, children: metadata }),
+            ].filter(Boolean),
+          }),
         ],
       });
-      const metadataRow = metadata && runtime.jsx("box", {
-        flexDirection: "row",
-        onMouseDown,
-        children: [
-          runtime.jsx("text", { flexShrink: 0, marginRight: 1, children: " " }),
-          runtime.jsx("text", { flexShrink: 0, marginRight: 1, children: "   " }),
-          runtime.jsx("text", { flexGrow: 1, flexShrink: 1, wrapMode: "word", fg: theme?.current?.textMuted, children: metadata }),
-        ],
-      });
-      return [titleRow, metadataRow].filter(Boolean);
+      return stageRow;
     }),
   ];
 };

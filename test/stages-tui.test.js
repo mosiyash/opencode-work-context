@@ -354,7 +354,7 @@ test("sidebar renders a compact attention signal before the lifecycle marker", (
   assert.equal(row.props.children[0].props.children.type, "b");
   assert.equal(row.props.children[0].props.children.props.children, "!");
   assert.equal(row.props.children[1].props.children, "[ ]");
-  assert.equal(row.props.children[2].props.children, "01. Test: review needed");
+  assert.equal(row.props.children[2].props.children[0].props.children, "01. Test: review needed");
 });
 
 test("sidebar loader takes the signal column while preserving lifecycle and unread attention", () => {
@@ -369,7 +369,7 @@ test("sidebar loader takes the signal column while preserving lifecycle and unre
   }, true, undefined, () => "⠙");
   const row = element.props.children()[2];
   assert.deepEqual(row.props.children.slice(0, 2).map((child) => child.props.children), ["⠙", "[•]"]);
-  assert.equal(row.props.children[2].props.children, "01. Working");
+  assert.equal(row.props.children[2].props.children[0].props.children, "01. Working");
 
   const waiting = renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
@@ -384,10 +384,11 @@ test("sidebar loader takes the signal column while preserving lifecycle and unre
 
 test("sidebar keeps workspace title clean and renders a grouped attention summary", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
-  const output = renderedText(renderStagesElement({ ok: true, data: {
+  const theme = { current: { textMuted: "muted" } };
+  const element = renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "B2B platform", status: "in_progress", mode: "startup" },
     stages: [{ id: "01", title: "Visible", status: "in_progress", depends_on: [] }],
-  } }, {}, runtime, {
+  } }, theme, runtime, {
     attentionForStage: () => ({ count: 7, reason: "error", items: [
       { sessionId: "error", reason: "error" },
       { sessionId: "permission-1", reason: "permission" },
@@ -397,9 +398,12 @@ test("sidebar keeps workspace title clean and renders a grouped attention summar
       { sessionId: "idle-2", reason: "idle" },
       { sessionId: "idle-3", reason: "idle" },
     ] }),
-  }));
+  });
+  const output = renderedText(element);
+  const [workspaceBlock] = element.props.children();
   assert.match(output, /^B2B platform\s+Workflow · startup\s+Attention ·\s+×1 !2 \?1 ✓3\s+Stages/);
   assert.doesNotMatch(output, /^\[/);
+  assert.equal(workspaceBlock.props.children[2].props.fg, "muted");
 });
 
 test("sidebar header is the unique union of attention represented by visible stage rows", async () => {
@@ -458,8 +462,8 @@ test("native sidebar renders one compact capability recommendation in details", 
   } }, theme, runtime);
   const output = renderedText(element);
   const rows = element.props.children();
-  assert.equal(rows[2].props.children[2].props.fg, "primary");
-  assert.equal(rows[3].props.children[2].props.fg, "muted");
+  assert.equal(rows[2].props.children[2].props.children[0].props.fg, "primary");
+  assert.equal(rows[2].props.children[2].props.children[1].props.fg, "muted");
   assert.match(output, /01\. Design\s+Architecture · Deep · Sol\s+Deps: 02/);
   assert.doesNotMatch(output, /Sol ·\s+Deps/);
   assert.doesNotMatch(output, /security|Profiles:|Execution:/);
@@ -470,13 +474,27 @@ test("native sidebar renders one compact capability recommendation in details", 
   assert.doesNotMatch(collapsed, /architecture · deep · Sol/);
 });
 
-test("native sidebar renders candidate counts from the snapshot", () => {
+test("native sidebar combines available workspace signals into one muted row", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
-  const output = renderedText(renderStagesElement({ ok: true, data: {
-    workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "startup", candidates: { pending: 2, ready: 1 } },
-    stages: [],
-  } }, {}, runtime));
-  assert.match(output, /Workflow · startup\s+Candidates · 2 draft · 1 ready\s+Stages/);
+  const theme = { current: { textMuted: "muted" } };
+  const element = renderStagesElement({ ok: true, data: {
+    workspace: {
+      id: "000001", title: "Demo", status: "in_progress", mode: "startup", candidates: { pending: 2, ready: 1 },
+      delivery: { committed: 4, plan_needed: false, environments: [{ environment: "production", pending: 2 }] },
+    },
+    stages: [{ id: "01", title: "Visible", status: "in_progress" }],
+  } }, theme, runtime, {
+    attentionForStage: () => ({ count: 1, reason: "question", items: [{ sessionId: "question", reason: "question" }] }),
+  });
+  const [workspaceBlock, stagesBlock, stageRow] = element.props.children();
+  const summary = workspaceBlock.props.children[2];
+
+  assert.equal(workspaceBlock.props.children.length, 3);
+  assert.equal(summary.props.fg, "muted");
+  assert.equal(summary.props.wrapMode, "word");
+  assert.equal(summary.props.children, "Attention · ?1 · Candidates · 2 draft · 1 ready · Delivery · production · 2 tracked pending");
+  assert.equal(stagesBlock.props.children[0].props.children.props.children, "Stages");
+  assert.equal(stageRow.props.children[2].props.children[0].props.children, "01. Visible");
 });
 
 test("native sidebar renders metadata-only delivery status", () => {
@@ -492,6 +510,16 @@ test("native sidebar renders metadata-only delivery status", () => {
   assert.match(planNeeded, /Workflow · startup\s+Delivery · 4 commits · plan needed\s+Stages/);
   assert.match(pending, /Delivery · production · 2 tracked pending/);
   assert.doesNotMatch(`${planNeeded}${pending}`, /deployed_head|commit_hash|changed_paths/);
+});
+
+test("native sidebar omits the compact summary row when no signals exist", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const element = renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "standard", candidates: { pending: 0, ready: 0 } },
+    stages: [],
+  } }, {}, runtime);
+
+  assert.equal(element.props.children()[0].props.children.length, 2);
 });
 
 test("sidebar omits attention linked only to an archived stage", async () => {
@@ -540,6 +568,25 @@ test("sidebar details list tasks, dependencies, and related pending candidates",
     ] } }],
   } }, {}, runtime, undefined, false));
   assert.doesNotMatch(compact, /Pending:/);
+});
+
+test("sidebar stage metadata stays aligned with its wrapped title", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const element = renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress" },
+    stages: [{ id: "02", title: "A deliberately long stage title that wraps in a narrow sidebar", status: "in_progress", current: true, depends_on: ["01"], tracker_links: [{ provider: "gitlab", iid: 41 }] }],
+    currentStage: "02",
+  } }, {}, runtime, {
+    attentionForStage: () => ({ count: 1, reason: "question", items: [{ sessionId: "question", reason: "question" }] }),
+  });
+  const stageRow = element.props.children()[2];
+  const content = stageRow.props.children[2];
+
+  assert.equal(stageRow.props.children.length, 3);
+  assert.equal(content.props.flexDirection, "column");
+  assert.equal(content.props.children[0].props.wrapMode, "word");
+  assert.equal(content.props.children[1].props.wrapMode, "word");
+  assert.equal(content.props.children[1].props.children, "Tasks: GL#41 · Deps: 01");
 });
 
 test("sidebar rows expose mouse handlers and route clicks through the selected stage", async () => {
