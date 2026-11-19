@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "workspace": "000023",
+  "stage": "03",
+  "revision": 1,
+  "created_at": "2026-11-18T15:01:14.062Z",
+  "updated_at": "2026-11-18T15:01:14.062Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Implement read-only delivery.explain orchestration over validated findings and immutable Git evidence",
+    "Add strict delivery.secret_path_patterns configuration and deterministic path redaction",
+    "Correlate bounded startup candidate traceability while keeping standard mode unavailable",
+    "Cover completeness, redaction, mode, traceability, config, and no-write behavior"
+  ],
+  "completed": [
+    "Implemented DeliveryStore.explain with normalized findings, Git evidence, lineage, summaries, limits, and envelope validation",
+    "Implemented strict segment glob validation and memoized matching with canonical response-local redaction tokens",
+    "Implemented exact-range committed candidate traceability, explicit direct commits, and standard-mode unavailable capability",
+    "Implemented fail-closed truncation behavior that omits recommendations and uncertain match classifications",
+    "Added focused delivery and redaction tests, including candidates outside the range and read-only assertions"
+  ],
+  "remaining": [],
+  "decisions": [
+    "Candidate traceability retains selected paths even when later commits remove them from final endpoint evidence",
+    "Standard mode does not inspect local candidate metadata and reports candidate/direct summary counts as unavailable",
+    "Truncated final-path evidence omits matched_paths and unmatched_paths rather than making incomplete claims",
+    "Public core/tool/slash-command wiring remains deferred to the dedicated exposure stage"
+  ],
+  "blockers": [],
+  "verification": [
+    "node --test test/delivery.test.js test/delivery-contracts.test.js passed 18 tests",
+    "npm test passed 305 tests with 2 expected skips",
+    "npm run check:language passed"
+  ]
+}

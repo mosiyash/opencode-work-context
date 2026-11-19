@@ -686,6 +686,76 @@ If the host `opencode.json` restricts `experimental.primary_tools`, add the
 registered `work_context_*` tool names to that allowlist; the installer does not
 rewrite project-specific agent policy.
 
+### Delivery diagnostics
+
+`delivery explain` and `delivery doctor` are versioned, read-only diagnostic
+contracts. They never deploy, run remediation, change candidates or checkpoints,
+rewrite configuration or generated command files, or persist diagnostic data.
+
+Use `delivery explain` only with explicit immutable full commit hashes. An
+external repository planner supplies structurally validated findings; Work Context
+does not invent release policy or interpret remediation meaning:
+
+```text
+/wc delivery explain 000123 <from-commit> <to-commit> '[{"id":"release.tests","severity":"warning","summary":"Review coverage","affected_paths":["src/report.js"],"remediation_ids":["tests.report"],"recommendation":"Add regression coverage"}]'
+```
+
+The v1 response includes normalized Git path and provenance evidence, findings,
+redaction status, and candidate traceability. It is bounded to 500 commits, 500
+final paths, 50 provenance commits per path, 200 findings, and 4 MiB of Git and
+diagnostic output. If a count limit truncates evidence, `complete` is false and
+recommendations are omitted. A byte limit fails safely instead of returning an
+unbounded response. In a startup workspace, committed candidates in the range are
+traceability only and commits without them are reported as direct commits. In a
+standard workspace, Git evidence remains available but candidate metadata is
+explicitly unavailable.
+
+Configure repository-relative secret-path redaction in the project-owned config:
+
+```yaml
+delivery:
+  secret_path_patterns:
+    - secret/**
+    - '*.env'
+```
+
+Only a constrained slash-separated glob grammar is accepted. Matching paths are
+replaced everywhere in the response with response-local opaque tokens. Responses
+never include raw patches, file contents, host commands, environment values,
+credentials, tokens, secret values, or unsafe Git stderr.
+
+Use `delivery doctor` to inspect the generated command, declared installation,
+safely discoverable package manifests, loaded-plugin self-report, and host
+attestation when the host provides it:
+
+```text
+/wc delivery doctor
+```
+
+Evidence is labeled `self_reported`, `host_attested`, or `unavailable`. A command
+and loaded plugin with different protocol majors fail fast. Minor protocol,
+descriptor hash, version, and module-origin drift produce findings with repair
+guidance. The current OpenCode host may report authoritative attestation as
+unavailable; doctor does not guess or repair automatically.
+
+For a pinned local installation, repair with:
+
+```sh
+npx --yes opencode-work-context@<version> init --force
+```
+
+For managed activation, update the shared managed cache and then refresh the
+project command contract when instructed:
+
+```sh
+opencode plugin opencode-work-context@<version> --force
+npx --yes opencode-work-context@<version> activate --force
+```
+
+Restart OpenCode after either repair. The generated `.opencode/commands/wc.md`
+remains package-managed; redaction configuration remains project-owned and is
+preserved by installer updates.
+
 ## Release
 
 Maintainers publish this package only through

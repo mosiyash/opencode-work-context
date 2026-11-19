@@ -5,6 +5,7 @@ import { WorkContextError, ERROR_CODES, fail } from "./errors.js";
 import { parseFrontmatter, renderMarkdown } from "./markdown.js";
 import { validateExecutionRecord } from "./stage-execution.js";
 import { CAPABILITY_CLASSIFICATIONS, CAPABILITY_DEPTHS, CAPABILITY_PROFILES } from "./capability-profiles.js";
+import { validateSecretPathPatterns } from "./delivery-redaction.js";
 
 const now = () => new Date().toISOString();
 const ensure = (dir) => fs.mkdirSync(dir, { recursive: true });
@@ -142,7 +143,8 @@ export class FileStorage {
   constructor(projectRoot, config = {}) {
     this.projectRoot = projectRoot;
     const storage = config.storage || {};
-    this.config = { mode: "hybrid", root: ".work-context", personal_root: ".work-context/local", title: { issue_prefix: "short" }, tracker: { provider: null }, capability_profiles: { mode: "advisory" }, ...config, ...storage, title: { issue_prefix: "short", ...(config.title || {}) }, tracker: { provider: null, ...(config.tracker || {}) }, capability_profiles: { mode: "advisory", ...(config.capability_profiles || {}) } };
+    this.config = { mode: "hybrid", root: ".work-context", personal_root: ".work-context/local", title: { issue_prefix: "short" }, tracker: { provider: null }, capability_profiles: { mode: "advisory" }, delivery: { secret_path_patterns: [] }, ...config, ...storage, title: { issue_prefix: "short", ...(config.title || {}) }, tracker: { provider: null, ...(config.tracker || {}) }, capability_profiles: { mode: "advisory", ...(config.capability_profiles || {}) }, delivery: { secret_path_patterns: [], ...(config.delivery || {}) } };
+    this.config.delivery.secret_path_patterns = validateSecretPathPatterns(this.config.delivery.secret_path_patterns);
     this.root = path.resolve(projectRoot, this.config.root);
     this.personalRoot = path.resolve(projectRoot, this.config.personal_root);
     const project = path.resolve(projectRoot);
@@ -310,7 +312,7 @@ export class FileStorage {
 
 export function loadConfig(projectRoot, configFile = path.resolve(projectRoot, ".work-context", "config.yaml")) {
   if (!fs.existsSync(configFile)) return {};
-  const data = Object.assign(Object.create(null), { storage: Object.create(null), title: Object.create(null), tracker: Object.create(null), notifications: Object.create(null), capability_profiles: Object.create(null) });
+  const data = Object.assign(Object.create(null), { storage: Object.create(null), title: Object.create(null), tracker: Object.create(null), notifications: Object.create(null), capability_profiles: Object.create(null), delivery: Object.create(null) });
   let section = null;
   for (const line of fs.readFileSync(configFile, "utf8").split("\n")) {
     if (!line.trim() || line.trim().startsWith("#")) continue;
@@ -318,9 +320,20 @@ export function loadConfig(projectRoot, configFile = path.resolve(projectRoot, "
     if (!match[1]) { section = match[3] ? null : match[2]; if (match[3]) data[match[2]] = scalarConfig(match[3]); else if (!data[match[2]] || typeof data[match[2]] !== "object") data[match[2]] = Object.create(null); continue; }
     if (section && data[section] && typeof data[section] === "object") data[section][match[2]] = scalarConfig(match[3]);
   }
-  if (Object.keys(data).some((key) => !["schema", "storage", "title", "tracker", "notifications", "capability_profiles"].includes(key)) || Object.keys(data.storage).some((key) => !["mode", "root", "personal_root"].includes(key)) || Object.keys(data.title).some((key) => key !== "issue_prefix") || Object.keys(data.tracker).some((key) => key !== "provider") || !data.notifications || typeof data.notifications !== "object" || Array.isArray(data.notifications) || Object.keys(data.notifications).some((key) => key !== "desktop") || !data.capability_profiles || typeof data.capability_profiles !== "object" || Array.isArray(data.capability_profiles) || Object.keys(data.capability_profiles).some((key) => key !== "mode") || (data.capability_profiles.mode !== undefined && !["advisory", "off"].includes(data.capability_profiles.mode)) || data.schema !== 1 || !data.storage || !["personal", "shared-git", "hybrid"].includes(data.storage.mode) || typeof data.storage.root !== "string" || typeof data.storage.personal_root !== "string" || !data.title || !["none", "short", "full"].includes(data.title.issue_prefix) || !data.tracker || (data.tracker.provider !== null && typeof data.tracker.provider !== "string") || (data.notifications.desktop !== undefined && typeof data.notifications.desktop !== "boolean")) fail(ERROR_CODES.STORAGE_ERROR, "Invalid work-context config");
+  if (Object.keys(data).some((key) => !["schema", "storage", "title", "tracker", "notifications", "capability_profiles", "delivery"].includes(key)) || Object.keys(data.storage).some((key) => !["mode", "root", "personal_root"].includes(key)) || Object.keys(data.title).some((key) => key !== "issue_prefix") || Object.keys(data.tracker).some((key) => key !== "provider") || !data.notifications || typeof data.notifications !== "object" || Array.isArray(data.notifications) || Object.keys(data.notifications).some((key) => key !== "desktop") || !data.capability_profiles || typeof data.capability_profiles !== "object" || Array.isArray(data.capability_profiles) || Object.keys(data.capability_profiles).some((key) => key !== "mode") || (data.capability_profiles.mode !== undefined && !["advisory", "off"].includes(data.capability_profiles.mode)) || !data.delivery || typeof data.delivery !== "object" || Array.isArray(data.delivery) || Object.keys(data.delivery).some((key) => key !== "secret_path_patterns") || data.schema !== 1 || !data.storage || !["personal", "shared-git", "hybrid"].includes(data.storage.mode) || typeof data.storage.root !== "string" || typeof data.storage.personal_root !== "string" || !data.title || !["none", "short", "full"].includes(data.title.issue_prefix) || !data.tracker || (data.tracker.provider !== null && typeof data.tracker.provider !== "string") || (data.notifications.desktop !== undefined && typeof data.notifications.desktop !== "boolean")) fail(ERROR_CODES.STORAGE_ERROR, "Invalid work-context config");
   data.capability_profiles.mode ||= "advisory";
+  data.delivery.secret_path_patterns = validateSecretPathPatterns(data.delivery.secret_path_patterns || []);
   return data;
 }
-const scalarConfig = (value) => value === "null" ? null : value === "[]" ? [] : value === "{}" ? {} : /^(true|false)$/.test(value) ? value === "true" : /^-?\d+(\.\d+)?$/.test(value) ? Number(value) : value;
-export const defaultConfig = () => `schema: 1\nstorage:\n  mode: hybrid\n  root: .work-context\n  personal_root: .work-context/local\ntitle:\n  issue_prefix: short\ntracker:\n  provider: null\nnotifications:\n  desktop: true\n`;
+const scalarConfig = (value) => {
+  if (value === "null") return null;
+  if (value === "[]") return [];
+  if (value === "{}") return {};
+  if (/^(true|false)$/.test(value)) return value === "true";
+  if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
+  if (value.startsWith("[") && value.endsWith("]")) {
+    try { return JSON.parse(value); } catch { return value; }
+  }
+  return value;
+};
+export const defaultConfig = () => `schema: 1\nstorage:\n  mode: hybrid\n  root: .work-context\n  personal_root: .work-context/local\ntitle:\n  issue_prefix: short\ntracker:\n  provider: null\nnotifications:\n  desktop: true\ndelivery:\n  secret_path_patterns: []\n`;

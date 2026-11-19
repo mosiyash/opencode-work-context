@@ -5,6 +5,10 @@ import { atomicWrite } from "./storage.js";
 import { ERROR_CODES, fail } from "./errors.js";
 import { normalizeWorkspaceId } from "./identifiers.js";
 import { inspectCommitRange, isCommitAncestor, repositoryState } from "./git-candidates.js";
+import { inspectDetailedCommitRange } from "./delivery-git.js";
+import { DELIVERY_DIAGNOSTIC_LIMITS, DELIVERY_EXPLAIN_CONTRACT_VERSION, DELIVERY_EXPLAIN_OPERATION, deliveryDiagnosticComplete, validateDeliveryExplainEnvelope, validateDeliveryFindings } from "./delivery-contracts.js";
+import { createDeliveryPathRedactor } from "./delivery-redaction.js";
+import { recommendDeliverySlices } from "./delivery-slices.js";
 
 const environmentPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const hashPattern = /^[0-9a-f]{40,64}$/;
@@ -12,6 +16,9 @@ const candidatePattern = /^CC-\d{6}$/;
 const timestamp = (value) => typeof value === "string" && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
 const maxEnvironments = 20;
 const maxCandidates = 10000;
+const diagnosticCandidateLimit = DELIVERY_DIAGNOSTIC_LIMITS.commits;
+const diagnosticCandidatePathLimit = DELIVERY_DIAGNOSTIC_LIMITS.paths;
+const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const checkpointIntegrity = (checkpoint) => createHash("sha256").update(JSON.stringify({
   deployed_head: checkpoint.deployed_head,
   deployed_at: checkpoint.deployed_at,
@@ -109,6 +116,125 @@ export class DeliveryStore {
     if (hasFrom !== hasTo) fail(ERROR_CODES.INVALID_ARGUMENT, "Delivery range requires both from and to commit hashes");
     const range = hasFrom ? inspectCommitRange(this.context.storage.projectRoot, options.from, options.to) : null;
     return { workspace, environment, checkpoint, ...projection, ...(range ? { range } : {}) };
+  }
+
+  explain(workspace, options = {}) {
+    workspace = this.assertWorkspace(workspace);
+    const findings = validateDeliveryFindings(options.findings).map((finding) => {
+      const affectedPaths = finding.affected_paths.map((item) => {
+        const normalized = item.replace(/^(?:\.\/)+/u, "");
+        if (path.posix.isAbsolute(normalized) || normalized.includes("\\") || normalized.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+          fail(ERROR_CODES.DELIVERY_INVALID_FINDINGS, "Affected paths must be repository-relative normalized paths", { id: finding.id });
+        }
+        return normalized;
+      });
+      if (new Set(affectedPaths).size !== affectedPaths.length) fail(ERROR_CODES.DELIVERY_INVALID_FINDINGS, "Affected paths must remain unique after normalization", { id: finding.id });
+      return { ...finding, affected_paths: affectedPaths.sort(compareText) };
+    });
+    const evidence = inspectDetailedCommitRange(this.context.storage.projectRoot, options.from, options.to);
+    const workspaceMode = this.context.storage.readWorkspace(workspace).data.mode || "standard";
+    const commitSet = new Set(evidence.commits.map(({ commit }) => commit));
+    const finalPathSet = new Set(evidence.paths.map(({ path: file }) => file));
+    const traceability = workspaceMode === "startup"
+      ? this.candidateTraceability(workspace, commitSet)
+      : { capability: "unavailable", candidates: [], direct_commits: [] };
+    const allPaths = [
+      ...evidence.paths.map(({ path: file }) => file),
+      ...evidence.lineage.flatMap(({ from_path: fromPath, to_path: toPath }) => [fromPath, toPath]),
+      ...findings.flatMap((finding) => finding.affected_paths),
+      ...traceability.candidates.flatMap((candidate) => candidate.paths),
+    ];
+    const redactor = createDeliveryPathRedactor(this.context.storage.config.delivery.secret_path_patterns, allPaths);
+    const limits = {
+      commits: { count: evidence.commit_count, limit: DELIVERY_DIAGNOSTIC_LIMITS.commits, truncated: evidence.commits_truncated },
+      paths: { count: evidence.path_count, limit: DELIVERY_DIAGNOSTIC_LIMITS.paths, truncated: evidence.paths_truncated },
+      provenance: { limit_per_path: DELIVERY_DIAGNOSTIC_LIMITS.provenance_commits_per_path, truncated: evidence.paths.some((item) => item.provenance_truncated) },
+      candidate_traceability: {
+        candidates_limit: diagnosticCandidateLimit,
+        paths_limit: diagnosticCandidatePathLimit,
+        candidates_truncated: traceability.candidates_truncated || evidence.commits_truncated || false,
+        paths_truncated: traceability.paths_truncated || false,
+      },
+      git_output: { bytes: evidence.git_output_bytes, limit: DELIVERY_DIAGNOSTIC_LIMITS.git_output_bytes, truncated: false },
+    };
+    const complete = deliveryDiagnosticComplete(limits);
+    const normalizedFindings = findings.map((finding) => {
+      const matchedPaths = finding.affected_paths.filter((file) => finalPathSet.has(file));
+      const unmatchedPaths = finding.affected_paths.filter((file) => !finalPathSet.has(file));
+      const normalized = {
+        ...finding,
+        summary: redactor.text(finding.summary),
+        affected_paths: finding.affected_paths.map(redactor.path),
+        ...(evidence.paths_truncated ? {} : {
+          matched_paths: matchedPaths.map(redactor.path),
+          unmatched_paths: unmatchedPaths.map(redactor.path),
+        }),
+        ...(finding.recommendation === undefined || !complete ? {} : { recommendation: redactor.text(finding.recommendation) }),
+      };
+      if (!complete) delete normalized.recommendation;
+      return normalized;
+    });
+    const candidates = traceability.candidates.map((candidate) => ({ ...candidate, paths: candidate.paths.map(redactor.path) }));
+    const redactedPaths = evidence.paths.map((item) => ({ ...item, path: redactor.path(item.path) }));
+    const candidateTraceability = { ...traceability, candidates };
+    const candidateSlice = complete ? recommendDeliverySlices({
+      findings: normalizedFindings,
+      paths: redactedPaths,
+      candidate_traceability: candidateTraceability,
+    }) : [];
+    const severity = { info: 0, warning: 0, error: 0 };
+    for (const finding of normalizedFindings) severity[finding.severity] += 1;
+    return validateDeliveryExplainEnvelope({
+      contract_version: DELIVERY_EXPLAIN_CONTRACT_VERSION,
+      operation: DELIVERY_EXPLAIN_OPERATION,
+      immutable_range: evidence.immutable_range,
+      limits,
+      summary: {
+        commits: evidence.commit_count,
+        paths: evidence.path_count,
+        findings: normalizedFindings.length,
+        severity,
+        candidate_attributed_commits: traceability.capability === "available" ? new Set(candidates.flatMap((candidate) => candidate.commits)).size : null,
+        direct_commits: traceability.capability === "available" ? traceability.direct_commits.length : null,
+      },
+      paths: redactedPaths,
+      lineage: evidence.lineage.map((item) => ({ ...item, from_path: redactor.path(item.from_path), to_path: redactor.path(item.to_path) })),
+      findings: normalizedFindings,
+      candidate_traceability: candidateTraceability,
+      candidate_slice: candidateSlice,
+      redactions: redactor.summary,
+      complete,
+    });
+  }
+
+  candidateTraceability(workspace, commitSet) {
+    const records = this.context.candidates().projectionRecords(workspace)
+      .filter((candidate) => candidate.status === "committed" && commitSet.has(candidate.commit_hash))
+      .sort((left, right) => left.candidate.localeCompare(right.candidate));
+    const included = records.slice(0, diagnosticCandidateLimit);
+    let remainingPaths = diagnosticCandidatePathLimit;
+    let pathsTruncated = false;
+    const candidates = included.map((candidate) => {
+      const selectedPaths = [...candidate.selected_paths].sort(compareText);
+      const paths = selectedPaths.slice(0, remainingPaths);
+      remainingPaths -= paths.length;
+      if (paths.length < selectedPaths.length) pathsTruncated = true;
+      return {
+        candidate: candidate.candidate,
+        strategy: candidate.strategy || "exact",
+        related_stages: candidate.related_stages || [],
+        commits: [candidate.commit_hash],
+        paths,
+      };
+    });
+    const attributed = new Set(records.map((candidate) => candidate.commit_hash));
+    return {
+      capability: "available",
+      candidates,
+      direct_commits: [...commitSet].filter((commit) => !attributed.has(commit)),
+      candidates_truncated: records.length > included.length,
+      paths_truncated: pathsTruncated,
+    };
   }
 
   mark(workspace, environment, commit, confirmation) {

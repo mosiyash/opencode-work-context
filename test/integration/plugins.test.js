@@ -32,6 +32,17 @@ test("new OpenCode session resumes a stage and updates its session title", async
   }
 });
 
+test("delivery doctor does not update session title metadata", async () => {
+  const fixture = createFixture();
+  try {
+    const host = createSessionHost(fixture.root, "doctor-session");
+    const hooks = await serverPlugin(host);
+    await hooks["tool.execute.after"]({ tool: "work_context_doctor_delivery", sessionID: "doctor-session" });
+    assert.deepEqual(host.updates, []);
+    assert.equal(typeof hooks.tool.work_context_doctor_delivery.execute, "function");
+  } finally { fixture.cleanup(); }
+});
+
 test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
   const fixture = createFixture();
   try {

@@ -4,9 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
-import { WorkContext, readStagesSnapshot, renderStagesPanel } from "../src/index.js";
+import { WorkContext, defaultConfig, loadConfig, readStagesSnapshot, renderStagesPanel } from "../src/index.js";
 import { ERROR_CODES } from "../src/errors.js";
 import tools from "../src/tool-definitions.js";
+import explainDeliveryTool from "../tools/work_context_explain_delivery.js";
 
 const git = (root, args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 const gitInput = (root, args, input) => execFileSync("git", args, { cwd: root, encoding: "utf8", input }).trim();
@@ -54,6 +55,32 @@ test("delivery context aggregates committed candidates and inspects only an expl
     assert.deepEqual(snapshot.data.workspace.delivery, { committed: 2, plan_needed: true, environments: [] });
     assert.match(renderStagesPanel(snapshot), /Delivery · 2 commits · plan needed/);
     assert.doesNotMatch(JSON.stringify(snapshot), /commit_hash|changed_paths/);
+  } finally { cleanup(root); }
+});
+
+test("delivery explain is exposed through core, structured tools, and its package wrapper", async () => {
+  const root = makeRepository();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Explain workspace", { workspace: "999901", sessionId: "planning", mode: "standard" });
+    const from = git(root, ["rev-parse", "HEAD"]);
+    fs.writeFileSync(path.join(root, "app.txt"), "explained\n");
+    git(root, ["add", "app.txt"]);
+    git(root, ["commit", "-qm", "explain change"]);
+    const to = git(root, ["rev-parse", "HEAD"]);
+    const findings = [{ id: "missing-test", severity: "warning", summary: "Add a test", affected_paths: ["./app.txt"], remediation_ids: ["add-test"], recommendation: "Add coverage" }];
+
+    const core = context.explainDelivery("999901", from, to, findings);
+    assert.equal(core.ok, true);
+    assert.equal(core.data.operation, "delivery.explain");
+    assert.equal(core.data.findings[0].matched_paths[0], "app.txt");
+
+    const toolContext = { directory: root, worktree: root, sessionID: "planning", metadata: async () => {} };
+    const structured = JSON.parse((await tools.work_context_explain_delivery.execute({ workspace: "999901", from, to, findings }, toolContext)).output);
+    assert.deepEqual(structured, core);
+    const wrapped = JSON.parse((await explainDeliveryTool.execute({ workspace: "999901", from, to }, toolContext)).output);
+    assert.equal(wrapped.data.operation, "delivery.explain");
+    assert.equal(tools.work_context_explain_delivery.args.findings.safeParse([{ id: "x", severity: "info", summary: "ok", unsupported: true }]).success, false);
   } finally { cleanup(root); }
 });
 
@@ -174,5 +201,141 @@ test("bounded delivery ranges retain the earliest commits after the baseline", (
     assert.equal(range.commits[0], commits[0]);
     assert.equal(range.commits.at(-1), commits[499]);
     assert.equal(range.commits_truncated, true);
+  } finally { cleanup(root); }
+});
+
+test("delivery explain attributes exact-range candidates and preserves direct commits", () => {
+  const root = makeRepository();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Explain startup", { workspace: "999901", sessionId: "planning", mode: "startup" });
+    const outside = commitCandidate(context, root, "Outside range", "outside");
+    git(root, ["reset", "-q", "HEAD"]);
+    const initial = outside.commit_hash;
+    const candidate = commitCandidate(context, root, "Candidate change", "candidate");
+    git(root, ["reset", "-q", "HEAD"]);
+    fs.writeFileSync(path.join(root, "direct.txt"), "direct\n");
+    git(root, ["add", "direct.txt"]);
+    git(root, ["commit", "-qm", "direct change"]);
+    const direct = git(root, ["rev-parse", "HEAD"]);
+    const statusBefore = git(root, ["status", "--porcelain=v1"]);
+
+    const explained = context.deliveries().explain("999901", {
+      from: initial,
+      to: direct,
+      findings: [{
+        id: "release.review",
+        severity: "warning",
+        summary: "Review affected paths",
+        affected_paths: ["././app.txt", "missing.txt"],
+        remediation_ids: ["release.verify"],
+        recommendation: "Verify before delivery",
+      }],
+    });
+    assert.equal(explained.complete, true);
+    assert.equal(explained.candidate_traceability.capability, "available");
+    assert.deepEqual(explained.candidate_traceability.candidates, [{
+      candidate: "CC-000002",
+      strategy: "exact",
+      related_stages: ["01"],
+      commits: [candidate.commit_hash],
+      paths: ["app.txt"],
+    }]);
+    assert.deepEqual(explained.candidate_traceability.direct_commits, [direct]);
+    assert.deepEqual(explained.findings[0].matched_paths, ["app.txt"]);
+    assert.deepEqual(explained.findings[0].unmatched_paths, ["missing.txt"]);
+    assert.equal(explained.findings[0].recommendation, "Verify before delivery");
+    assert.deepEqual(explained.candidate_slice, []);
+    assert.equal(git(root, ["status", "--porcelain=v1"]), statusBefore);
+    assert.equal(fs.existsSync(path.join(root, ".work-context", "local", "delivery", "999901.json")), false);
+
+    context.setWorkspaceMode("999901", "standard");
+    const standard = context.deliveries().explain("999901", { from: initial, to: direct });
+    assert.deepEqual(standard.candidate_traceability, { capability: "unavailable", candidates: [], direct_commits: [] });
+  } finally { cleanup(root); }
+});
+
+test("delivery explain redacts final, lineage, finding, and traceability paths deterministically", () => {
+  const root = makeRepository();
+  try {
+    const initial = git(root, ["rev-parse", "HEAD"]);
+    const context = WorkContext.open(root, { actor: "test", config: { delivery: { secret_path_patterns: ["secret/**"] } } });
+    context.createWorkspace("Explain redaction", { workspace: "999901", sessionId: "planning", mode: "startup" });
+    fs.mkdirSync(path.join(root, "secret"));
+    fs.writeFileSync(path.join(root, "secret", "old.txt"), "secret\n");
+    let candidate = context.createCandidate("999901", "Secret addition", null, { relatedStages: ["01"] }).data;
+    context.captureCandidate("999901", candidate.candidate, { paths: ["secret/old.txt"] });
+    context.readyCandidate("999901", candidate.candidate);
+    context.commitCandidate("999901", candidate.candidate);
+    fs.renameSync(path.join(root, "secret", "old.txt"), path.join(root, "secret", "new.txt"));
+    git(root, ["add", "-A"]);
+    git(root, ["commit", "-qm", "rename secret path"]);
+    const to = git(root, ["rev-parse", "HEAD"]);
+
+    const explained = context.deliveries().explain("999901", {
+      from: initial,
+      to,
+      findings: [{ id: "release.secret", severity: "error", summary: "Review secret/new.txt", affected_paths: ["secret/new.txt"], remediation_ids: [] }],
+    });
+    const serialized = JSON.stringify(explained);
+    assert.doesNotMatch(serialized, /secret\/(?:old|new)\.txt/u);
+    assert.deepEqual(explained.redactions, {
+      applied: true,
+      path_count: 2,
+      tokens: ["<redacted:path-0001>", "<redacted:path-0002>"],
+    });
+    assert.equal(explained.paths.find((item) => item.path === "<redacted:path-0001>")?.path, "<redacted:path-0001>");
+    assert.equal(explained.lineage[0].from_path, "<redacted:path-0002>");
+    assert.equal(explained.lineage[0].to_path, "<redacted:path-0001>");
+    assert.deepEqual(explained.candidate_traceability.candidates[0].paths, ["<redacted:path-0002>"]);
+    assert.equal(explained.findings[0].summary, "Review <redacted:path-0001>");
+    assert.deepEqual(explained.findings[0].affected_paths, ["<redacted:path-0001>"]);
+    assert.deepEqual(explained.candidate_slice[0].path_references, ["<redacted:path-0001>"]);
+    assert.deepEqual(explained.candidate_slice[0].finding_references, ["release.secret"]);
+    assert.equal(explained.candidate_slice[0].requires_user_decision, true);
+  } finally { cleanup(root); }
+});
+
+test("delivery secret path config is additive and rejects unsupported glob syntax", () => {
+  const root = makeRepository();
+  try {
+    const configFile = path.join(root, ".work-context", "config.yaml");
+    fs.mkdirSync(path.dirname(configFile), { recursive: true });
+    fs.writeFileSync(configFile, defaultConfig());
+    assert.deepEqual(loadConfig(root).delivery.secret_path_patterns, []);
+    fs.writeFileSync(configFile, `${defaultConfig()}delivery:\n  secret_path_patterns: ["secret/**", "*.env"]\n`);
+    assert.deepEqual(loadConfig(root).delivery.secret_path_patterns, ["secret/**", "*.env"]);
+    for (const pattern of ["/absolute", "a/**b", "a/../b", "a\\b", "!secret", "a/[b]"]) {
+      fs.writeFileSync(configFile, `${defaultConfig()}delivery:\n  secret_path_patterns: ${JSON.stringify([pattern])}\n`);
+      assert.throws(() => loadConfig(root), (error) => error.code === ERROR_CODES.STORAGE_ERROR);
+    }
+    fs.writeFileSync(configFile, `${defaultConfig()}delivery:\n  secret_path_patterns: ${JSON.stringify(Array.from({ length: 101 }, (_, index) => `secret-${index}`))}\n`);
+    assert.throws(() => loadConfig(root), (error) => error.code === ERROR_CODES.STORAGE_ERROR);
+    fs.writeFileSync(configFile, `${defaultConfig()}delivery:\n  secret_path_patterns: ${JSON.stringify(["x".repeat(257)])}\n`);
+    assert.throws(() => loadConfig(root), (error) => error.code === ERROR_CODES.STORAGE_ERROR);
+  } finally { cleanup(root); }
+});
+
+test("delivery explain fails closed when path evidence is truncated", () => {
+  const root = makeRepository();
+  try {
+    const from = git(root, ["rev-parse", "HEAD"]);
+    for (let index = 0; index <= 500; index += 1) fs.writeFileSync(path.join(root, `path-${String(index).padStart(3, "0")}.txt`), `${index}\n`);
+    git(root, ["add", "."]);
+    git(root, ["commit", "-qm", "many paths"]);
+    const to = git(root, ["rev-parse", "HEAD"]);
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Explain truncation", { workspace: "999901", sessionId: "planning" });
+    const explained = context.deliveries().explain("999901", {
+      from,
+      to,
+      findings: [{ id: "release.large", severity: "warning", summary: "Large change", affected_paths: ["path-500.txt"], remediation_ids: [], recommendation: "Split it" }],
+    });
+    assert.equal(explained.complete, false);
+    assert.equal(explained.limits.paths.truncated, true);
+    assert.equal("recommendation" in explained.findings[0], false);
+    assert.equal("matched_paths" in explained.findings[0], false);
+    assert.equal("unmatched_paths" in explained.findings[0], false);
+    assert.deepEqual(explained.candidate_slice, []);
   } finally { cleanup(root); }
 });

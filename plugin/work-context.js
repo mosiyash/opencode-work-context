@@ -1,11 +1,11 @@
-import tools from "../src/tool-definitions.js";
-import { contextFor, titleFor } from "../src/opencode-adapter.js";
+import { createToolDefinitions } from "../src/tool-definitions.js";
+import { contextFor, runtimeSelfReport, titleFor } from "../src/opencode-adapter.js";
 import { readTuiState } from "./tui-state.js";
 
 export default async ({ client, directory, worktree }) => ({
-  tool: tools,
+  tool: createToolDefinitions({ runtimeEvidence: runtimeSelfReport(worktree === "/" ? directory : (worktree || directory)) }),
   "tool.execute.after": async ({ tool, sessionID }) => {
-    if (!tool?.startsWith("work_context_") || !sessionID) return;
+    if (!tool?.startsWith("work_context_") || tool === "work_context_doctor_delivery" || !sessionID) return;
     await updateSessionTitle(client, worktree || directory, directory, sessionID);
   },
   event: async ({ event }) => {

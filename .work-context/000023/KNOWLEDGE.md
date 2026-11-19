@@ -45,10 +45,10 @@ Keep the public operation delivery-scoped as `delivery.doctor`, because its fail
 - Kind: decision
 - Status: active
 - Created: 2026-11-17T19:16:41.515Z
-- Updated: 2026-11-17T19:16:41.515Z
-- Sources: ["src/candidates.js","docs/adr/0008-workspace-delivery-context.md","user-approved contract"]
+- Updated: 2026-11-18T15:20:55.514Z
+- Sources: ["src/delivery-slices.js","src/delivery.js","src/delivery-contracts.js","test/delivery-slices.test.js","test/delivery.test.js"]
 
-Candidate-slice output is advisory only and is generated only for a complete diagnostic. Every slice includes one of `exact`, `shared_foundation`, or `integration`, bounded path references, confidence, rationale IDs derived from validated findings/Git traceability, and `requires_user_decision: true`. The recommender must not invent policy, remediation, ownership, or candidate mutations. Prefer `exact` only for a separable connected path/finding group, `shared_foundation` only when multiple groups depend on the same evidenced paths or commits, and `integration` when overlap prevents a coherent safe split. Ambiguous or weak evidence yields no slice rather than a speculative recommendation. Direct commits remain explicitly represented and never force synthetic candidate attribution.
+Candidate-slice output is advisory only and is generated only for a complete diagnostic after path redaction. Every slice contains a strategy (`exact`, `shared_foundation`, or `integration`), deterministic confidence, bounded path/finding/rationale/candidate/commit references, and `requires_user_decision: true`. The implemented structural rules classify an isolated fully matched finding as `exact` with confidence 1, disjoint findings connected by shared bounded Git provenance as `shared_foundation` with confidence 0.8, and findings sharing matched paths as `integration` with confidence 0.6. Ambiguous, unmatched, weak, truncated, or incomplete evidence yields no speculative slice; an ambiguous finding also blocks recommendations for its matched paths. Candidate IDs are optional traceability references only: candidate strategy and related stages do not determine the recommendation or imply ownership. Direct commits remain explicit in candidate traceability and never create synthetic candidates. Ordering and references are canonical and deterministic, and redacted paths remain opaque in every slice.
 
 ## KC-0006: Sidebar attention count invariant
 

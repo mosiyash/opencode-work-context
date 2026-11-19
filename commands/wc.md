@@ -3,6 +3,8 @@ description: Explicit work-context lifecycle commands backed by structured tools
 subtask: false
 ---
 
+<!-- opencode-work-context-protocol: {"schema":1,"major":1,"minor":0,"descriptor_hash":"sha256:5cedc90065e0b36a1fd6e6a2cae519ccb51b1b6883c5dd9d9ea75efe776f8b50"} -->
+
 Interpret `/wc $ARGUMENTS` as an explicit work-context operation. Use the matching
 `work_context_*` custom tool registered by the installed package plugin with structured arguments. Never edit work-context
 Markdown, JSONL, INDEX, or SESSIONS projections directly. For mutating operations
@@ -38,6 +40,8 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `candidate commit <workspace> <candidateId> ["message"]` -> `work_context_commit_candidate`
 - `candidate discard <workspace> <candidateId>` -> `work_context_discard_candidate`
 - `delivery read <workspace> [<environment>] [range <from> <to>]` -> `work_context_read_delivery`
+- `delivery explain <workspace> <from> <to> [findings JSON]` -> `work_context_explain_delivery`
+- `delivery doctor` -> `work_context_doctor_delivery`
 - `delivery mark <workspace> <environment> <commit> DELIVERY_CONFIRMED` -> `work_context_mark_delivery`
 - `workspace finish <workspace>` -> `work_context_workspace_finish`
 - `workspace reopen <workspace> "reason"` -> `work_context_reopen_workspace`
@@ -82,6 +86,8 @@ Supported syntax:
 - `candidate commit <workspace> <candidateId> ["message"]`
 - `candidate discard <workspace> <candidateId>`
 - `delivery read <workspace> [<environment>] [range <from> <to>]`
+- `delivery explain <workspace> <from> <to> [findings JSON]`
+- `delivery doctor`
 - `delivery mark <workspace> <environment> <commit> DELIVERY_CONFIRMED`
 - `workspace finish <workspace>`
 - `workspace reopen <workspace> "reason"`
@@ -158,6 +164,8 @@ Supported syntax:
 - `workspace reopen <workspace> "reason"` applies only to a completed workspace, changes it to `in_progress`, and records durable recovery history. Cancelled workspaces cannot be reopened.
 - candidate operations require `startup` workflow mode and store metadata and patch payloads only under `.work-context/local/`; create accepts an optional strategy and related stages, which are normalized references for traceability only and never ownership or lifecycle; active candidates explicitly related to the resumed stage appear as bounded metadata in `resume.context.pending_candidates` and in expanded sidebar details; capture requires exactly one explicit list of complete paths or one Git unified patch and never infers stage ownership; commit requires a ready candidate, uses its stored message unless a non-empty override is supplied, serializes Git publication, bypasses hooks and signing, and never uses the ordinary Git index
 - delivery operations are mode-neutral local operational state and never execute deployment; `delivery read` without a range returns metadata only, exact Git inspection requires both immutable `from` and `to` hashes, and `delivery mark` requires the exact `DELIVERY_CONFIRMED` token only after the user confirms successful delivery to that environment
+- `delivery explain` is strictly read-only, accepts findings as structured JSON data, inspects only the explicit immutable range, and preserves stable errors, contract version, completeness, and omission of recommendations when incomplete
+- `delivery doctor` is strictly read-only, compares generated-command, declared, installed, self-reported, and host-attested or unavailable runtime evidence, and fails fast only when command and loaded-plugin protocol majors differ
 - `knowledge list|add|update|supersede <workspace> ...`
 
 Arguments: $ARGUMENTS

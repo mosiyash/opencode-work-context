@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { defaultConfig } from "../src/storage.js";
+import { WORK_CONTEXT_PROTOCOL_MARKER } from "../src/protocol.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageManifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
@@ -66,6 +67,7 @@ test("checked-in slash command matches the packaged source", () => {
     fs.readFileSync(path.join(packageRoot, ".opencode", "commands", "wc.md"), "utf8"),
     fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8"),
   );
+  assert.match(fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8"), new RegExp(WORK_CONTEXT_PROTOCOL_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
 test("installer keeps standalone npm files at project root", () => {
@@ -77,11 +79,13 @@ test("installer keeps standalone npm files at project root", () => {
     assert.equal(fs.existsSync(path.join(root, "package.json")), true);
     assert.equal(fs.existsSync(path.join(root, ".opencode", "package.json")), false);
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).type, "module");
+    assert.match(fs.readFileSync(path.join(root, ".work-context", "config.yaml"), "utf8"), /delivery:\n  secret_path_patterns: \[\]/);
     assertIntegration(root);
     assert.equal(
       fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"),
       fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8"),
     );
+    assert.match(fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"), new RegExp(WORK_CONTEXT_PROTOCOL_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(fs.readFileSync(path.join(root, ".opencode", "tui-plugins", "work-context-stages.js"), "utf8"), /runtime: \{ createSignal, jsx \}/);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, ".opencode", "tui.json"), "utf8")), {
       $schema: "https://opencode.ai/tui.json",
@@ -137,6 +141,7 @@ test("activate configures a managed package without creating local storage or lo
     assert.equal(fs.existsSync(path.join(root, ".opencode", "plugins", "work-context.js")), false);
     assert.equal(fs.existsSync(path.join(root, ".opencode", "tui-plugins")), false);
     assert.equal(fs.existsSync(path.join(root, ".opencode", "commands", "wc.md")), true);
+    assert.match(fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"), new RegExp(WORK_CONTEXT_PROTOCOL_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.doesNotMatch(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"), new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   } finally { removeRoot(root); }
 });
@@ -223,12 +228,13 @@ test("force updates package files while preserving project config and TUI extens
     fs.mkdirSync(path.join(root, ".work-context"), { recursive: true });
     fs.mkdirSync(path.join(root, ".opencode"), { recursive: true });
     const config = defaultConfig().replace("issue_prefix: short", "issue_prefix: full");
-    fs.writeFileSync(path.join(root, ".work-context", "config.yaml"), config);
+    const projectConfig = `${config}delivery:\n  secret_path_patterns: ["secret/**"]\n`;
+    fs.writeFileSync(path.join(root, ".work-context", "config.yaml"), projectConfig);
     fs.writeFileSync(path.join(root, ".opencode", "tui.json"), JSON.stringify({ $schema: "https://opencode.ai/tui.json", theme: "custom", plugin: ["./tui-plugins/project.js"] }, null, 2) + "\n");
 
     const result = runInit(root, { bin }, ["init", "--force"]);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(fs.readFileSync(path.join(root, ".work-context", "config.yaml"), "utf8"), config);
+    assert.equal(fs.readFileSync(path.join(root, ".work-context", "config.yaml"), "utf8"), projectConfig);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, ".opencode", "tui.json"), "utf8")), {
       $schema: "https://opencode.ai/tui.json",
       theme: "custom",
@@ -254,6 +260,7 @@ test("sync-command refreshes only the generated slash command", () => {
 
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"), fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8"));
+    assert.match(fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"), new RegExp(WORK_CONTEXT_PROTOCOL_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.equal(fs.readFileSync(path.join(root, ".opencode", "sentinel"), "utf8"), "preserve\n");
     assert.equal(fs.readFileSync(path.join(root, ".opencode", "work-context.md"), "utf8"), "Project-specific workflow\n");
     assert.equal(fs.existsSync(path.join(root, "package.json")), false);

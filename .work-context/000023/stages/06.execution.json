@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "workspace": "000023",
+  "stage": "06",
+  "revision": 2,
+  "created_at": "2026-11-18T17:54:17.890Z",
+  "updated_at": "2026-11-18T17:57:57.979Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Implement read-only delivery.doctor protocol and evidence contract",
+    "Project identical protocol marker/hash through command installer paths",
+    "Expose runtime self-report through plugin-scoped tool definitions",
+    "Cover protocol negotiation, evidence safety, repairs, and installer parity"
+  ],
+  "completed": [
+    "Mapped delivery, plugin, tool, and installer extension points",
+    "Implemented initial protocol descriptor, doctor contract, runtime wiring, command mapping, and focused tests",
+    "Ran existing targeted suites and completed a security-oriented implementation audit",
+    "Hardened secret-safe evidence parsing, read-only host behavior, deterministic malformed-evidence findings, complete attestation comparisons, and redacted failures",
+    "Expanded focused boundary and integration coverage",
+    "Completed full repository verification"
+  ],
+  "remaining": [],
+  "decisions": [
+    "delivery.doctor is project-scoped and does not require an existing workspace",
+    "Only known generated-command versus loaded-plugin protocol-major mismatch throws DELIVERY_COMMAND_PROTOCOL_MISMATCH",
+    "Current OpenCode host attestation is reported unavailable; synthetic attestation is accepted only through the core diagnostic boundary for tests/future authoritative integration",
+    "Generated command identity uses a canonical non-self-referential descriptor SHA-256 hash"
+  ],
+  "blockers": [],
+  "verification": [
+    "Targeted delivery, installer, and plugin suites passed before hardening",
+    "Focused delivery doctor tests passed before hardening",
+    "Focused doctor, installer, and plugin suites passed after hardening",
+    "Full npm test passed: 320 tests, 318 passed and 2 skipped",
+    "Repository language check passed for 336 files",
+    "git diff --check passed"
+  ]
+}

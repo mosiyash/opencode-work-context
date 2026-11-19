@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "workspace": "000023",
+  "stage": "02",
+  "revision": 1,
+  "created_at": "2026-11-18T14:00:35.521Z",
+  "updated_at": "2026-11-18T14:00:35.521Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Define the v1 delivery diagnostic contract constants, limits, validators, and completeness rules",
+    "Implement bounded deterministic immutable-range Git evidence without changing candidate mutation behavior",
+    "Cover finding validation, envelope limits, status/stat evidence, provenance, lineage, merges, sanitization, and count limits"
+  ],
+  "completed": [
+    "Added stable delivery finding and diagnostic size error codes",
+    "Added strict finding, stable-ID, completeness, and output-envelope validation",
+    "Added detailed first-parent Git evidence with final-path stats, sanitized subjects, bounded provenance, and separate rename/copy lineage",
+    "Exported the reusable contract and Git evidence primitives",
+    "Added focused contract and Git evidence tests while preserving existing delivery range behavior"
+  ],
+  "remaining": [],
+  "decisions": [
+    "Keep the existing lightweight delivery read range implementation unchanged and expose detailed evidence as a separate primitive",
+    "Represent endpoint-normalized final paths separately from chronological rename/copy lineage",
+    "Reserve DELIVERY_DIAGNOSTIC_TOO_LARGE for the serialized 4 MiB output hard cap; malformed envelopes use INVALID_ARGUMENT"
+  ],
+  "blockers": [],
+  "verification": [
+    "node --test test/delivery-contracts.test.js test/delivery.test.js passed",
+    "npm test passed: 300 passed, 2 skipped",
+    "npm run check:language passed: 323 repository files inspected",
+    "git diff --check passed"
+  ]
+}

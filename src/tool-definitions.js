@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { contextFor, titleFor } from "../src/opencode-adapter.js";
+import { contextFor, runtimeSelfReport, titleFor } from "../src/opencode-adapter.js";
+import { WorkContext } from "../src/core.js";
 import { fail, ERROR_CODES } from "../src/errors.js";
 import { normalizeStageId, normalizeWorkspaceId } from "../src/identifiers.js";
 
@@ -17,10 +18,34 @@ const run = (fn) => async (args, context) => {
     return { output: JSON.stringify({ ok: false, error: { code: error.code || "STORAGE_ERROR", message: error.message, details: error.details || {} } }), metadata: { code: error.code || "STORAGE_ERROR" } };
   }
 };
+const runProject = (fn, { metadata = true, redactErrors = false } = {}) => async (args, context) => {
+  try {
+    const projectRoot = context.worktree === "/" ? context.directory : (context.worktree || context.directory);
+    const result = await fn(projectRoot, args, context);
+    if (metadata) try { await context.metadata({ title: "work-context", metadata: { result } }); } catch {}
+    return { output: JSON.stringify(result), metadata: result };
+  } catch (error) {
+    const stable = Object.values(ERROR_CODES).includes(error.code) ? error.code : ERROR_CODES.STORAGE_ERROR;
+    const result = { ok: false, error: {
+      code: stable,
+      message: redactErrors && stable !== ERROR_CODES.DELIVERY_COMMAND_PROTOCOL_MISMATCH ? "Delivery doctor could not complete safely" : error.message,
+      details: redactErrors && stable !== ERROR_CODES.DELIVERY_COMMAND_PROTOCOL_MISMATCH ? {} : (error.details || {}),
+    } };
+    return { output: JSON.stringify(result), metadata: { code: result.error.code } };
+  }
+};
 const common = { workspace: tool.schema.string(), stage: tool.schema.string() };
 const contextualStage = { workspace: tool.schema.string().optional(), stage: tool.schema.string().optional() };
 const capabilityProfile = tool.schema.enum(["routine", "implementation", "architecture", "security", "review"]);
 const capabilityDepth = tool.schema.enum(["light", "standard", "deep"]);
+const deliveryFinding = tool.schema.object({
+  id: tool.schema.string(),
+  severity: tool.schema.enum(["info", "warning", "error"]),
+  summary: tool.schema.string(),
+  affected_paths: tool.schema.array(tool.schema.string()).optional(),
+  remediation_ids: tool.schema.array(tool.schema.string()).optional(),
+  recommendation: tool.schema.string().optional(),
+}).strict();
 const executionSections = {
   scope: tool.schema.array(tool.schema.string()).optional(),
   completed: tool.schema.array(tool.schema.string()).optional(),
@@ -76,6 +101,15 @@ export const work_context_ready_candidate = tool({ description: "Mark a captured
 export const work_context_commit_candidate = tool({ description: "Commit a ready candidate atomically without using the ordinary Git index. Uses its stored message unless message is provided.", args: { workspace: tool.schema.string(), candidateId: tool.schema.string(), message: tool.schema.string().optional() }, execute: run((ctx, a) => ctx.commitCandidate(a.workspace, a.candidateId, a.message)) });
 export const work_context_discard_candidate = tool({ description: "Discard a local commit candidate without changing Git state.", args: { workspace: tool.schema.string(), candidateId: tool.schema.string() }, execute: run((ctx, a) => ctx.discardCandidate(a.workspace, a.candidateId)) });
 export const work_context_read_delivery = tool({ description: "Read workspace-level delivery context. Exact Git inspection runs only when both immutable from and to commit hashes are provided.", args: { workspace: tool.schema.string(), environment: tool.schema.string().optional(), from: tool.schema.string().optional(), to: tool.schema.string().optional() }, execute: run((ctx, a) => ctx.readDelivery(a.workspace, { environment: a.environment, from: a.from, to: a.to })) });
+export const work_context_explain_delivery = tool({ description: "Explain a bounded immutable delivery range with read-only Git evidence, findings, and traceability.", args: { workspace: tool.schema.string(), from: tool.schema.string(), to: tool.schema.string(), findings: tool.schema.array(deliveryFinding).optional() }, execute: run((ctx, a) => ctx.explainDelivery(a.workspace, a.from, a.to, a.findings) ) });
+const createDoctorDeliveryTool = ({ runtimeEvidence = runtimeSelfReport } = {}) => tool({
+  description: "Diagnose project delivery command, installation, and loaded-plugin protocol evidence without making changes.",
+  args: {},
+  execute: runProject((projectRoot) => WorkContext.doctorDelivery(projectRoot, {
+    loadedPlugin: typeof runtimeEvidence === "function" ? runtimeEvidence(projectRoot) : runtimeEvidence,
+  }), { metadata: false, redactErrors: true }),
+});
+export const work_context_doctor_delivery = createDoctorDeliveryTool();
 export const work_context_mark_delivery = tool({ description: "Record a confirmed environment delivery checkpoint without executing deployment. Requires DELIVERY_CONFIRMED.", args: { workspace: tool.schema.string(), environment: tool.schema.string(), commit: tool.schema.string(), confirmation: tool.schema.string() }, execute: run((ctx, a) => ctx.markDelivery(a.workspace, a.environment, a.commit, a.confirmation)) });
 export const work_context_workspace_finish = tool({ description: "Finish a workspace after all stages are completed.", args: { workspace: tool.schema.string() }, execute: run((ctx, a) => ctx.finishWorkspace(a.workspace)) });
 export const work_context_reopen_workspace = tool({ description: "Reopen a completed workspace with a required reason and durable history.", args: { workspace: tool.schema.string(), reason: tool.schema.string() }, execute: run((ctx, a) => ctx.reopenWorkspace(a.workspace, a.reason)) });
@@ -114,4 +148,10 @@ export const work_context_add_knowledge = tool({ description: "Add a durable kno
 export const work_context_update_knowledge = tool({ description: "Update a durable knowledge entry.", args: { workspace: tool.schema.string(), knowledgeId: tool.schema.string(), title: tool.schema.string().optional(), kind: tool.schema.string().optional(), status: tool.schema.string().optional(), text: tool.schema.string().optional(), sources: tool.schema.array(tool.schema.string()).optional(), replacement: tool.schema.string().optional() }, execute: run((ctx, a) => ctx.updateKnowledge(a.workspace, a.knowledgeId, a)) });
 export const work_context_supersede_knowledge = tool({ description: "Supersede a durable knowledge entry.", args: { workspace: tool.schema.string(), knowledgeId: tool.schema.string(), replacement: tool.schema.string() }, execute: run((ctx, a) => ctx.supersedeKnowledge(a.workspace, a.knowledgeId, a.replacement) ) });
 
-export default { work_context_list_workspaces, work_context_workspace_list, work_context_rename_workspace, work_context_set_workspace_mode, work_context_create_candidate, work_context_capture_candidate, work_context_preview_candidate, work_context_show_candidate, work_context_list_candidates, work_context_ready_candidate, work_context_commit_candidate, work_context_discard_candidate, work_context_read_delivery, work_context_mark_delivery, work_context_workspace_finish, work_context_reopen_workspace, work_context_create_workspace, work_context_start_session, work_context_add_stage, work_context_set_stage_profiles, work_context_refresh_stage_profiles, work_context_show_capability_profiles, work_context_configure_capability_profiles, work_context_reset_capability_profiles, work_context_rename_stage, work_context_update_stage, work_context_update_stage_prompt, work_context_update_stage_result, work_context_read_stage_execution, work_context_replace_stage_execution, work_context_update_stage_execution, work_context_archive_stage, work_context_reopen_stage, work_context_restore_stage, work_context_link_issue, work_context_unlink_issue, work_context_rename_session, work_context_close_session, work_context_force_close_session, work_context_handoff_stage, work_context_abandon_stage, work_context_finish_stage, work_context_help, work_context_list_knowledge, work_context_add_knowledge, work_context_update_knowledge, work_context_supersede_knowledge };
+const defaultTools = { work_context_list_workspaces, work_context_workspace_list, work_context_rename_workspace, work_context_set_workspace_mode, work_context_create_candidate, work_context_capture_candidate, work_context_preview_candidate, work_context_show_candidate, work_context_list_candidates, work_context_ready_candidate, work_context_commit_candidate, work_context_discard_candidate, work_context_read_delivery, work_context_explain_delivery, work_context_doctor_delivery, work_context_mark_delivery, work_context_workspace_finish, work_context_reopen_workspace, work_context_create_workspace, work_context_start_session, work_context_add_stage, work_context_set_stage_profiles, work_context_refresh_stage_profiles, work_context_show_capability_profiles, work_context_configure_capability_profiles, work_context_reset_capability_profiles, work_context_rename_stage, work_context_update_stage, work_context_update_stage_prompt, work_context_update_stage_result, work_context_read_stage_execution, work_context_replace_stage_execution, work_context_update_stage_execution, work_context_archive_stage, work_context_reopen_stage, work_context_restore_stage, work_context_link_issue, work_context_unlink_issue, work_context_rename_session, work_context_close_session, work_context_force_close_session, work_context_handoff_stage, work_context_abandon_stage, work_context_finish_stage, work_context_help, work_context_list_knowledge, work_context_add_knowledge, work_context_update_knowledge, work_context_supersede_knowledge };
+
+export function createToolDefinitions(options = {}) {
+  return { ...defaultTools, work_context_doctor_delivery: createDoctorDeliveryTool(options) };
+}
+
+export default defaultTools;

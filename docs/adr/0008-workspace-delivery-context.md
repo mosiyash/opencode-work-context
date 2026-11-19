@@ -64,6 +64,47 @@ secret names without persisting values.
   committed work, but an exact baseline may still require one focused question.
 - Local checkpoints are not shared automatically across machines.
 
+## Decision: delivery diagnostics
+
+`delivery.explain` and `delivery.doctor` are separate read-only, versioned
+diagnostic contracts. They do not execute deployment, remediation, candidate
+changes, checkpoint writes, configuration changes, command projection updates,
+or diagnostic persistence.
+
+`delivery.explain` accepts findings from an external repository planner and
+enriches them only with evidence from an explicit immutable Git ancestor range.
+The package validates finding structure but does not interpret release policy or
+remediation meaning. Its v1 response has strict major compatibility and allows
+additive minor fields. Count truncation marks the result incomplete and omits
+recommendations; a bounded output-size violation fails rather than returning a
+partial unsafe response. Startup workspaces can provide committed-candidate
+traceability, while standard workspaces explicitly report that capability as
+unavailable. Commits without candidate metadata remain direct commits.
+
+Optional `delivery.secret_path_patterns` is a strict repository-relative glob
+list for path redaction, not a policy language. Matching paths are replaced with
+response-local opaque tokens everywhere in the response, including findings,
+lineage, and candidate traceability. Diagnostic success and error paths must not
+expose patches, file contents, host commands, environment values, credentials,
+tokens, secret values, unsafe Git stderr, or arbitrary configuration and manifest
+fields.
+
+`delivery.doctor` compares package-controlled generated-command protocol
+evidence with declared project specifications, safely discoverable manifests,
+loaded-plugin self-report, and optional host attestation. Evidence provenance is
+always explicit: `self_reported`, `host_attested`, or `unavailable`. A generated
+command and loaded plugin with different protocol majors fail fast; minor,
+descriptor, version, and origin drift produce bounded findings and repair
+guidance. The doctor never repairs an installation automatically.
+
+The generated command carries a canonical non-self-referential protocol
+descriptor hash. `init`, `activate`, and `sync-command` project identical command
+bytes. Pinned-local repair uses `npx --yes opencode-work-context@<version> init
+--force`; managed repair updates the shared package with `opencode plugin
+opencode-work-context@<version> --force` and refreshes each project's command
+projection with `npx --yes opencode-work-context@<version> activate --force` when
+needed. Both require an OpenCode restart.
+
 ## Rejected alternatives
 
 ### Treat the last active stage as the deployment owner
@@ -84,3 +125,15 @@ must not become durable plugin state.
 
 Rejected to preserve the metadata-only, read-only TUI boundary and predictable
 rendering cost.
+
+### Turn diagnostics into deployment automation
+
+Rejected because deployment policy, commands, credentials, and environment
+verification are project-specific and cannot be safely inferred from bounded
+repository evidence.
+
+### Treat declared plugin configuration as loaded-runtime evidence
+
+Rejected because configuration does not authoritatively identify the module that
+OpenCode loaded. The current host API does not expose this attestation, so doctor
+reports that evidence as unavailable rather than guessing.

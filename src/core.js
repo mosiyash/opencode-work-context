@@ -10,6 +10,7 @@ import { normalizeStageId, normalizeWorkspaceId } from "./identifiers.js";
 import { isDependencySatisfied } from "./stage-status.js";
 import { CandidateStore } from "./candidates.js";
 import { DeliveryStore } from "./delivery.js";
+import { doctorDelivery as runDeliveryDoctor } from "./delivery-doctor.js";
 import { applyExecutionPatch, assertExecutionSize, executionState, normalizeExecutionState } from "./stage-execution.js";
 import { CAPABILITY_CLASSIFICATIONS, CAPABILITY_DEPTHS, CAPABILITY_MAPPINGS_FILE, CAPABILITY_PROFILES, capabilityProfileMode, capabilityRecommendations, readCapabilityMappings, validateCapabilityMappings } from "./capability-profiles.js";
 
@@ -106,6 +107,10 @@ export class WorkContext {
     assertNoSymlinkPath(path.join(root, ".work-context"));
     assertNoSymlinkPath(path.join(root, ".work-context", "config.yaml"));
     return new WorkContext(new FileStorage(root, { ...loadConfig(root), ...(options.config || {}) }), { ...options, initialize: false });
+  }
+
+  static doctorDelivery(projectRoot, options = {}) {
+    return { ok: true, data: runDeliveryDoctor(projectRoot, options) };
   }
 
   writeEvents(events) {
@@ -336,6 +341,14 @@ export class WorkContext {
   }
 
   readDelivery(workspace, options = {}) { return { ok: true, data: this.deliveries().readContext(workspace, options) }; }
+
+  explainDelivery(workspace, from, to, findings = []) {
+    return { ok: true, data: this.deliveries().explain(workspace, { from, to, findings }) };
+  }
+
+  doctorDelivery(options = {}) {
+    return { ok: true, data: runDeliveryDoctor(this.storage.projectRoot, options) };
+  }
 
   markDelivery(workspace, environment, commit, confirmation) {
     this.storage.assertSafeRoots();
@@ -971,7 +984,7 @@ export class WorkContext {
   help(command = "") {
     return this.result({
       command,
-      syntax: "/wc [create|list|workspace list|workspace rename|workspace mode|candidate create|candidate capture|candidate preview|candidate show|candidate list|candidate ready|candidate commit|candidate discard|delivery read|delivery mark|profiles show|profiles setup|profiles reset|workspace finish|workspace reopen|resume|stage add|stage profiles|stage profiles refresh|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage execution read|stage execution replace|stage execution update|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
+      syntax: "/wc [create|list|workspace list|workspace rename|workspace mode|candidate create|candidate capture|candidate preview|candidate show|candidate list|candidate ready|candidate commit|candidate discard|delivery read|delivery explain|delivery doctor|delivery mark|profiles show|profiles setup|profiles reset|workspace finish|workspace reopen|resume|stage add|stage profiles|stage profiles refresh|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage execution read|stage execution replace|stage execution update|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
        note: "execution recommendations combine a vendor-neutral capability with light, standard, or deep depth; Planning agents infer missing values before stage creation, ordinary refresh updates missing/inferred classifications while preserving explicit assignments, and local depth mappings resolve only an advisory model label; profiles setup gathers mode and mappings through questions, off mode suppresses presentation and resolution, and no profile operation changes a model, agent, reviewer, or session; delivery context is workspace-level local operational state; exact Git range inspection runs only for explicit immutable hashes; stage execution state is a bounded stage-local operational checkpoint; associated startup sessions receive the shared-worktree candidate policy; stage finish requires an explicit user lifecycle request unless Planning contains AUTO_STAGE_FINISH: allowed; recovery operations preserve lifecycle history.",
     }, []);
   }
