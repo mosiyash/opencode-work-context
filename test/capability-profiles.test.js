@@ -134,6 +134,7 @@ test("missing, malformed, non-regular, and oversized mappings never block resume
     createStage(context, { executionProfile: "security", executionDepth: "deep" });
     let profiles = context.startSession("900001", "02", { sessionId: "missing" }).data.resume.context.capability_profiles;
     assert.deepEqual(profiles.execution, { profile: "security", depth: "deep", classification: "explicit", source: "current", message: "No mapping configured; continuing with the current model." });
+    assert.equal(readStagesSnapshot({ projectRoot: root, sessionId: "missing" }).data.stages[1].recommended_model, undefined);
     context.handoff("900001", "02", "missing");
 
     const localMapping = mappingFile(context);

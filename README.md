@@ -169,8 +169,10 @@ The resulting user-local mappings live only in the ignored
 ```
 
 Expanded stage details render one compact line such as `implementation · deep ·
-Sol`; an absent mapping renders `current model`. Optional `review_profile`
-metadata neither resolves a model nor controls separately configured subagents.
+Sol`. Without a mapping, the TUI shows the actual model name for the current
+OpenCode session; other stages show only capability and depth rather than an
+ambiguous `current model` label. Optional `review_profile` metadata neither
+resolves a model nor controls separately configured subagents.
 Targets are bounded opaque labels and never enter tracked data. Invalid entries
 produce bounded warnings. The plugin never changes an active model or agent,
 invokes a reviewer, creates a replacement session, or blocks resume. `init`,

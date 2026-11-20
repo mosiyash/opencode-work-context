@@ -14,6 +14,7 @@ import { createStageSwitcherFlow, readStageSwitcherSnapshot, recentStageIds, rem
 import { createWorkspaceSwitcherFlow, selectWorkspaceSession, sortWorkspaceSwitcherEntries, switchToWorkspace } from "../plugin/workspace-switcher.js";
 import { createSessionSwitcherFlow, selectSession, sortSessionSwitcherEntries, switchToSession } from "../plugin/session-switcher.js";
 import { createAttentionTuiController } from "../plugin/attention.js";
+import { capabilitySummaryText, sessionModelLabel } from "../plugin/session-model.js";
 
 const makeRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "stages-tui-test-"));
 const removeRoot = (root) => fs.rmSync(root, { recursive: true, force: true });
@@ -487,6 +488,35 @@ test("native sidebar renders one compact capability recommendation in details", 
     stages: [{ id: "01", title: "Design", status: "planned", depends_on: [], execution_profile: "architecture", execution_depth: "deep", recommended_model: "Sol" }],
   } }, {}, runtime, undefined, false));
   assert.doesNotMatch(collapsed, /architecture · deep · Sol/);
+});
+
+test("current stage capability details use the host session model instead of a synthetic label", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const result = { ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "standard" },
+    currentStage: "01",
+    stages: [{ id: "01", title: "Build", status: "in_progress", current: true, execution_profile: "implementation", execution_depth: "standard" }],
+  } };
+  const output = renderedText(renderStagesElement(result, {}, runtime, undefined, true, undefined, undefined, () => "GPT-5.6 Sol"));
+
+  assert.match(output, /Implementation · Standard · GPT-5\.6 Sol/);
+  assert.doesNotMatch(output, /Current model/i);
+  assert.equal(capabilitySummaryText({ execution_profile: "implementation", execution_depth: "standard" }), "Implementation · Standard");
+});
+
+test("session model labels prefer the host model name and retain an explicit provider fallback", () => {
+  const session = { model: { providerID: "openai", id: "gpt-5.6-sol" }, location: { directory: "/tmp/project" } };
+  const api = {
+    data: {
+      session: { get: (id) => id === "oc-current" ? session : undefined },
+      location: { model: { list: () => [{ id: "model-row", modelID: "gpt-5.6-sol", providerID: "openai", name: "GPT-5.6 Sol" }] } },
+    },
+  };
+
+  assert.equal(sessionModelLabel(api, "oc-current"), "GPT-5.6 Sol");
+  api.data.location.model.list = () => [];
+  assert.equal(sessionModelLabel(api, "oc-current"), "openai/gpt-5.6-sol");
+  assert.equal(sessionModelLabel(api, "missing"), null);
 });
 
 test("native sidebar combines available workspace signals into one muted row", () => {

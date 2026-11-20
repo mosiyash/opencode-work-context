@@ -57,8 +57,8 @@ export const formatStageIds = (ids = []) => {
   return ranges.join(", ");
 };
 const profileSummary = (stage) => {
-  return stage.execution_profile && stage.execution_depth && stage.recommended_model
-    ? `${capitalize(stage.execution_profile)} · ${capitalize(stage.execution_depth)} · ${capitalize(stage.recommended_model)}`
+  return stage.execution_profile && stage.execution_depth
+    ? [capitalize(stage.execution_profile), capitalize(stage.execution_depth), stage.recommended_model && capitalize(stage.recommended_model)].filter(Boolean).join(" · ")
     : null;
 };
 

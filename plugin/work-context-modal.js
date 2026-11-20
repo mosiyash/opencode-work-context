@@ -9,6 +9,7 @@ import { openWorkspaceSwitcher } from "./workspace-switcher.js";
 import { openSessionSwitcher } from "./session-switcher.js";
 import { attentionForSession, attentionIndicatorText, attentionReasonText } from "./attention.js";
 import { resolveProjectRoot, withProjectRoot } from "./project-root.js";
+import { capabilitySummaryText, sessionModelLabel } from "./session-model.js";
 
 const COMMAND_NAME = "work_context.open";
 const ACTIONS_COMMAND_NAME = "work_context.actions";
@@ -21,7 +22,6 @@ const POLL_MS = 1000;
 const MARKERS = { planned: "[ ]", in_progress: "[•]", completed: "[✓]", cancelled: "[!]" };
 const COMMANDS = { list: "list", resume: "resume", handoff: "stage handoff", finish: "stage finish" };
 const activeTuiInstances = new WeakMap();
-const capitalize = (value) => value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 
 export const WORK_CONTEXT_ACTIONS = [
   { value: "help", title: "Help", description: "Show work-context command help", category: "General" },
@@ -224,7 +224,7 @@ export const createWorkContextModalController = ({
 const line = (runtime, children, props = {}) => runtime.jsx("text", { ...props, children });
 const marker = (status) => MARKERS[status] || "[?]";
 
-export const renderWorkContextModal = (controller, theme, runtime = { jsx }, { maxListHeight = 24 } = {}) => {
+export const renderWorkContextModal = (controller, theme, runtime = { jsx }, { maxListHeight = 24, currentModel = () => null } = {}) => {
   let workspaceScroll;
   let stageScroll;
   controller.onSelectionChange?.(() => queueMicrotask(() => {
@@ -239,6 +239,7 @@ export const renderWorkContextModal = (controller, theme, runtime = { jsx }, { m
     const selected = controller.selectedWorkspace();
     const stage = controller.selectedStage();
     const data = result?.data;
+    const capability = capabilitySummaryText(stage, stage?.current ? currentModel() : null);
     const status = result?.stale ? `STALE · ${result.error?.code || "STORAGE_ERROR"}` : result?.ok === false ? `ERROR · ${result.error?.code || "STORAGE_ERROR"}` : "LIVE";
     const muted = theme?.current?.textMuted;
     const selectedWorkspaceIndex = selected ? workspaces.indexOf(selected) : -1;
@@ -290,7 +291,7 @@ export const renderWorkContextModal = (controller, theme, runtime = { jsx }, { m
           ...(controller.details() && stage ? [
             line(runtime, "Details", { marginTop: 1, fg: muted }),
             line(runtime, stage.description || "No description.", { wrapMode: "word", fg: theme?.current?.text }),
-            stage.execution_profile && stage.execution_depth && stage.recommended_model && line(runtime, `${capitalize(stage.execution_profile)} · ${capitalize(stage.execution_depth)} · ${capitalize(stage.recommended_model)}`, { wrapMode: "word", fg: muted }),
+            capability && line(runtime, capability, { wrapMode: "word", fg: muted }),
             line(runtime, `Sessions  ${(selected.sessions || []).length}`, { fg: muted }),
             ...(selected.sessions || []).map((session) => {
               const unread = controller.attention?.attentionFor?.(session.opencode_session_id);
@@ -583,7 +584,7 @@ export const openCompatibilityDialog = (api, runtime = {}, options = {}) => {
   const controller = createWorkContextModalController({ projectRoot, sessionId, read: options.read || readWorkContextSnapshot, createSignal: runtime.createSignal, attention: api.workContextAttention, onClose: close, onCommand: (command) => insertPromptCommand(api, command) });
   try { watcher = projectRoot && fs.watch(path.join(projectRoot, ".work-context"), { recursive: true }, () => controller.scheduleRefresh?.()); } catch {}
   const maxListHeight = Math.max(8, Math.floor((api.renderer?.height || 60) / 2) - 6);
-  const render = () => renderWorkContextModal(controller, api.theme, runtime, { maxListHeight });
+  const render = () => renderWorkContextModal(controller, api.theme, runtime, { maxListHeight, currentModel: () => sessionModelLabel(api, sessionId) });
   stack.replace(render, close);
   return true;
 };

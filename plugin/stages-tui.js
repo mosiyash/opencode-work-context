@@ -9,6 +9,7 @@ import { attentionSummaryText } from "./attention.js";
 import { createStageSwitcherFlow } from "./stage-switcher.js";
 import { readTuiState, updateTuiState } from "./tui-state.js";
 import { resolveProjectRoot, withProjectRoot } from "./project-root.js";
+import { capabilitySummaryText, sessionModelLabel } from "./session-model.js";
 
 const DEBOUNCE_MS = 150;
 const POLL_MS = 1000;
@@ -56,7 +57,6 @@ export const checklistSummaryText = (execution) => {
   if (execution.blockers?.length) parts.push(`! ${execution.blockers.length}`);
   return parts.length ? `Todo · ${parts.join(" · ")}` : null;
 };
-const capitalize = (value) => value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 const visibleAttentionSnapshot = (attention, workspace, stages) => {
   const byStage = new Map(stages.map((stage) => [stage.id, attention?.attentionForStage?.(workspace, stage.id) || null]));
   const bySession = new Map();
@@ -70,7 +70,7 @@ const visibleAttentionSnapshot = (attention, workspace, stages) => {
 export { readStagesSnapshot, renderStagesPanel };
 
 const defaultRuntime = { jsx };
-const renderStagesContent = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect, activityFrame = () => LOADER_FRAMES[0]) => {
+const renderStagesContent = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect, activityFrame = () => LOADER_FRAMES[0], currentModel = () => null) => {
   if (!result?.ok || !result.data?.workspace) return [
     runtime.jsx("text", { children: runtime.jsx("b", { children: "Stages" }) }),
     ...renderStagesPanel(result).split("\n").slice(1).map((line) => runtime.jsx("text", { children: line })),
@@ -97,16 +97,14 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
     ...result.data.stages.flatMap((stage) => {
       const unread = attentionSnapshot.byStage.get(stage.id);
       const working = attention?.activityForStage?.(result.data.workspace.id, stage.id);
-      const recommendation = stage.execution_profile && stage.execution_depth && stage.recommended_model
-        ? `${capitalize(stage.execution_profile)} · ${capitalize(stage.execution_depth)} · ${capitalize(stage.recommended_model)}`
-        : null;
+      const current = stage.current || stage.id === result.data.currentStage;
+      const recommendation = capabilitySummaryText(stage, current ? currentModel() : null);
       const stageMetadata = [
         stage.tracker_links?.length && `Tasks: ${stage.tracker_links.map(trackerLinkText).join(", ")}`,
         stage.depends_on?.length && `Deps: ${formatStageIds(stage.depends_on)}`,
       ].filter(Boolean).join(" · ");
       const metadata = showDependencies ? [recommendation, stageMetadata, stageCandidateText(stage), stage.current && checklistSummaryText(stage.execution)].filter(Boolean).join("\n") : "";
       const attentionSignal = attentionSummaryText(unread);
-      const current = stage.current || stage.id === result.data.currentStage;
       const onMouseDown = (event) => {
         if (event?.button != null && event.button !== 0) return;
         return onStageSelect?.(stage);
@@ -138,10 +136,10 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
   ];
 };
 
-export const renderStagesElement = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect, activityFrame) => {
+export const renderStagesElement = (result, theme, runtime = defaultRuntime, attention, showDependencies = true, onStageSelect, activityFrame, currentModel) => {
   return runtime.jsx("box", {
    flexDirection: "column",
-    children: () => renderStagesContent(typeof result === "function" ? result() : result, theme, runtime, attention, typeof showDependencies === "function" ? showDependencies() : showDependencies, onStageSelect, activityFrame),
+    children: () => renderStagesContent(typeof result === "function" ? result() : result, theme, runtime, attention, typeof showDependencies === "function" ? showDependencies() : showDependencies, onStageSelect, activityFrame, currentModel),
   });
 };
 
@@ -303,9 +301,9 @@ export const createStagesTuiController = ({ projectRoot, read = readStagesSnapsh
 
 export { resolveProjectRoot } from "./project-root.js";
 
-const renderStagesSlot = (controller, theme, sessionId, runtime = defaultRuntime, attention, onStageSelect) => runtime.jsx("box", {
+const renderStagesSlot = (controller, theme, sessionId, runtime = defaultRuntime, attention, onStageSelect, currentModel) => runtime.jsx("box", {
   flexDirection: "column",
-  children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime, attention, controller.showDependencies, onStageSelect, controller.activityFrame),
+  children: renderStagesElement(() => controller.resultFor(sessionId), theme, runtime, attention, controller.showDependencies, onStageSelect, controller.activityFrame, currentModel),
 });
 
 const updateSessionTitle = async (api, projectRoot) => {
@@ -486,7 +484,7 @@ export const tui = async (api, options = {}) => {
       sidebar_content: (slotContext = {}, slotState = {}) => {
         const sessionId = sessionIdForSlot(api, initialSessionId, slotContext, slotState) || ACTIVE_WORKSPACE_SESSION;
         currentSessionId = sessionId;
-        return renderStagesSlot(controller, api.theme, sessionId, options.runtime, api.workContextAttention, (stage) => stageSwitcher.select(stage.id));
+        return renderStagesSlot(controller, api.theme, sessionId, options.runtime, api.workContextAttention, (stage) => stageSwitcher.select(stage.id), () => sessionModelLabel(api, sessionId));
       },
     },
   });

@@ -68,7 +68,7 @@ export const stageCapabilityProfiles = (storage, stage, localMappings) => {
     ...(stage.execution_depth ? { execution_depth: stage.execution_depth } : {}),
     ...(stage.execution_classification ? { execution_classification: stage.execution_classification } : {}),
     ...(stage.review_profile ? { review_profile: stage.review_profile } : {}),
-    ...(recommendation ? { recommended_model: recommendation.target || "current model" } : {}),
+    ...(recommendation?.target ? { recommended_model: recommendation.target } : {}),
   };
 };
 

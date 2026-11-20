@@ -28,8 +28,12 @@ ignored with bounded warnings rather than making canonical storage unreadable.
 Resume returns the execution recommendation in advisory mode. A valid depth
 mapping has source `mapping`; an absent or invalid mapping has source `current`
 and does not claim an unknown model identity. Expanded stage details render the
-capability, depth, and resolved label on one unlabeled line. Off mode omits
-recommendations, resolution, and warnings while preserving stage metadata.
+capability, depth, and mapped label on one unlabeled line. Without a mapping,
+the TUI may append the actual model name from the current OpenCode session;
+non-current stages and hosts without session model data show only capability and
+depth. The model identity remains host-owned and is never persisted by Work
+Context. Off mode omits recommendations, resolution, and warnings while
+preserving stage metadata.
 
 Question-driven setup/show/reset commands own local mapping changes and project
 mode updates, so users need not edit JSON or YAML. Setup may offer a subsequent
