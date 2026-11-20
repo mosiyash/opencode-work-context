@@ -12,6 +12,7 @@ export * from "./stages-snapshot.js";
 export * from "./stages-renderer.js";
 export * from "./work-context-snapshot.js";
 export * from "./git-candidates.js";
+export * from "./git-acknowledgement.js";
 export * from "./candidates.js";
 export * from "./delivery.js";
 export * from "./delivery-contracts.js";

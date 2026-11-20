@@ -59,6 +59,10 @@ export function readStagesSnapshot({ projectRoot, sessionId }) {
         current: stage.stage === session.stage,
       }));
     const currentStage = stages.some((stage) => stage.current) ? session.stage : null;
+    if (currentStage) {
+      const execution = context.readStageExecution(session.workspace, currentStage).data;
+      if (execution.revision > 0) Object.assign(stages.find((stage) => stage.id === currentStage), { execution });
+    }
 
     return {
       ok: true,

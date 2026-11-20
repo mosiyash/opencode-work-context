@@ -70,6 +70,28 @@ only when the workspace Planning-stage prompt includes this standalone line:
 AUTO_STAGE_FINISH: allowed
 ```
 
+### Acknowledge A Manual Commit
+
+When you commit shared in-progress work while an active stage is running, tell
+the agent about the exact commit using the short hash printed by Git:
+
+```text
+/commited f86f75a
+```
+
+`commited` is intentionally spelled with one `t`. It is a compact, explicit
+acknowledgement rather than an ownership claim: Work Context requires that hash
+to resolve to the current `HEAD`, verifies the session's original attached
+branch and fast-forward checkpoint, and rejects rebases, branch changes,
+detached `HEAD`, and active Git operations. The checkpoint is per active
+session in ignored `.work-context/local/` state; no canonical workspace data,
+candidate state, file, hunk, or stage ownership is changed.
+
+The generated command asks OpenCode to execute this deterministic structured
+tool as a light control-plane operation. OpenCode does not expose a package API
+that selects a model for individual slash commands, so the package does not
+claim to force a particular local light-tier mapping.
+
 To correct a completed stage without discarding its result or session history,
 use `/wc stage reopen <workspace> <stage> "reason"`. Reopening leaves
 downstream stages unchanged and requires a separate-session explicit resume.
@@ -506,6 +528,12 @@ When a stage has execution state, resume also includes it in
 checkpoint. The ledger remains local to that stage and is not injected into
 unrelated stages or promoted to workspace knowledge. Existing stages without a
 ledger retain their previous resume shape and are not rewritten.
+When sidebar details are enabled with `Ctrl+X D`, the current stage also shows a
+compact Todo summary derived from that same ledger. `Ctrl+X 2` opens its
+read-only checklist, grouping the current item, queued work, completed work,
+blockers, verification, and any useful scope or decisions. Checklist actions
+never mutate storage; agents advance work through the existing atomic execution
+update operation after reading its latest revision.
 Finishing a stage closes its current session and may report downstream stages
 whose prompts need review, but it never starts or resumes one of them. Any
 downstream work begins only in a separate OpenCode session through an explicit
@@ -570,7 +598,8 @@ records without strategy or stage-reference metadata remain readable; new
 candidates default to `exact` with no related stages.
 
 The sidebar reads only candidate metadata and shows a compact
-`Candidates · <count> draft · <count> ready` line when either count is nonzero.
+`Candidates …<draft-count> ✓<ready-count>` line when either count is nonzero;
+zero-valued states are omitted.
 With sidebar details enabled (`Ctrl+X D`), a stage with explicitly related active
 candidates also shows `Pending:` metadata. One related candidate includes its
 lifecycle status, strategy, and other related stage IDs; several candidates are
@@ -616,15 +645,15 @@ stages. Planning-stage resume receives a bounded `delivery_context` when committ
 candidates or environment checkpoints exist. The sidebar renders metadata only:
 
 ```text
-Delivery · 4 commits · plan needed
-Delivery · production · 2 tracked pending
-Delivery · production · 0 tracked pending
+Delivery 4 commits · ! plan
+Delivery production · 2 tracked pending
+Delivery production · 0 tracked pending
 ```
 
 `tracked pending` compares committed candidate metadata with the recorded local
 checkpoint; it is not a live Git reachability claim. A reset, rebase, force-push,
 or external deployment change requires an explicit range inspection before acting.
-Malformed or inconsistent checkpoint metadata renders `Delivery · unavailable`
+Malformed or inconsistent checkpoint metadata renders `Delivery ! unavailable`
 instead of claiming a clean delivery state.
 
 When asked how to deploy, the Planning agent must inspect the exact commit range

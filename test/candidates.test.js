@@ -244,7 +244,7 @@ test("read-only snapshots expose active candidate counts and explicit stage rela
     ]);
     assert.deepEqual({ draft: stages.data.stages[1].candidates.draft, ready: stages.data.stages[1].candidates.ready }, { draft: 1, ready: 1 });
     assert.deepEqual(workContext.data.workspaces[0].stages[0].candidates, stages.data.stages[0].candidates);
-    assert.match(renderStagesPanel(stages), /Candidates · 1 draft · 1 ready/);
+    assert.match(renderStagesPanel(stages), /Candidates …1 ✓1/);
     assert.match(renderStagesPanel(stages), /Pending: draft · integration · also 02/);
     assert.match(renderStagesPanel(stages), /Pending: 1 draft · 1 ready/);
     assert.doesNotMatch(JSON.stringify(stages), /CC-000001\.patch|base_head|selected_paths|snapshot candidate/);

@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "workspace": "000025",
+  "stage": "03",
+  "revision": 2,
+  "created_at": "2026-11-20T10:14:50.078Z",
+  "updated_at": "2026-11-20T10:15:44.061Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Compact workspace status lines in Solid TUI and plain-text renderers",
+    "Keep stage metadata recommendation and dependency lines unwrapped in narrow sidebars",
+    "Update renderer tests and user-facing status documentation"
+  ],
+  "completed": [
+    "Shared compact status formatting now renders mode, attention, candidates, and delivery consistently",
+    "Candidate zero states are omitted and delivery plan/unavailable forms remain explicit",
+    "Stage metadata text uses no wrapping while stage titles retain wrapping",
+    "Focused renderer, candidate, and delivery tests pass",
+    "Full npm test passes (329 passed, 2 skipped)",
+    "TUI smoke suite passes (108 passed)",
+    "Repository language check and git diff --check pass"
+  ],
+  "remaining": [],
+  "decisions": [
+    "Use mode-first lines without the redundant Workflow label",
+    "Use …N and ✓N candidate markers and ! plan/unavailable delivery markers",
+    "Prevent stage metadata wrapping with wrapMode none"
+  ],
+  "blockers": [],
+  "verification": [
+    "node --test test/stages-tui.test.js test/candidates.test.js test/delivery.test.js",
+    "npm test",
+    "npm run test:tui",
+    "npm run check:language",
+    "git diff --check"
+  ]
+}

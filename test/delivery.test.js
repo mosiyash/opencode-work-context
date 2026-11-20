@@ -53,7 +53,7 @@ test("delivery context aggregates committed candidates and inspects only an expl
 
     const snapshot = readStagesSnapshot({ projectRoot: root, sessionId: "planning" });
     assert.deepEqual(snapshot.data.workspace.delivery, { committed: 2, plan_needed: true, environments: [] });
-    assert.match(renderStagesPanel(snapshot), /Delivery · 2 commits · plan needed/);
+    assert.match(renderStagesPanel(snapshot), /Delivery 2 commits · ! plan/);
     assert.doesNotMatch(JSON.stringify(snapshot), /commit_hash|changed_paths/);
   } finally { cleanup(root); }
 });
@@ -98,7 +98,7 @@ test("confirmed delivery checkpoints track each environment without executing de
     assert.deepEqual(markedFirst.checkpoint.deployed_candidates, [{ candidate: "CC-000001", commit_hash: first.commit_hash }]);
     let projection = context.deliveries().projection("999901");
     assert.equal(projection.environments[0].pending, 1);
-    assert.match(renderStagesPanel(readStagesSnapshot({ projectRoot: root, sessionId: "planning" })), /Delivery · production · 1 tracked pending/);
+    assert.match(renderStagesPanel(readStagesSnapshot({ projectRoot: root, sessionId: "planning" })), /Delivery production · 1 tracked pending/);
 
     context.markDelivery("999901", "production", second.commit_hash, "DELIVERY_CONFIRMED");
     projection = context.deliveries().projection("999901");
@@ -173,7 +173,7 @@ test("delivery projections surface corrupt or inconsistent local checkpoints as 
     record.environments.production.deployed_candidates.push({ candidate: "CC-000002", commit_hash: later.commit_hash });
     fs.writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
     assert.equal(context.deliveries().projection("999901").unavailable, true);
-    assert.match(renderStagesPanel(readStagesSnapshot({ projectRoot: root, sessionId: "planning" })), /Delivery · unavailable/);
+    assert.match(renderStagesPanel(readStagesSnapshot({ projectRoot: root, sessionId: "planning" })), /Delivery ! unavailable/);
 
     fs.writeFileSync(file, "{invalid\n");
     assert.equal(context.deliveries().projection("999901").unavailable, true);

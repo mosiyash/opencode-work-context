@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "workspace": "000024",
+  "stage": "01",
+  "revision": 1,
+  "created_at": "2026-11-19T09:16:49.494Z",
+  "updated_at": "2026-11-19T09:16:49.494Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Diagnose reported sidebar visual inconsistencies and reduce context-block height."
+  ],
+  "completed": [
+    "Located native sidebar rendering and focused TUI test coverage.",
+    "Defined muted attention treatment and compact combined summary row.",
+    "Created the Compact sidebar header implementation stage."
+  ],
+  "remaining": [
+    "Resume stage 02 in a separate session to implement and verify the refinement."
+  ],
+  "decisions": [
+    "Keep title and workflow as separate context rows; combine only attention, candidate, and delivery signals into one muted row."
+  ],
+  "blockers": [],
+  "verification": [
+    "Planning inspection reviewed plugin/stages-tui.js, tests, and the accepted sidebar ADR."
+  ]
+}

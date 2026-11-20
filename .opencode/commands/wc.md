@@ -3,7 +3,7 @@ description: Explicit work-context lifecycle commands backed by structured tools
 subtask: false
 ---
 
-<!-- opencode-work-context-protocol: {"schema":1,"major":1,"minor":0,"descriptor_hash":"sha256:5cedc90065e0b36a1fd6e6a2cae519ccb51b1b6883c5dd9d9ea75efe776f8b50"} -->
+<!-- opencode-work-context-protocol: {"schema":1,"major":1,"minor":1,"descriptor_hash":"sha256:d1320820ace2e9a56f35ab279dace8ae2c59cc2c73f03b73f30068adbfd6e734"} -->
 
 Interpret `/wc $ARGUMENTS` as an explicit work-context operation. Use the matching
 `work_context_*` custom tool registered by the installed package plugin with structured arguments. Never edit work-context
@@ -46,6 +46,7 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `workspace finish <workspace>` -> `work_context_workspace_finish`
 - `workspace reopen <workspace> "reason"` -> `work_context_reopen_workspace`
 - `resume <workspace> <stage>` -> `work_context_start_session`
+- `commited <short-or-full-SHA>` -> `work_context_acknowledge_commit`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE` -> `work_context_force_close_session`
 - `profiles show` -> `work_context_show_capability_profiles`
 - `profiles setup` -> ask the user questions, then `work_context_configure_capability_profiles`
@@ -92,6 +93,7 @@ Supported syntax:
 - `workspace finish <workspace>`
 - `workspace reopen <workspace> "reason"`
 - `resume <workspace> <stage>`
+- `commited <short-or-full-SHA>`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE`
 - `profiles show`
 - `profiles setup`
@@ -136,6 +138,7 @@ Supported syntax:
 - read stage execution state first and pass its revision as `expectedRevision`; absent legacy state has revision `0`, and a stale mutation returns `EXECUTION_REVISION_CONFLICT` without changing newer state
 - execution mutations require the active stage session, trim and deduplicate items, reject overlap between `completed` and `remaining`, and enforce bounded item counts, lengths, and serialized size
 - update execution state after meaningful scope changes, decisions, substantial work, blockers, or verification changes and before handoff; do not update it for every trivial edit or tool call
+- after completing a meaningful remaining checklist item, read the latest revision and atomically remove that exact item from `remaining` while adding it to `completed` in one execution update; retain ordering and briefly report the transition in normal output
 - `resume` returns `resume.presentation` and `resume.context`; before doing any work, report a concise human-oriented summary in the user's language with the stage title, a plain-language Goal, previous progress when useful, and the immediate next action
 - when the saved prompt contains several clear deliverables, add `In this stage we will` with 2-5 short outcome-oriented bullets derived only from the prompt, previous result, and workspace knowledge; do not invent scope, and omit this block for a small stage
 - do not expose raw workspace/stage/session identifiers, ordinals, `ok` flags, or absent error codes in the user-facing resume summary
@@ -152,6 +155,7 @@ Supported syntax:
 - `stage add` creates a stage; when the current OpenCode session is not associated with a workspace, it also enters the new stage in that session
 - when `stage add` is invoked from an associated session, it only creates a planned stage and leaves the current stage unchanged; enter it later with an explicit `resume <workspace> <stage>` in a separate OpenCode session
 - `resume` returns `resume.next_action` and `resume.instruction`; begin or continue implementation when the stage prompt is non-empty unless it explicitly requires confirmation or contains an unresolved decision that genuinely blocks progress
+- `commited` is intentionally spelled with one `t`. It is a deterministic light control-plane acknowledgement for a user-created current-HEAD commit in the active stage session. Call the structured tool directly and return its compact result without a second analysis response. It validates the supplied short or full SHA, attached branch, fast-forward checkpoint, and absence of Git operations; it never infers ownership or changes candidates.
 - when `resume.next_action` is `ask_questions`, do not inspect or modify application code and ask the user focused questions needed to make the prompt actionable
 - before `stage finish`, review durable findings: add new knowledge, update changed knowledge, supersede obsolete knowledge, or explicitly use `knowledgeReview=none` when the stage produced no durable findings; use `knowledgeReview=added` after ledger changes
 - invoke `stage finish` only when the user explicitly requests that lifecycle command; do not infer the request from completed work, tests, or a final report

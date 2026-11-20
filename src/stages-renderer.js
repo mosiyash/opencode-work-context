@@ -17,15 +17,28 @@ const candidateSummary = (stage) => {
 };
 const deliverySummary = (delivery) => {
   if (!delivery) return null;
-  if (delivery.unavailable) return "Delivery · unavailable";
-  if (delivery.plan_needed) return `Delivery · ${delivery.committed} commits · plan needed`;
+  if (delivery.unavailable) return "Delivery ! unavailable";
+  if (delivery.plan_needed) return `Delivery ${delivery.committed} commits · ! plan`;
   if (delivery.environments.length === 1) {
     const [environment] = delivery.environments;
-    return `Delivery · ${environment.environment} · ${environment.pending} tracked pending`;
+    return `Delivery ${environment.environment} · ${environment.pending} tracked pending`;
   }
   const pending = delivery.environments.reduce((total, environment) => total + environment.pending, 0);
-  return `Delivery · ${delivery.environments.length} environments · ${pending} tracked pending`;
+  return `Delivery ${delivery.environments.length} environments · ${pending} tracked pending`;
 };
+const workspaceCandidateSummary = (candidates) => {
+  if (!candidates || !(candidates.pending || candidates.ready)) return null;
+  const states = [
+    candidates.pending ? `…${candidates.pending}` : null,
+    candidates.ready ? `✓${candidates.ready}` : null,
+  ].filter(Boolean);
+  return `Candidates ${states.join(" ")}`;
+};
+export const workspaceStatusLines = (workspace, attention = "") => [
+  `${workspace.mode || "standard"}${attention ? ` · Attention ${attention}` : ""}`,
+  workspaceCandidateSummary(workspace.candidates),
+  deliverySummary(workspace.delivery),
+].filter(Boolean);
 const capitalize = (value) => value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 export const formatStageIds = (ids = []) => {
   const ranges = [];
@@ -97,12 +110,8 @@ export function renderStagesPanel(result) {
 
   const lines = [
     snapshot.workspace.title,
-    `Workflow · ${snapshot.workspace.mode || "standard"}`,
+    ...workspaceStatusLines(snapshot.workspace),
   ];
-  const candidates = snapshot.workspace.candidates;
-  if (candidates && (candidates.pending || candidates.ready)) lines.push(`Candidates · ${candidates.pending} draft · ${candidates.ready} ready`);
-  const delivery = deliverySummary(snapshot.workspace.delivery);
-  if (delivery) lines.push(delivery);
   lines.push("", `Stages · ${snapshot.workspace.status}`);
   for (const stage of snapshot.stages) {
     const pending = candidateSummary(stage);

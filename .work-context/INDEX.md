@@ -7,7 +7,7 @@
 | 000013 | Stages tree | completed | 2026-11-13T04:27:19.398Z |
 | 000003 | Fix error: `Session event timestamps are not ordered` | completed | 2026-08-31T08:05:29.609Z |
 | 000008 | Functionality optimization | in_progress | 2026-09-03T07:23:25.522Z |
-| 000023 | Delivery Explain and Runtime Doctor Contracts | in_progress | 2026-11-17T18:52:39.830Z |
+| 000023 | Delivery Explain and Runtime Doctor Contracts | completed | 2026-11-19T09:06:56.779Z |
 | 000019 | Gitlab fixes | completed | 2026-11-15T10:55:12.941Z |
 | 000001 | Research persistent TUI stages panel | completed | 2026-08-30T04:39:36.617Z |
 | 000012 | Notify when background sessions need attention | completed | 2026-11-06T04:17:32.658Z |
@@ -22,6 +22,8 @@
 | 000021 | Extends stage indicator | completed | 2026-11-16T17:28:45.596Z |
 | 000004 | Stages fail to load in other projects | completed | 2026-08-31T10:23:15.456Z |
 | 000020 | Startup commit candidate workflow | in_progress | 2026-11-16T04:31:13.771Z |
+| 000025 | RnD stage todos functional | in_progress | 2026-11-20T05:15:25.575Z |
 | 000022 | Git parallel stages commit strategy | in_progress | 2026-11-16T17:27:14.999Z |
 | 000011 | Fixes | completed | 2026-11-13T04:27:19.414Z |
 | 000010 | Fixes for creating a new stage | completed | 2026-11-13T04:27:19.450Z |
+| 000024 | TUI sidebar optimize | completed | 2026-11-20T05:14:44.011Z |

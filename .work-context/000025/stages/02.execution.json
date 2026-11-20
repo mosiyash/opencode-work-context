@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "workspace": "000025",
+  "stage": "02",
+  "revision": 2,
+  "created_at": "2026-11-20T10:08:13.554Z",
+  "updated_at": "2026-11-20T10:08:42.502Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Expose the current stage's canonical execution state in the read-only sidebar snapshot",
+    "Add compact and modal checklist views without a parallel Todo store",
+    "Document atomic checklist progression in the agent protocol"
+  ],
+  "completed": [
+    "Extended the read-only current-stage snapshot with execution state",
+    "Added the Ctrl+X D compact Todo summary and Ctrl+X 2 read-only checklist dialog",
+    "Added focused snapshot, rendering, dialog, and shortcut tests",
+    "Regenerated the package-managed wc command projection",
+    "Ran the full test suite and inspected the final diff"
+  ],
+  "remaining": [],
+  "decisions": [
+    "Use the existing stages snapshot and DialogSelect boundary for checklist data and rendering",
+    "Derive Todo counts and ordering directly from completed, remaining, and blockers"
+  ],
+  "blockers": [],
+  "verification": []
+}

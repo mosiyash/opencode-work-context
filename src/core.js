@@ -13,6 +13,7 @@ import { DeliveryStore } from "./delivery.js";
 import { doctorDelivery as runDeliveryDoctor } from "./delivery-doctor.js";
 import { applyExecutionPatch, assertExecutionSize, executionState, normalizeExecutionState } from "./stage-execution.js";
 import { CAPABILITY_CLASSIFICATIONS, CAPABILITY_DEPTHS, CAPABILITY_MAPPINGS_FILE, CAPABILITY_PROFILES, capabilityProfileMode, capabilityRecommendations, readCapabilityMappings, validateCapabilityMappings } from "./capability-profiles.js";
+import { acknowledgeGitCommit, initializeGitCheckpoint } from "./git-acknowledgement.js";
 
 const actor = (options) => options.actor || "OpenCode";
 const workspaceMode = (data) => data.mode || "standard";
@@ -243,9 +244,10 @@ export class WorkContext {
       this.storage.writeMarkdown(this.storage.stageFile(workspace, "01"), { schema: 1, workspace, stage: "01", title: "Planning", status: "in_progress", goal: planningGoal, prompt: planningPrompt, depends_on: [], owner: actor(this.options), created_at: now, updated_at: now, tracker_links: [] }, body("Planning", planningGoal, planningPrompt));
       const sessionId = options.sessionId || randomUUID();
       const workflowPolicy = mode === "startup" && options.opencodeSessionId ? startupWorkflowPolicy() : null;
-      if (this.storage.readEvents().some((item) => item.session_id === sessionId)) fail(ERROR_CODES.CONFLICT, "Session ID already exists");
-      this.writeEvents([event("session.started", workspace, "01", 1, sessionId, actor(this.options), { summary: `planning ${title.trim()}`, opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
-      generateProjections(this.storage);
+       if (this.storage.readEvents().some((item) => item.session_id === sessionId)) fail(ERROR_CODES.CONFLICT, "Session ID already exists");
+       this.writeEvents([event("session.started", workspace, "01", 1, sessionId, actor(this.options), { summary: `planning ${title.trim()}`, opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
+       initializeGitCheckpoint(this.storage, { workspace, stage: "01", sessionId });
+       generateProjections(this.storage);
       return this.result({
         workspace,
         mode,
@@ -388,6 +390,7 @@ export class WorkContext {
         this.storage.writeMarkdown(this.storage.stageFile(workspace, stage), stageRecord.data, stageRecord.body);
       }
        this.writeEvents([event("session.started", workspace, stage, ordinal, sessionId, actor(this.options), { summary: options.summary || "continued work", opencode_session_id: options.opencodeSessionId || null, branch: options.branch || null })]);
+       initializeGitCheckpoint(this.storage, { workspace, stage, sessionId });
       generateProjections(this.storage);
       const previousSession = previous.at(-1) || null;
       const previousSessionSummary = previousSession?.summary && previousSession.summary !== "continued work"
@@ -450,6 +453,16 @@ export class WorkContext {
         },
       }, [workspace, stage]);
     });
+  }
+
+  acknowledgeCommit(workspace, stage, sessionId, sha) {
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
+    this.storage.assertSafeRoots();
+    return withLock(this.storage.lockPath("git-acknowledgement"), () => {
+      assertActive(this.storage.readEvents(), workspace, stage, sessionId);
+      return this.result(acknowledgeGitCommit(this.storage, { workspace, stage, sessionId, sha }), ["local:git-checkpoint"]);
+    }, { session: sessionId, owner: actor(this.options) });
   }
 
   addStage(workspace, title, options = {}) {

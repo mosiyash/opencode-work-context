@@ -6,7 +6,7 @@ import test from "node:test";
 import { testRender } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { formatStageIds, WorkContext, readStagesSnapshot, readWorkContextSnapshot, renderDependencyTree, renderStagesPanel } from "../src/index.js";
-import tuiModule, { createStagesTuiController, dependencyTreeOptions, openDependencyTreeDialog, renderStagesElement, resolveProjectRoot, sessionIdForSlot } from "../plugin/stages-tui.js";
+import tuiModule, { checklistOptions, checklistSummaryText, createStagesTuiController, dependencyTreeOptions, openChecklistDialog, openDependencyTreeDialog, renderStagesElement, resolveProjectRoot, sessionIdForSlot } from "../plugin/stages-tui.js";
 import { withProjectRoot } from "../plugin/project-root.js";
 import realTuiLoader from "../.opencode/tui-plugins/work-context-stages.js";
 import { appendPromptCommand, buildWorkContextActionCommand, createWorkContextActionFlow, createWorkContextModalController, filterWorkspaces, insertPromptCommand, prepareWorkContextCommand, registerWorkContextModal, renderWorkContextModal, WORK_CONTEXT_ACTIONS } from "../plugin/work-context-modal.js";
@@ -124,6 +124,21 @@ test("snapshot resolves a session stored with its OpenCode session ID", () => {
   } finally { removeRoot(root); }
 });
 
+test("stage snapshot includes only the current stage's canonical execution state", () => {
+  const root = makeRoot();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Checklist workspace", { workspace: "999967", sessionId: "oc-current" });
+    context.replaceStageExecution("999967", "01", "oc-current", 0, {
+      scope: ["Show execution state"], completed: ["Read snapshot"], remaining: ["Render checklist", "Test output"], decisions: [], blockers: [], verification: ["Run tests"],
+    });
+    context.addStage("999967", "Later stage");
+    const result = readStagesSnapshot({ projectRoot: root, sessionId: "oc-current" });
+    assert.deepEqual(result.data.stages[0].execution.remaining, ["Render checklist", "Test output"]);
+    assert.equal(result.data.stages[1].execution, undefined);
+  } finally { removeRoot(root); }
+});
+
 test("snapshots hide archived stages and their dependencies without renumbering", () => {
   const root = makeRoot();
   try {
@@ -169,7 +184,7 @@ test("renderer includes compact status rows and a non-color current marker", () 
   } });
   assert.match(output, /\[ \] 01\. Plan/);
   assert.doesNotMatch(output, /Define scope/);
-  assert.match(output, /^Demo\nWorkflow · startup\n\nStages · in_progress/);
+  assert.match(output, /^Demo\nstartup\n\nStages · in_progress/);
   assert.match(output, /Stages · in_progress/);
 });
 
@@ -183,7 +198,7 @@ test("renderer shows compact active candidate counts only when present", () => {
     stages: [],
   } });
 
-  assert.match(startup, /Workflow · startup\nCandidates · 1 draft · 2 ready/);
+  assert.match(startup, /startup\nCandidates …1 ✓2/);
   assert.doesNotMatch(standard, /Candidates/);
 });
 
@@ -336,7 +351,7 @@ test("renderer keeps workspace context separate and lets long titles wrap", () =
     workspace: { id: "000001", title: "A workspace title that is deliberately much too long" },
     stages: [{ id: "01", title: "A stage title that is deliberately much too long", status: "planned", description: "A description that is deliberately much too long for the compact sidebar panel", current: false }],
   } });
-  assert.match(output, /^A workspace title that is deliberately much too long\nWorkflow · standard\n\nStages/);
+  assert.match(output, /^A workspace title that is deliberately much too long\nstandard\n\nStages/);
   assert.match(output, /\[ \] 01\. A stage title that is deliberately much too long/);
   assert.doesNotMatch(output, /A description that is deliberately/);
 });
@@ -401,9 +416,9 @@ test("sidebar keeps workspace title clean and renders a grouped attention summar
   });
   const output = renderedText(element);
   const [workspaceBlock] = element.props.children();
-  assert.match(output, /^B2B platform\s+Workflow · startup\s+Attention ·\s+×1 !2 \?1 ✓3\s+Stages/);
+  assert.match(output, /^B2B platform\s+startup · Attention ×1 !2 \?1 ✓3\s+Stages/);
   assert.doesNotMatch(output, /^\[/);
-  assert.equal(workspaceBlock.props.children[2].props.fg, "muted");
+  assert.equal(workspaceBlock.props.children[1].props.fg, "muted");
 });
 
 test("sidebar header is the unique union of attention represented by visible stage rows", async () => {
@@ -439,7 +454,7 @@ test("sidebar header is the unique union of attention represented by visible sta
       workspace: { id: "000001", title: "Demo", status: "in_progress" },
       stages: [{ id: "01", title: "Visible", status: "in_progress", depends_on: [] }],
     } }, {}, runtime, controller));
-    assert.match(output, /Attention ·\s+✓2[\s\S]*✓2 \[•\] 01\. Visible/);
+    assert.match(output, /Attention ✓2[\s\S]*✓2 \[•\] 01\. Visible/);
     assert.doesNotMatch(output, /✓3|Stale/);
   } finally { controller.dispose(); removeRoot(root); }
 });
@@ -450,7 +465,7 @@ test("native sidebar renders the workflow mode below the workspace title", () =>
     workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "startup" },
     stages: [],
   } }, {}, runtime));
-  assert.match(output, /Demo\s+Workflow · startup\s+Stages/);
+  assert.match(output, /Demo\s+startup\s+Stages/);
 });
 
 test("native sidebar renders one compact capability recommendation in details", () => {
@@ -489,10 +504,12 @@ test("native sidebar combines available workspace signals into one muted row", (
   const [workspaceBlock, stagesBlock, stageRow] = element.props.children();
   const summary = workspaceBlock.props.children[2];
 
-  assert.equal(workspaceBlock.props.children.length, 3);
+  assert.equal(workspaceBlock.props.children.length, 4);
   assert.equal(summary.props.fg, "muted");
   assert.equal(summary.props.wrapMode, "word");
-  assert.equal(summary.props.children, "Attention · ?1 · Candidates · 2 draft · 1 ready · Delivery · production · 2 tracked pending");
+  assert.equal(workspaceBlock.props.children[1].props.children, "startup · Attention ?1");
+  assert.equal(summary.props.children, "Candidates …2 ✓1");
+  assert.equal(workspaceBlock.props.children[3].props.children, "Delivery production · 2 tracked pending");
   assert.equal(stagesBlock.props.children[0].props.children.props.children, "Stages");
   assert.equal(stageRow.props.children[2].props.children[0].props.children, "01. Visible");
 });
@@ -507,8 +524,8 @@ test("native sidebar renders metadata-only delivery status", () => {
     workspace: { id: "000001", title: "Demo", status: "in_progress", mode: "startup", delivery: { committed: 4, plan_needed: false, environments: [{ environment: "production", pending: 2 }] } },
     stages: [],
   } }, {}, runtime));
-  assert.match(planNeeded, /Workflow · startup\s+Delivery · 4 commits · plan needed\s+Stages/);
-  assert.match(pending, /Delivery · production · 2 tracked pending/);
+  assert.match(planNeeded, /startup\s+Delivery 4 commits · ! plan\s+Stages/);
+  assert.match(pending, /Delivery production · 2 tracked pending/);
   assert.doesNotMatch(`${planNeeded}${pending}`, /deployed_head|commit_hash|changed_paths/);
 });
 
@@ -570,7 +587,46 @@ test("sidebar details list tasks, dependencies, and related pending candidates",
   assert.doesNotMatch(compact, /Pending:/);
 });
 
-test("sidebar stage metadata stays aligned with its wrapped title", () => {
+test("sidebar details render a concise todo summary only for the current checklist", () => {
+  const runtime = { jsx: (type, props) => ({ type, props }) };
+  const output = renderedText(renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress" },
+    currentStage: "02",
+    stages: [
+      { id: "01", title: "Planning", status: "completed", current: false, execution: { completed: ["Hidden"], remaining: ["Hidden"] } },
+      { id: "02", title: "Build", status: "in_progress", current: true, execution: { completed: ["Read", "Design"], remaining: ["Implement", "Test", "Document"], blockers: ["Decision"] } },
+    ],
+  } }, {}, runtime));
+
+  assert.match(output, /Todo · ✓ 2\/5 · • 3\/5 · … 2 · ! 1/);
+  assert.doesNotMatch(output, /Hidden/);
+  assert.equal(checklistSummaryText({ completed: [], remaining: [], blockers: [] }), null);
+});
+
+test("checklist dialog renders current, queued, completed, blockers, and verification safely", () => {
+  const execution = {
+    scope: ["Keep this concise"], completed: ["Read snapshot"], remaining: ["Render checklist", "Add tests"], decisions: ["Use canonical state"], blockers: ["Await API"], verification: ["Run tests"],
+  };
+  const options = checklistOptions(execution, 30);
+  assert.deepEqual(options.map((option) => option.category), ["Checklist", "Current", "Queued", "Completed", "Blockers", "Verification", "Scope", "Decisions"]);
+  assert.match(options[1].title, /^\[•\] Render checklist$/);
+  assert.match(options[2].title, /^\[ \] Add tests$/);
+
+  let dialog;
+  const api = {
+    renderer: { width: 40 },
+    ui: {
+      DialogSelect: (props) => ({ type: "select", props }),
+      dialog: { setSize: () => {}, replace: (render) => { dialog = render(); }, clear: () => {} },
+      toast: () => {},
+    },
+  };
+  assert.equal(openChecklistDialog(api, { ok: true, data: { workspace: { title: "Demo" }, currentStage: "01", stages: [{ id: "01", title: "Build", current: true, execution }] } }), true);
+  assert.equal(dialog.props.title, "Checklist · Build");
+  assert.equal(openChecklistDialog(api, { ok: true, data: { workspace: { title: "Demo" }, currentStage: "01", stages: [{ id: "01", title: "Build", current: true }] } }), false);
+});
+
+test("sidebar stage metadata stays on one line below its wrapped title", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const element = renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
@@ -585,7 +641,7 @@ test("sidebar stage metadata stays aligned with its wrapped title", () => {
   assert.equal(stageRow.props.children.length, 3);
   assert.equal(content.props.flexDirection, "column");
   assert.equal(content.props.children[0].props.wrapMode, "word");
-  assert.equal(content.props.children[1].props.wrapMode, "word");
+  assert.equal(content.props.children[1].props.wrapMode, "none");
   assert.equal(content.props.children[1].props.children, "Tasks: GL#41 · Deps: 01");
 });
 
@@ -694,6 +750,26 @@ test("TUI registers a hotkey to show the dependency tree", async () => {
   }
 });
 
+test("TUI registers a keyboard-layout-safe hotkey for the checklist", async () => {
+  const root = makeRoot();
+  const layers = [];
+  let dispose;
+  const api = {
+    state: { path: { worktree: root } },
+    slots: { register: () => () => {} },
+    keymap: { registerLayer: (layer) => { layers.push(layer); return () => {}; } },
+    lifecycle: { onDispose: (callback) => { dispose = callback; return () => {}; } },
+  };
+  try {
+    await tuiModule.tui(api, { pollMs: 0 });
+    const checklistLayer = layers.find((layer) => layer.commands[0].name === "work_context.show_checklist");
+    assert.deepEqual(checklistLayer.bindings, [{ key: "<leader>2", cmd: "work_context.show_checklist", desc: "Show current stage checklist" }]);
+  } finally {
+    dispose?.();
+    removeRoot(root);
+  }
+});
+
 test("missing workspace and storage errors become safe panel states", () => {
   const root = makeRoot();
   try {
@@ -762,7 +838,7 @@ test("stages panel does not claim the whole sidebar height", () => {
   const [workspaceBlock, stagesBlock] = element.props.children();
   assert.equal(workspaceBlock.props.marginBottom, 1);
   assert.equal(workspaceBlock.props.children[0].props.children.props.children, "Demo workspace");
-  assert.equal(workspaceBlock.props.children[1].props.children, "Workflow · standard");
+  assert.equal(workspaceBlock.props.children[1].props.children, "standard");
   assert.equal(stagesBlock.props.children[0].props.children.props.children, "Stages");
 });
 
@@ -1774,7 +1850,7 @@ test("sidebar and modal render attention without theme color support", async () 
     id: "000001", title: "Demo", status: "in_progress", stages: [{ id: "02", title: "Build", status: "in_progress" }],
     sessions: [{ stage: "02", session_id: "internal", opencode_session_id: "oc-unread", state: "active" }],
   }], stages: [{ id: "02", title: "Build", status: "in_progress" }], currentStage: "02" } };
-  assert.match(renderedText(renderStagesElement(snapshot, {}, runtime, attention)), /Attention ·\s+!1[\s\S]*! \[•\] 02\. Build/);
+  assert.match(renderedText(renderStagesElement(snapshot, {}, runtime, attention)), /Attention !1[\s\S]*! \[•\] 02\. Build/);
 
   const controller = createWorkContextModalController({ read: async () => snapshot, attention });
   try {

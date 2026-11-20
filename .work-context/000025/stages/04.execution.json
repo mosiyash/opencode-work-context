@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "workspace": "000025",
+  "stage": "04",
+  "revision": 4,
+  "created_at": "2026-11-20T06:47:49.728Z",
+  "updated_at": "2026-11-20T07:00:42.053Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Design a safe acknowledgement protocol for user-created commits during an active stage."
+  ],
+  "completed": [
+    "Reviewed startup candidate policy, standard-mode boundary, stage execution ledger, resume/session lifecycle, and candidate Git conflict handling.",
+    "Confirmed the preferred user acknowledgement syntax: `/commited <short-or-full-SHA>`, using the hash printed by `git commit`.",
+    "Agreed and recorded the architecture contract for `/commited <short-or-full-SHA>` acknowledgements.",
+    "Clarified that `/commited` is model-agnostic and must use the light capability tier."
+  ],
+  "remaining": [],
+  "decisions": [
+    "Do not infer stage ownership from Git history, file paths, or disappearing worktree changes.",
+    "Accept a short SHA from `git commit` output; resolve it to a unique full commit hash and require it to be the current `HEAD` before advancing the session checkpoint.",
+    "`/commited` is intentionally spelled with one `t`; it accepts the abbreviated SHA printed by `git commit` and requires no user follow-up Git command.",
+    "Resolve `/commited` through the user's local light capability mapping, not a fixed Luna model; suppress standard/deep reasoning and primary-agent re-analysis."
+  ],
+  "blockers": [],
+  "verification": [
+    "Validated the proposed contract against the current startup candidate workflow, session lifecycle, and temporary-index publication design."
+  ]
+}

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readStagesSnapshot } from "../src/stages-snapshot.js";
 import { contextFor, titleFor } from "../src/opencode-adapter.js";
-import { formatStageIds, renderDependencyTree, renderStagesPanel } from "../src/stages-renderer.js";
+import { formatStageIds, renderDependencyTree, renderStagesPanel, workspaceStatusLines } from "../src/stages-renderer.js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createSignal } from "solid-js";
 import { attentionSummaryText } from "./attention.js";
@@ -21,6 +21,8 @@ const DEPENDENCIES_COMMAND = "work_context.toggle_dependencies";
 const DEPENDENCIES_SHORTCUT = "<leader>d";
 const TREE_COMMAND = "work_context.show_dependency_tree";
 const TREE_SHORTCUT = "<leader>t";
+const CHECKLIST_COMMAND = "work_context.show_checklist";
+const CHECKLIST_SHORTCUT = "<leader>2";
 const statusMarker = (status) => ({
   planned: "[ ]",
   in_progress: "[•]",
@@ -34,26 +36,6 @@ const trackerLinkText = (link) => {
   if (link.provider === "github") return `GH#${identifier}`;
   return `JIRA ${identifier}`;
 };
-const candidateSummaryText = (workspace) => workspace.candidates && (workspace.candidates.pending || workspace.candidates.ready)
-  ? `Candidates · ${workspace.candidates.pending} draft · ${workspace.candidates.ready} ready`
-  : null;
-const deliverySummaryText = (workspace) => {
-  const delivery = workspace.delivery;
-  if (!delivery) return null;
-  if (delivery.unavailable) return "Delivery · unavailable";
-  if (delivery.plan_needed) return `Delivery · ${delivery.committed} commits · plan needed`;
-  if (delivery.environments.length === 1) {
-    const [environment] = delivery.environments;
-    return `Delivery · ${environment.environment} · ${environment.pending} tracked pending`;
-  }
-  const pending = delivery.environments.reduce((total, environment) => total + environment.pending, 0);
-  return `Delivery · ${delivery.environments.length} environments · ${pending} tracked pending`;
-};
-const workspaceSummaryText = (workspace, attention) => [
-  attention && `Attention · ${attention}`,
-  candidateSummaryText(workspace),
-  deliverySummaryText(workspace),
-].filter(Boolean).join(" · ");
 const stageCandidateText = (stage) => {
   const projection = stage.candidates;
   if (!projection || !(projection.draft || projection.ready)) return null;
@@ -61,6 +43,18 @@ const stageCandidateText = (stage) => {
   const [candidate] = projection.items;
   const others = candidate.related_stages.filter((related) => related !== stage.id);
   return `Pending: ${candidate.status} · ${candidate.strategy}${others.length ? ` · also ${others.join(", ")}` : ""}`;
+};
+export const checklistSummaryText = (execution) => {
+  if (!execution) return null;
+  const done = execution.completed?.length || 0;
+  const remaining = execution.remaining?.length || 0;
+  const total = done + remaining;
+  const parts = [];
+  if (total) parts.push(`✓ ${done}/${total}`);
+  if (remaining) parts.push(`• ${done + 1}/${total}`);
+  if (remaining > 1) parts.push(`… ${remaining - 1}`);
+  if (execution.blockers?.length) parts.push(`! ${execution.blockers.length}`);
+  return parts.length ? `Todo · ${parts.join(" · ")}` : null;
 };
 const capitalize = (value) => value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 const visibleAttentionSnapshot = (attention, workspace, stages) => {
@@ -83,16 +77,15 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
   ];
   const attentionSnapshot = visibleAttentionSnapshot(attention, result.data.workspace.id, result.data.stages);
   const workspaceAttention = attentionSummaryText(attentionSnapshot.workspace, { alwaysCount: true });
-  const workspaceSummary = workspaceSummaryText(result.data.workspace, workspaceAttention);
+  const workspaceStatus = workspaceStatusLines(result.data.workspace, workspaceAttention);
   return [
     runtime.jsx("box", {
       marginBottom: 1,
       flexDirection: "column",
         children: [
           runtime.jsx("text", { wrapMode: "word", children: runtime.jsx("b", { children: result.data.workspace.title }) }),
-          runtime.jsx("text", { fg: theme?.current?.textMuted, children: `Workflow · ${result.data.workspace.mode || "standard"}` }),
-          workspaceSummary && runtime.jsx("text", { wrapMode: "word", fg: theme?.current?.textMuted, children: workspaceSummary }),
-        ].filter(Boolean),
+          ...workspaceStatus.map((line) => runtime.jsx("text", { wrapMode: "word", fg: theme?.current?.textMuted, children: line })),
+        ],
     }),
     runtime.jsx("box", {
       flexDirection: "row",
@@ -111,7 +104,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
         stage.tracker_links?.length && `Tasks: ${stage.tracker_links.map(trackerLinkText).join(", ")}`,
         stage.depends_on?.length && `Deps: ${formatStageIds(stage.depends_on)}`,
       ].filter(Boolean).join(" · ");
-      const metadata = showDependencies ? [recommendation, stageMetadata, stageCandidateText(stage)].filter(Boolean).join("\n") : "";
+      const metadata = showDependencies ? [recommendation, stageMetadata, stageCandidateText(stage), stage.current && checklistSummaryText(stage.execution)].filter(Boolean).join("\n") : "";
       const attentionSignal = attentionSummaryText(unread);
       const current = stage.current || stage.id === result.data.currentStage;
       const onMouseDown = (event) => {
@@ -135,7 +128,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
             flexDirection: "column",
             children: [
               runtime.jsx("text", { wrapMode: "word", fg: current ? theme?.current?.warning : theme?.current?.text, children: `${stage.id}. ${stage.title}` }),
-              metadata && runtime.jsx("text", { wrapMode: "word", fg: theme?.current?.textMuted, children: metadata }),
+              metadata && runtime.jsx("text", { wrapMode: "none", fg: theme?.current?.textMuted, children: metadata }),
             ].filter(Boolean),
           }),
         ],
@@ -380,6 +373,39 @@ export const openDependencyTreeDialog = (api, result) => {
   return true;
 };
 
+export const checklistOptions = (execution, width = 80) => {
+  if (!execution) return [{ title: "No checklist is available for the current stage.", value: "empty", disabled: true }];
+  const compact = width < 50;
+  const truncate = (text) => compact && text.length > Math.max(12, width - 12) ? `${text.slice(0, Math.max(9, width - 15))}...` : text;
+  const options = [];
+  if (execution.remaining?.[0]) options.push({ title: `[•] ${truncate(execution.remaining[0])}`, value: "current", category: "Current" });
+  for (const item of execution.remaining?.slice(1) || []) options.push({ title: `[ ] ${truncate(item)}`, value: `queued-${item}`, category: "Queued" });
+  for (const item of execution.completed || []) options.push({ title: `[✓] ${truncate(item)}`, value: `completed-${item}`, category: "Completed" });
+  for (const item of execution.blockers || []) options.push({ title: `[!] ${truncate(item)}`, value: `blocker-${item}`, category: "Blockers" });
+  for (const item of execution.verification || []) options.push({ title: `[ ] ${truncate(item)}`, value: `verification-${item}`, category: "Verification" });
+  if (execution.scope?.length) options.push(...execution.scope.map((item) => ({ title: truncate(item), value: `scope-${item}`, category: "Scope" })));
+  if (execution.decisions?.length) options.push(...execution.decisions.map((item) => ({ title: truncate(item), value: `decision-${item}`, category: "Decisions" })));
+  return options.length ? [{ title: "Close", value: "close", category: "Checklist" }, ...options] : [{ title: "Checklist is empty.", value: "empty", disabled: true }];
+};
+
+export const openChecklistDialog = (api, result) => {
+  if (typeof api?.ui?.DialogSelect !== "function" || typeof api?.ui?.dialog?.replace !== "function") return false;
+  const current = result?.data?.stages?.find((stage) => stage.current || stage.id === result.data.currentStage);
+  if (!result?.ok || !result.data?.workspace || !current?.execution) {
+    api.ui?.toast?.({ message: "No checklist is available for the current stage", variant: "warning" });
+    return false;
+  }
+  const width = api.renderer?.width || 80;
+  api.ui.dialog.setSize?.(width < 50 ? "small" : "large");
+  api.ui.dialog.replace(() => api.ui.DialogSelect({
+    title: `Checklist · ${current.title}`,
+    placeholder: "Checklist",
+    options: checklistOptions(current.execution, width),
+    onSelect: (option) => { if (option.value === "close") api.ui.dialog.clear?.(); },
+  }));
+  return true;
+};
+
 const registerDependencyTree = (api, controller, sessionId) => {
   if (typeof api?.keymap?.registerLayer !== "function") return () => {};
   const command = {
@@ -393,6 +419,22 @@ const registerDependencyTree = (api, controller, sessionId) => {
   return api.keymap.registerLayer({
     commands: [command],
     bindings: [{ key: TREE_SHORTCUT, cmd: TREE_COMMAND, desc: command.title }],
+  });
+};
+
+const registerChecklist = (api, controller, sessionId) => {
+  if (typeof api?.keymap?.registerLayer !== "function") return () => {};
+  const command = {
+    name: CHECKLIST_COMMAND,
+    title: "Show current stage checklist",
+    desc: "Open the current stage's read-only checklist",
+    category: "Work Context",
+    namespace: "palette",
+    run: () => openChecklistDialog(api, controller.resultFor(sessionId())),
+  };
+  return api.keymap.registerLayer({
+    commands: [command],
+    bindings: [{ key: CHECKLIST_SHORTCUT, cmd: CHECKLIST_COMMAND, desc: command.title }],
   });
 };
 
@@ -424,6 +466,7 @@ export const tui = async (api, options = {}) => {
   const unregisterDependencyToggle = registerDependencyToggle(api, controller, projectRoot);
   let currentSessionId = initialSessionId;
   const unregisterDependencyTree = registerDependencyTree(api, controller, () => currentSessionId || ACTIVE_WORKSPACE_SESSION);
+  const unregisterChecklist = registerChecklist(api, controller, () => currentSessionId || ACTIVE_WORKSPACE_SESSION);
   await controller.load(initialSessionId);
   let storageWatcher;
   const refreshAttention = () => { void api.workContextAttention?.refresh?.(); };
@@ -471,6 +514,7 @@ export const tui = async (api, options = {}) => {
     disposeRegistration(unregisterSlot);
     disposeRegistration(unregisterDependencyToggle);
     disposeRegistration(unregisterDependencyTree);
+    disposeRegistration(unregisterChecklist);
   };
   api[ACTIVE_TUI_KEY] = cleanup;
   activeTuiInstances.set(api, cleanup);

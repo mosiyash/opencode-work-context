@@ -85,7 +85,7 @@ stage list:
 
 ```text
 <workspace title>
-Workflow · <workspace mode>
+<workspace mode> [· Attention <signals>]
 
 Stages · <workspace status>
 <status marker> <stage id>. <stage title>
@@ -98,9 +98,12 @@ in both native and text fallback renderers. Status is text, not color alone, so
 the panel remains usable in monochrome terminals. Long titles and descriptions
 are truncated by the TUI renderer rather than by the provider.
 
-For startup workspaces, the provider may add draft and ready candidate counts
-from local candidate metadata. The panel shows one compact line only when either
-count is nonzero. When sidebar details are enabled, a stage may also show bounded
+For startup workspaces, the provider may add compact draft and ready candidate
+counts (`Candidates …<draft-count> ✓<ready-count>`) from local candidate metadata;
+zero-valued states are omitted and the line is hidden when both are zero. Delivery
+uses an explicit `commits` label for plan-needed state and `! plan` for missing
+planning. The panel shows one compact line only when either count is nonzero.
+When sidebar details are enabled, a stage may also show bounded
 metadata for active candidates whose explicit `related_stages` includes that
 stage. A single candidate shows its status, strategy, and other related stage
 IDs; multiple candidates show status counts. This is traceability, not ownership.

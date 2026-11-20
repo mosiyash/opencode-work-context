@@ -45,12 +45,14 @@ const tuiConfig = JSON.stringify({
   plugin: ["./tui-plugins/work-context-stages.js"],
 }, null, 2) + "\n";
 const command = fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8");
+const commitAcknowledgementCommand = fs.readFileSync(path.join(packageRoot, "commands", "commited.md"), "utf8");
 const configRelative = path.join(".work-context", "config.yaml");
 const tuiConfigRelative = path.join(".opencode", "tui.json");
 const tuiPluginEntry = "./tui-plugins/work-context-stages.js";
 const generated = new Map([
   [configRelative, defaultConfig()],
   [path.join(".opencode", "commands", "wc.md"), command],
+  [path.join(".opencode", "commands", "commited.md"), commitAcknowledgementCommand],
   [path.join(".opencode", "plugins", "work-context.js"), `// Thin project integration; tools remain in the installed npm package.
 ${pluginLoader}`],
   [path.join(".opencode", "tui-plugins", "work-context-stages.js"), tuiLoader],
@@ -155,6 +157,7 @@ function activate(enabled, force) {
     [configRelative, JSON.stringify(config, null, 2) + "\n"],
     [managedTuiConfigRelative, JSON.stringify(managedTuiConfig, null, 2) + "\n"],
     [path.join(".opencode", "commands", "wc.md"), command],
+    [path.join(".opencode", "commands", "commited.md"), commitAcknowledgementCommand],
   ]);
   const conflicts = [...files].flatMap(([relative, content]) => {
     const file = path.join(projectRoot, relative);
@@ -173,18 +176,25 @@ function activate(enabled, force) {
 }
 
 function syncCommandProjection(force) {
-  const relative = ".opencode/commands/wc.md";
-  const file = path.join(projectRoot, relative);
-  if (hasSymlinkParent(file) || (exists(file) && (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink()))) {
-    fail(`refusing to overwrite non-regular file: ${relative}`);
-    return false;
+  const commands = new Map([
+    [".opencode/commands/wc.md", command],
+    [".opencode/commands/commited.md", commitAcknowledgementCommand],
+  ]);
+  for (const [relative, content] of commands) {
+    const file = path.join(projectRoot, relative);
+    if (hasSymlinkParent(file) || (exists(file) && (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink()))) {
+      fail(`refusing to overwrite non-regular file: ${relative}`);
+      return false;
+    }
+    if (exists(file) && fs.readFileSync(file, "utf8") !== content && !force) {
+      fail(`refusing to overwrite existing file: ${relative}; rerun with --force`);
+      return false;
+    }
   }
-  if (exists(file) && fs.readFileSync(file, "utf8") !== command && !force) {
-    fail(`refusing to overwrite existing file: ${relative}; rerun with --force`);
-    return false;
+  for (const [relative, content] of commands) {
+    writeAtomic(path.join(projectRoot, relative), content);
+    console.log(`Updated ${relative} from opencode-work-context ${packageManifest.version}.`);
   }
-  writeAtomic(file, command);
-  console.log(`Updated ${relative} from opencode-work-context ${packageManifest.version}.`);
   return true;
 }
 

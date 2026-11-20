@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 export const WORK_CONTEXT_PROTOCOL = Object.freeze({
   schema: 1,
   major: 1,
-  minor: 0,
+  minor: 1,
 });
 
 export const WORK_CONTEXT_PROTOCOL_DESCRIPTOR = Object.freeze({
@@ -13,7 +13,7 @@ export const WORK_CONTEXT_PROTOCOL_DESCRIPTOR = Object.freeze({
     major: WORK_CONTEXT_PROTOCOL.major,
     minor: WORK_CONTEXT_PROTOCOL.minor,
   }),
-  operations: Object.freeze(["delivery.doctor"]),
+  operations: Object.freeze(["delivery.doctor", "commit.acknowledge"]),
 });
 
 export const WORK_CONTEXT_PROTOCOL_DESCRIPTOR_BYTES = JSON.stringify(WORK_CONTEXT_PROTOCOL_DESCRIPTOR);
