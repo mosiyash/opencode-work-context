@@ -124,6 +124,7 @@ Supported syntax:
 - explicit workspace and stage positions accept canonical padded IDs or unpadded positive integers (`1..999999` and `1..99`); results and generated commands remain padded
 - zero, signs, decimals, whitespace, overlong values, and other non-digit identifier forms are invalid; a lone unpadded workspace ID is not reinterpreted under the one-identifier rule
 - `stage update-result` replaces an existing result and does not create a result for an unfinished stage
+- Planning stage 01 is a continuously available coordination surface, not a prerequisite gate; implementation, research, review, and other working stages must never depend on it
 - execution recommendations have two independent portable fields: capability (`routine`, `implementation`, `architecture`, `security`, `review`) and depth (`light`, `standard`, `deep`)
 - when stage creation does not explicitly name capability and depth, infer both from title, description, prompt, dependencies, active workspace knowledge, and current execution state; pass `classification: inferred`; explicit user values pass `classification: explicit`
 - core and read-only UI never infer classifications; do not use keyword heuristics, mutate during resume, or invent values when the stage prompt is not actionable

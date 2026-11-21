@@ -33,7 +33,7 @@ Workspace: Add CSV export to analytics report
 
 - **Workspace** is one concrete task, such as adding CSV export.
 - **Stage** is one step in that task.
-- **Planning** is normally the first stage.
+- **Planning** is normally the first stage and remains a continuously available coordination surface. Working stages must never depend on it; add dependencies only between working stages with a genuine ordering requirement.
 - **Resume** starts a new session at a selected stage.
 - **Handoff** preserves the context when moving work to another session.
 

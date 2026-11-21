@@ -81,6 +81,7 @@ test("workspace list includes stage descriptions", () => {
     assert.equal(stage.description, stage.goal);
     assert.equal(stage.description, "Clarify the work goal and constraints");
     assert.match(stage.prompt, /decompose the work into the following stages/);
+    assert.match(stage.prompt, /continuously available coordination surface/);
   } finally {
     removeRoot(root);
   }
@@ -94,10 +95,10 @@ test("unpadded identifiers normalize once and remain canonical in storage and re
     assert.equal(created.data.workspace, "000008");
 
     context.finish("8", "1", "planning", { knowledgeReview: "none" });
-    const added = context.addStage("8", "Implementation", { dependsOn: ["1"], prompt: "Implement it." });
+    const added = context.addStage("8", "Implementation", { prompt: "Implement it." });
     assert.equal(added.data.workspace, "000008");
     assert.equal(added.data.stage, "02");
-    assert.deepEqual(context.storage.readStage("000008", "02").data.depends_on, ["01"]);
+    assert.deepEqual(context.storage.readStage("000008", "02").data.depends_on, []);
 
     const resumed = context.startSession("8", "2", { sessionId: "implementation" });
     assert.equal(resumed.data.workspace, "000008");
@@ -261,38 +262,48 @@ test("resume exposes startup policy only to associated OpenCode sessions", () =>
   } finally { removeRoot(root); }
 });
 
-test("resume accepts archived dependencies and continues a handed-off stage", () => {
+test("resume accepts archived working-stage dependencies and continues a handed-off stage", () => {
   const root = makeRoot();
   try {
     const context = WorkContext.open(root, { actor: "test" });
     context.createWorkspace("Archived dependency workspace", { workspace: "999968", sessionId: "session-1" });
     context.handoff("999968", "01", "session-1");
-    context.archiveStage("999968", "01");
-    context.addStage("999968", "Implementation", { dependsOn: ["01"], prompt: "Implement the change." });
-
-    context.startSession("999968", "2", { sessionId: "session-2" });
+    context.addStage("999968", "Preparation", { prompt: "Prepare the change." });
+    context.startSession("999968", "02", { sessionId: "session-2" });
     context.handoff("999968", "02", "session-2");
-    const resumed = context.startSession("999968", "2", { sessionId: "session-3" });
+    context.archiveStage("999968", "02");
+    context.addStage("999968", "Implementation", { dependsOn: ["02"], prompt: "Implement the change." });
+
+    context.startSession("999968", "3", { sessionId: "session-3" });
+    context.handoff("999968", "03", "session-3");
+    const resumed = context.startSession("999968", "3", { sessionId: "session-4" });
 
     assert.equal(resumed.data.resume.next_action, "start_work");
-    assert.equal(resumed.data.ordinal, "02/02");
+    assert.equal(resumed.data.ordinal, "03/02");
   } finally {
     removeRoot(root);
   }
 });
 
-test("resume permits completed dependencies and blocks unfinished dependencies", () => {
+test("working stages cannot depend on Planning and resume honors working-stage dependencies", () => {
   const root = makeRoot();
   try {
     const context = WorkContext.open(root, { actor: "test" });
     context.createWorkspace("Dependency state workspace", { workspace: "999967", sessionId: "session-1" });
-    context.finish("999967", "01", "session-1", { knowledgeReview: "none" });
-    context.addStage("999967", "Permitted", { dependsOn: ["01"], prompt: "Implement the change." });
-    context.addStage("999967", "Blocked", { dependsOn: ["02"], prompt: "Wait for the dependency." });
+    context.handoff("999967", "01", "session-1");
+    assert.throws(
+      () => context.addStage("999967", "Invalid dependency", { dependsOn: ["01"], prompt: "Do not start." }),
+      (error) => error instanceof WorkContextError && error.code === ERROR_CODES.PLANNING_DEPENDENCY_FORBIDDEN,
+    );
+    context.addStage("999967", "Preparation", { prompt: "Prepare the change." });
+    context.addStage("999967", "Permitted", { dependsOn: ["02"], prompt: "Implement the change." });
+    context.addStage("999967", "Blocked", { dependsOn: ["03"], prompt: "Wait for the dependency." });
 
     assert.equal(context.startSession("999967", "02", { sessionId: "session-2" }).data.resume.next_action, "start_work");
+    context.finish("999967", "02", "session-2", { knowledgeReview: "none" });
+    assert.equal(context.startSession("999967", "03", { sessionId: "session-3" }).data.resume.next_action, "start_work");
     assert.throws(
-      () => context.startSession("999967", "03", { sessionId: "session-3" }),
+      () => context.startSession("999967", "04", { sessionId: "session-4" }),
       (error) => error instanceof WorkContextError && error.code === ERROR_CODES.INVALID_STATE,
     );
   } finally {

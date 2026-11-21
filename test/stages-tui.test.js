@@ -59,7 +59,7 @@ test("work-context snapshot includes stages and session metadata for all workspa
     const context = WorkContext.open(root, { actor: "test" });
     context.createWorkspace("First workspace", { workspace: "999970", sessionId: "oc-first" });
     context.createWorkspace("Second workspace", { workspace: "999971", sessionId: "oc-second" });
-    context.addStage("999970", "Implementation", { goal: "Build the read model", dependsOn: ["01"] });
+    context.addStage("999970", "Implementation", { goal: "Build the read model" });
     const result = readWorkContextSnapshot({ projectRoot: root, sessionId: "oc-first" });
     assert.equal(result.ok, true);
     assert.deepEqual(result.data.workspaces.map((workspace) => workspace.id), ["999970", "999971"]);
@@ -67,7 +67,7 @@ test("work-context snapshot includes stages and session metadata for all workspa
     assert.equal(result.data.workspaces[0].currentStage, "01");
     assert.equal(result.data.workspaces[0].activeSession.session_id, "oc-first");
     assert.equal(result.data.workspaces[0].stages[1].description, "Build the read model");
-    assert.deepEqual(result.data.workspaces[0].stages.map((stage) => stage.depends_on), [[], ["01"]]);
+    assert.deepEqual(result.data.workspaces[0].stages.map((stage) => stage.depends_on), [[], []]);
     assert.deepEqual(result.data.workspaces[0].stages.map((stage) => stage.tracker_links), [[], []]);
   } finally { removeRoot(root); }
 });
