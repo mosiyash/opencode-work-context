@@ -21,25 +21,42 @@ summaries is nondeterministic and cannot provide safe concurrent updates.
 
 Store optional canonical JSON at
 `.work-context/<workspace>/stages/<stage>.execution.json`. Its bounded schema has
-six normalized string-array sections: `scope`, `completed`, `remaining`,
-`decisions`, `blockers`, and `verification`. Metadata records the workspace,
-stage, revision, timestamps, and last actor. Existing stages without this file
-remain valid and are never migrated or rewritten merely by reading or resuming.
+six sections: `scope`, `completed`, `remaining`, `decisions`, `blockers`, and
+`verification`. Metadata records the workspace, stage, revision, timestamps, and
+last actor. Existing stages without this file remain valid and are never
+migrated or rewritten merely by reading or resuming.
+
+Schema 1 records retain those string arrays. Schema 2 records store each section
+as stable `{ id, text }` items and present compatible string arrays to existing
+consumers alongside structured `items`, `current`, and `queued` read data.
+Legacy identifiers are derived deterministically for reads and are persisted as
+stable schema 2 identifiers only after a mutation. This avoids an eager
+migration while allowing agents to identify the Current item without relying on
+its text.
+
+Structured replacements and updates address items by ID. They can retain an ID
+while rewording text and can represent duplicate text safely. Compatibility
+string updates retain schema 1 normalization and exact-text behavior; they are
+rejected when duplicate text makes identity ambiguous. A schema 1 mutation that
+cannot fit after adding identity metadata fails with `EXECUTION_LIMIT_EXCEEDED`
+without changing the legacy record.
 
 Expose separate structured read, replace, and incremental update operations.
 Replace supplies the complete logical state. Incremental update atomically adds
-and removes exact items, which supports moving an item from `remaining` to
-`completed` without an intermediate invalid state. Mutations require ownership
-of the active stage session and the revision returned by the latest read.
+and removes exact text items for compatibility. `complete_current` atomically
+moves only the first remaining item to completed and promotes the next queued
+item without an intermediate invalid state. Mutations require ownership of the
+active stage session and the revision returned by the latest read.
 Compare-and-swap failures return a stable conflict instead of discarding newer
 state. Existing storage locks, transaction journals, snapshots, and atomic
 writes protect the canonical file.
 
-Items are trimmed and deduplicated. Completed and remaining items cannot
-overlap. Each section is limited to 50 items, the complete state to 200 items
-and 32,768 serialized bytes, and each item to 500 characters. These bounds keep
-resume context concise and prevent append-only growth. Replacement is the
-explicit compaction mechanism.
+Item text is trimmed. Compatibility strings are deduplicated and cannot overlap
+between Completed and Remaining. Structured items may share text but have
+globally unique IDs. Each section is limited to 50 items, the complete state to
+200 items and 32,768 serialized bytes, and each item text to 500 characters.
+These bounds keep resume context concise and prevent append-only growth.
+Replacement is the explicit compaction mechanism.
 
 Resume injects an existing ledger only into that stage's presentation and
 context and instructs the agent to treat it as the current operational
@@ -47,16 +64,23 @@ checkpoint. Updates are expected after meaningful scope changes, important
 decisions, substantial work units, blocker discovery, verification changes, and
 before handoff, not after trivial edits.
 
+The first Remaining item is Current and later Remaining items are Queued. Resume
+names both categories explicitly. Agents work only on Current by default and do
+not combine Queued items into the same change set unless the user explicitly
+requests batching. Read-only checklist consumers render those structured fields
+and use stable item IDs for option identity, rather than deriving identity from
+item text.
+
 Checklist state does not control lifecycle. Stage finish remains explicit and
 returns warnings for remaining work, blockers, and pending verification. It
 preserves the final ledger as a read-only historical record. Reopening the stage
 makes the same record mutable again under a new active session and revisioned
 updates.
 
-The TUI does not expose an execution progress indicator initially. Full ledger
-content would be noisy, and a count can imply completion semantics that the
-ledger deliberately does not own. A future read-only indicator may be added
-through the snapshot boundary without changing this storage model.
+The read-only TUI presents a concise progress summary and an optional checklist
+dialog. The dialog separates Current, Queued, Completed, Blockers, Verification,
+Scope, and Decisions without implying that completing a checklist controls the
+stage lifecycle.
 
 ## Consequences
 

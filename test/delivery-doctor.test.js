@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   ERROR_CODES,
   WORK_CONTEXT_PROTOCOL,
+  WORK_CONTEXT_PROTOCOL_DESCRIPTOR,
   WORK_CONTEXT_PROTOCOL_DESCRIPTOR_HASH,
   WORK_CONTEXT_PROTOCOL_MARKER,
   WorkContext,
@@ -40,6 +41,11 @@ const marker = (overrides = {}) => `<!-- opencode-work-context-protocol: ${JSON.
 })} -->`;
 const writeCommand = (root, value = WORK_CONTEXT_PROTOCOL_MARKER) => write(root, ".opencode/commands/wc.md", `${value}\ncommand body\n`);
 const findingIds = (result) => result.findings.map((finding) => finding.id);
+
+test("protocol descriptor advertises both commit-all phases", () => {
+  assert.ok(WORK_CONTEXT_PROTOCOL_DESCRIPTOR.operations.includes("commit.inspect_all"));
+  assert.ok(WORK_CONTEXT_PROTOCOL_DESCRIPTOR.operations.includes("commit.all"));
+});
 const snapshot = (root, relative = "") => fs.readdirSync(path.join(root, relative), { withFileTypes: true })
   .sort((left, right) => left.name.localeCompare(right.name))
   .map((entry) => {

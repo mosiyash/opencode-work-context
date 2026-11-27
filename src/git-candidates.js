@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { ERROR_CODES, fail } from "./errors.js";
 
@@ -119,6 +120,104 @@ const patchFromIndex = (root, base, env) => {
   return result.stdout;
 };
 
+const nulPaths = (value) => value.toString("utf8").split("\0").filter(Boolean);
+const unsafeName = (relative) => {
+  const parts = relative.split("/");
+  const name = parts.at(-1).toLowerCase();
+  if (parts.some((part) => ["node_modules", "coverage", ".cache", ".next", ".nuxt", ".output", "vendor"].includes(part))
+    || ["dist", "build", "tmp"].includes(parts[0]) || /\.(?:log|tmp|swp)$/.test(name)) return "generated_or_local";
+  if (relative === ".work-context/local" || relative.startsWith(".work-context/local/")) return "local_only";
+  if (name === ".env" || name.startsWith(".env.") || /(?:^|[._-])(secret|secrets|credential|credentials|private)(?:[._-]|$)/.test(name)
+    || /\.(?:pem|key|p12|pfx)$/i.test(name) || ["id_rsa", "id_ed25519"].includes(name)) return "potential_secret";
+  return null;
+};
+
+const secretContent = (root, relative) => {
+  const absolute = path.join(root, relative);
+  let stat;
+  try { stat = fs.statSync(absolute); } catch (error) { if (error.code === "ENOENT") return false; throw error; }
+  if (!stat.isFile() || stat.size > 1024 * 1024) return false;
+  const content = fs.readFileSync(absolute);
+  if (content.includes(0)) return false;
+  const text = content.toString("utf8");
+  return /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(text)
+    || /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/.test(text)
+    || /\b(?:ghp|github_pat|glpat)-?[A-Za-z0-9_]{20,}\b/.test(text)
+    || /(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*["']?(?!example|placeholder|changeme)[A-Za-z0-9_+/.=-]{12,}/i.test(text);
+};
+
+function nestedRepository(root, relative) {
+  let absolute = path.join(root, relative);
+  while (absolute !== root) {
+    if (fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()) {
+      const result = git(absolute, ["rev-parse", "--show-toplevel"], { allowFailure: true });
+      if (result.status === 0 && fs.realpathSync(result.stdout.trim()) !== root) return true;
+    }
+    absolute = path.dirname(absolute);
+  }
+  return false;
+}
+
+const gitOperation = (root) => {
+  const result = git(root, ["rev-parse", "--git-dir"], { allowFailure: true });
+  if (result.status !== 0) return "unknown";
+  const directory = path.resolve(root, result.stdout.trim());
+  return ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-apply", "rebase-merge", "sequencer"]
+    .find((entry) => fs.existsSync(path.join(directory, entry))) || null;
+};
+
+const explicitExclusion = (relative, exclusions) => exclusions.some((item) => relative === item || relative.startsWith(`${item}/`));
+
+export function inspectCommitAll(root, personalRoot, options = {}) {
+  const repository = repositoryState(root);
+  const readOnlyEnv = { GIT_OPTIONAL_LOCKS: "0" };
+  const operation = gitOperation(repository.root);
+  if (operation) fail(ERROR_CODES.COMMIT_ALL_UNSAFE_STATE, "Commit all is unavailable while another Git operation is in progress", { operation });
+  const unmerged = git(repository.root, ["ls-files", "--unmerged", "-z"], { encoding: null, env: readOnlyEnv }).stdout;
+  if (unmerged.length) fail(ERROR_CODES.COMMIT_ALL_UNSAFE_STATE, "Commit all is unavailable while the Git index contains unresolved conflicts");
+  const explicitExclusions = options.excludePaths?.length ? normalizeCandidatePaths(repository.root, personalRoot, options.excludePaths) : [];
+  const changed = nulPaths(git(repository.root, ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", "HEAD", "--"], { encoding: null, env: readOnlyEnv }).stdout);
+  const untracked = nulPaths(git(repository.root, ["ls-files", "--others", "--exclude-standard", "-z"], { encoding: null, env: readOnlyEnv }).stdout);
+  const gitlinks = new Set(nulPaths(git(repository.root, ["ls-files", "--stage", "-z"], { encoding: null, env: readOnlyEnv }).stdout)
+    .filter((entry) => entry.startsWith("160000 ")).map((entry) => entry.slice(entry.indexOf("\t") + 1)));
+  const included = [];
+  const excluded = [];
+  for (const relative of [...new Set([...changed, ...untracked])].sort()) {
+    if ([".work-context/.locks", ".work-context/.transactions"].some((item) => relative === item || relative.startsWith(`${item}/`))) continue;
+    if (relative === ".work-context/local" || relative.startsWith(".work-context/local/")) {
+      excluded.push({ path: relative, reason: "local_only" });
+      continue;
+    }
+    const normalized = normalizeCandidatePaths(repository.root, personalRoot, [relative])[0];
+    const reason = explicitExclusion(normalized, explicitExclusions) ? "user_excluded"
+      : normalized === ".gitmodules" && gitlinks.size ? "submodule_metadata"
+      : gitlinks.has(normalized) || [...gitlinks].some((gitlink) => normalized.startsWith(`${gitlink}/`))
+      ? "submodule"
+      : nestedRepository(repository.root, normalized) ? "nested_repository" : unsafeName(normalized) || (secretContent(repository.root, normalized) ? "potential_secret" : null);
+    if (reason) excluded.push({ path: normalized, reason });
+    else included.push(normalized);
+  }
+  if (!included.length) return { repository_root: repository.root, base_head: repository.head, included_paths: [], excluded_paths: excluded, patch: "", patch_fingerprint: null, stat: "" };
+  let captured;
+  try { captured = capturePaths(repository.root, personalRoot, repository.head, included); }
+  catch (error) {
+    if (error.code === ERROR_CODES.CANDIDATE_UNSUPPORTED) fail(ERROR_CODES.COMMIT_ALL_INCOHERENT_BOUNDARY, "Commit-all changes cannot form one supported text patch", { cause: error.message });
+    throw error;
+  }
+  const preview = previewPatch(repository.root, repository.head, captured.patch);
+  if (preview.patch !== captured.patch) fail(ERROR_CODES.COMMIT_ALL_VERIFICATION_FAILED, "Commit-all preview did not reproduce the inspected patch");
+  return {
+    repository_root: repository.root,
+    base_head: repository.head,
+    included_paths: captured.paths,
+    excluded_paths: excluded,
+    patch: captured.patch,
+    patch_fingerprint: createHash("sha256").update(captured.patch).digest("hex"),
+    stat: preview.stat,
+    recent_subjects: git(repository.root, ["log", "-5", "--format=%s"], { env: readOnlyEnv }).stdout.trim().split("\n").filter(Boolean),
+  };
+}
+
 export function normalizeCandidatePaths(root, personalRoot, values) {
   if (!Array.isArray(values) || !values.length) fail(ERROR_CODES.INVALID_ARGUMENT, "At least one path is required");
   const personal = fs.existsSync(personalRoot) ? fs.realpathSync(personalRoot) : path.resolve(personalRoot);
@@ -173,6 +272,7 @@ export function commitPatch(root, base, patchText, message, options = {}) {
   rejectUnsupportedPatch(patchText);
   if (typeof message !== "string" || !message.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Commit message is required");
   const repository = repositoryState(root);
+  if (options.expectedHead && repository.head !== options.expectedHead) fail(ERROR_CODES.COMMIT_ALL_STALE_PLAN, "Git HEAD no longer matches the confirmed commit-all plan", { expected_head: options.expectedHead, actual_head: repository.head });
   const branch = currentBranch(repository.root);
   const baseCheck = git(repository.root, ["cat-file", "-e", `${base}^{commit}`], { allowFailure: true });
   if (baseCheck.status !== 0) fail(ERROR_CODES.CANDIDATE_STALE_BASE, "Candidate base commit is unavailable", { base });
@@ -201,6 +301,18 @@ export function commitPatch(root, base, patchText, message, options = {}) {
       expectedHead: repository.head,
       stderr: updated.stderr.trim(),
     });
-    return { branch, previous_head: repository.head, commit, stale: repository.head !== base };
+    const publication = { branch, previous_head: repository.head, commit, stale: repository.head !== base };
+    options.afterUpdateRef?.(publication);
+    return publication;
+  });
+}
+
+export function rollbackCommitRef(root, publication) {
+  const repository = repositoryState(root);
+  const updated = git(repository.root, ["update-ref", publication.branch, publication.previous_head, publication.commit], { allowFailure: true });
+  if (updated.status !== 0) fail(ERROR_CODES.CANDIDATE_REF_RACE, "Cannot roll back a candidate commit after a storage failure", {
+    branch: publication.branch,
+    expectedHead: publication.commit,
+    stderr: updated.stderr.trim(),
   });
 }

@@ -11,9 +11,10 @@ import { isDependencySatisfied } from "./stage-status.js";
 import { CandidateStore } from "./candidates.js";
 import { DeliveryStore } from "./delivery.js";
 import { doctorDelivery as runDeliveryDoctor } from "./delivery-doctor.js";
-import { applyExecutionPatch, assertExecutionSize, executionState, normalizeExecutionState } from "./stage-execution.js";
-import { CAPABILITY_CLASSIFICATIONS, CAPABILITY_DEPTHS, CAPABILITY_MAPPINGS_FILE, CAPABILITY_PROFILES, capabilityProfileMode, capabilityRecommendations, readCapabilityMappings, validateCapabilityMappings } from "./capability-profiles.js";
+import { applyExecutionItemPatch, applyExecutionTextPatchItems, assertExecutionSize, EXECUTION_SECTIONS, executionInputUsesItems, executionItems, executionItemsFromState, executionPatchUsesItems, executionReadModel, normalizeExecutionItemState, normalizeExecutionState } from "./stage-execution.js";
+import { CAPABILITY_CLASSIFICATIONS, CAPABILITY_DEPTHS, CAPABILITY_PROFILES, capabilityProfileMode, capabilityRecommendations, configureCapabilityMappings, readCapabilityMappings, resetCapabilityMappings, validateCapabilityMappings } from "./capability-profiles.js";
 import { acknowledgeGitCommit, initializeGitCheckpoint } from "./git-acknowledgement.js";
+import { rollbackCommitRef } from "./git-candidates.js";
 
 const actor = (options) => options.actor || "OpenCode";
 const workspaceMode = (data) => data.mode || "standard";
@@ -65,7 +66,15 @@ const resumePresentationInstruction = ({ confirmationRequired }) => `Before doin
 - Mention previous progress only when presentation.previous_result or presentation.previous_session_summary contains useful information.
 - State the immediate next action in one sentence.
 ${confirmationRequired ? "- Ask for the explicitly required confirmation and wait before inspecting or changing application code." : "- Then continue with the work immediately. Do not ask for generic confirmation; ask a focused question only when an unresolved decision genuinely blocks progress."}`;
-const executionInstruction = (record) => record ? `\n\nCurrent stage execution state:\n${JSON.stringify(record, null, 2)}\nTreat this bounded stage-local ledger as the current operational checkpoint. Update it after meaningful scope changes, decisions, substantial work, blockers, or verification changes, and before handoff; do not update it for trivial tool calls.` : "";
+const executionInstruction = (record) => {
+  if (!record) return "";
+  const execution = executionReadModel(record);
+  const current = execution.current ? `\nCurrent checklist item: ${execution.current.text}` : "\nCurrent checklist item: none";
+  const queued = execution.queued.length
+    ? `\nQueued checklist items: ${execution.queued.map((item) => item.text).join(" | ")}`
+    : "\nQueued checklist items: none";
+  return `\n\nCurrent stage execution state:${current}${queued}\n${JSON.stringify(execution, null, 2)}\nTreat this bounded stage-local ledger as the current operational checkpoint. Work only on the Current checklist item by default. Do not combine Queued items into the same change set unless the user explicitly asks. Update it after meaningful scope changes, decisions, substantial work, blockers, or verification changes, and before handoff; do not update it for trivial tool calls.`;
+};
 const deliveryPlanningInstruction = `\n\nDelivery planning policy:\n- When the user asks how to deploy, treat this as workspace-level delivery planning across all relevant committed changes, not as ownership by the current stage.\n- Inspect the exact commit range and the repository's own deployment documentation, scripts, infrastructure, migrations, container definitions, configuration examples, and CI before proposing commands.\n- Produce an ordered plan covering prerequisites, deployment, verification, rollback, and unresolved blockers. Ask one focused question when the target environment or baseline is genuinely ambiguous.\n- Never persist secret values. Mention only required secret or configuration names.\n- Never mark delivery from a successful commit or push alone. Use explicit delivery confirmation only after the user confirms that the target environment was updated successfully.`;
 const assertNoSymlinkPath = (file) => { let current = path.parse(file).root; for (const part of file.slice(current.length).split(path.sep).filter(Boolean)) { current = path.join(current, part); try { if (fs.lstatSync(current).isSymbolicLink()) fail(ERROR_CODES.STORAGE_ERROR, `Symlink path component is not supported: ${current}`); } catch (error) { if (error.code !== "ENOENT") throw error; break; } } };
 
@@ -342,6 +351,30 @@ export class WorkContext {
     ), { session: this.options.sessionId, owner: actor(this.options) });
   }
 
+  inspectCommitAll(workspace, options = {}) { return { ok: true, data: this.candidates().inspectAll(workspace, options) }; }
+
+  commitAll(workspace, expectedFingerprint, confirmation, options = {}) {
+    this.storage.assertSafeRoots();
+    return withLock(this.storage.lockPath("candidate-git"), () => {
+      let publication;
+      try {
+        return this.transact("commit-all", () => this.result(this.candidates().commitAll(workspace, expectedFingerprint, confirmation, {
+          ...options,
+          afterUpdateRef: (published) => { publication = published; options.afterUpdateRef?.(published); },
+        }), ["local:candidates"]));
+      } catch (error) {
+        if (publication) {
+          try { rollbackCommitRef(this.storage.projectRoot, publication); }
+          catch (rollbackError) {
+            this.candidates().write(publication.candidate_record, publication.patch);
+            throw rollbackError;
+          }
+        }
+        throw error;
+      }
+    }, { session: this.options.sessionId, owner: actor(this.options) });
+  }
+
   readDelivery(workspace, options = {}) { return { ok: true, data: this.deliveries().readContext(workspace, options) }; }
 
   explainDelivery(workspace, from, to, findings = []) {
@@ -409,7 +442,7 @@ export class WorkContext {
       const workspaceKnowledge = activeKnowledge(this.listKnowledge(workspace).data);
       const execution = this.storage.readStageExecution(workspace, stage);
        const automaticFinish = automaticFinishAllowed(this.storage, workspace);
-       const recommendations = capabilityRecommendations(this.storage, stageRecord.data);
+        const recommendations = capabilityRecommendations(this.storage, stageRecord.data, readCapabilityMappings(this.storage, { homeDir: this.options.capabilityProfilesHome }));
       return this.result({
         workspace,
         stage,
@@ -431,7 +464,7 @@ export class WorkContext {
             scope: stageRecord.data.prompt || null,
             previous_result: previousResult,
             previous_session_summary: previousSessionSummary,
-             ...(execution ? { execution_state: execution } : {}),
+              ...(execution ? { execution_state: executionReadModel(execution) } : {}),
              ...(recommendations ? { capability_profiles: recommendations } : {}),
           },
           context: {
@@ -439,7 +472,7 @@ export class WorkContext {
             previous: previousSessionSummary || previousResult || "No previous progress was recorded.",
             now: hasPrompt ? stageRecord.data.prompt : "First clarify the task and work plan with the user.",
             workspace_knowledge: workspaceKnowledge,
-             ...(execution ? { execution_state: execution } : {}),
+              ...(execution ? { execution_state: executionReadModel(execution) } : {}),
              ...(recommendations ? { capability_profiles: recommendations } : {}),
             ...(pendingCandidates ? { pending_candidates: pendingCandidates } : {}),
             ...(hasDeliveryContext ? { delivery_context: deliveryContext } : {}),
@@ -562,8 +595,8 @@ export class WorkContext {
   }
 
   showCapabilityProfiles() {
-    const local = readCapabilityMappings(this.storage);
-    return this.result({ mode: capabilityProfileMode(this.storage), mappings: local.mappings, warnings: local.warnings }, []);
+    const local = readCapabilityMappings(this.storage, { homeDir: this.options.capabilityProfilesHome });
+    return this.result({ mode: capabilityProfileMode(this.storage), mappings: local.mappings, global: local.global.mappings, project: local.project?.mappings || {}, legacy: local.legacy.mappings, warnings: local.warnings }, []);
   }
 
   configureCapabilityProfiles(options = {}) {
@@ -575,13 +608,7 @@ export class WorkContext {
       this.storage.assertNoSymlinks();
       const changed = [];
       const configFile = path.join(this.storage.projectRoot, ".work-context", "config.yaml");
-      const mappingFile = path.join(this.storage.personalRoot, CAPABILITY_MAPPINGS_FILE);
       const previousConfig = fs.readFileSync(configFile);
-      let previousMapping = null;
-      if (fs.existsSync(mappingFile)) {
-        if (!fs.lstatSync(mappingFile).isFile()) fail(ERROR_CODES.STORAGE_ERROR, `Invalid ${CAPABILITY_MAPPINGS_FILE} path`);
-        previousMapping = fs.readFileSync(mappingFile);
-      }
       try {
         if (options.mode !== undefined && options.mode !== capabilityProfileMode(this.storage)) {
           const current = fs.readFileSync(configFile, "utf8");
@@ -593,30 +620,25 @@ export class WorkContext {
           changed.push(configFile);
         }
         if (options.mappings !== undefined) {
-          atomicWrite(mappingFile, `${JSON.stringify({ schema: 1, mappings: options.mappings }, null, 2)}\n`);
+          const mappingFile = configureCapabilityMappings(this.storage, options.mappings, { scope: options.scope, homeDir: this.options.capabilityProfilesHome });
           changed.push(mappingFile);
         }
       } catch (error) {
         try { atomicWrite(configFile, previousConfig.toString("utf8")); } catch {}
-        try {
-          if (previousMapping) atomicWrite(mappingFile, previousMapping.toString("utf8"));
-          else fs.rmSync(mappingFile, { force: true });
-        } catch {}
         throw error;
       }
       if (options.mode !== undefined) this.storage.config.capability_profiles.mode = options.mode;
-      const local = readCapabilityMappings(this.storage);
-      return this.result({ mode: capabilityProfileMode(this.storage), mappings: local.mappings, warnings: local.warnings }, changed);
+      const local = readCapabilityMappings(this.storage, { homeDir: this.options.capabilityProfilesHome });
+      return this.result({ mode: capabilityProfileMode(this.storage), mappings: local.mappings, global: local.global.mappings, project: local.project?.mappings || {}, legacy: local.legacy.mappings, warnings: local.warnings }, changed);
     }, { owner: actor(this.options), session: this.options.sessionId || null });
   }
 
-  resetCapabilityProfiles(confirmation) {
+  resetCapabilityProfiles(confirmation, options = {}) {
     if (confirmation !== "RESET_PROFILES") fail(ERROR_CODES.CONFIRMATION_REQUIRED, "Reset requires RESET_PROFILES confirmation");
     return this.transact("capability-profiles", () => {
-      const file = path.join(this.storage.personalRoot, CAPABILITY_MAPPINGS_FILE);
-      const existed = fs.existsSync(file);
-      if (existed) fs.rmSync(file);
-      return this.result({ mode: capabilityProfileMode(this.storage), mappings: {} }, existed ? [file] : []);
+      const reset = resetCapabilityMappings(this.storage, { scope: options.scope, homeDir: this.options.capabilityProfilesHome });
+      const local = readCapabilityMappings(this.storage, { homeDir: this.options.capabilityProfilesHome });
+      return this.result({ mode: capabilityProfileMode(this.storage), mappings: local.mappings, global: local.global.mappings, project: local.project?.mappings || {}, legacy: local.legacy.mappings, warnings: local.warnings }, reset.removed ? [reset.file] : []);
     });
   }
 
@@ -695,14 +717,13 @@ export class WorkContext {
     this.storage.assertNoSymlinks();
     this.storage.readStage(workspace, stage);
     const record = this.storage.readStageExecution(workspace, stage);
-    return { ok: true, data: record || { schema: 1, workspace, stage, revision: 0, exists: false, ...normalizeExecutionState({}) } };
+    return { ok: true, data: record ? executionReadModel(record) : { schema: 1, workspace, stage, revision: 0, exists: false, ...normalizeExecutionState({}), items: Object.fromEntries(EXECUTION_SECTIONS.map((section) => [section, []])), current: null, queued: [] } };
   }
 
   replaceStageExecution(workspace, stage, sessionId, expectedRevision, input) {
     workspace = normalizeWorkspaceId(workspace);
     stage = normalizeStageId(stage);
     if (!Number.isInteger(expectedRevision) || expectedRevision < 0) fail(ERROR_CODES.INVALID_ARGUMENT, "expectedRevision must be a non-negative integer");
-    const state = normalizeExecutionState(input);
     return this.transact(`stage-execution-${workspace}-${stage}`, () => {
       const stageRecord = this.storage.readStage(workspace, stage);
       if (!["planned", "in_progress"].includes(stageRecord.data.status)) fail(ERROR_CODES.INVALID_STATE, "Execution state can only change for an actionable stage", { status: stageRecord.data.status });
@@ -710,12 +731,15 @@ export class WorkContext {
       const current = this.storage.readStageExecution(workspace, stage);
       const revision = current?.revision || 0;
       if (revision !== expectedRevision) fail(ERROR_CODES.EXECUTION_REVISION_CONFLICT, "Stage execution state changed since it was read", { expectedRevision, actualRevision: revision });
-      if (current && JSON.stringify(executionState(current)) === JSON.stringify(state)) return this.result(current, []);
+      const structured = executionInputUsesItems(input);
+      const state = structured ? null : normalizeExecutionState(input);
+      const items = structured ? normalizeExecutionItemState(input, current) : executionItemsFromState(state, current);
+      if (current && JSON.stringify(executionItems(current)) === JSON.stringify(items)) return this.result(executionReadModel(current), []);
       const timestamp = new Date().toISOString();
-      const record = { schema: 1, workspace, stage, revision: revision + 1, created_at: current?.created_at || timestamp, updated_at: timestamp, updated_by: actor(this.options), ...state };
+      const record = { schema: 2, workspace, stage, revision: revision + 1, created_at: current?.created_at || timestamp, updated_at: timestamp, updated_by: actor(this.options), items };
       assertExecutionSize(record);
       this.storage.writeStageExecution(workspace, stage, record);
-      return this.result(record, [this.storage.stageExecutionFile(workspace, stage)]);
+      return this.result(executionReadModel(record), [this.storage.stageExecutionFile(workspace, stage)]);
     });
   }
 
@@ -730,13 +754,39 @@ export class WorkContext {
       const current = this.storage.readStageExecution(workspace, stage);
       const revision = current?.revision || 0;
       if (revision !== expectedRevision) fail(ERROR_CODES.EXECUTION_REVISION_CONFLICT, "Stage execution state changed since it was read", { expectedRevision, actualRevision: revision });
-      const state = applyExecutionPatch(current ? executionState(current) : normalizeExecutionState({}), patch);
-      if (current && JSON.stringify(executionState(current)) === JSON.stringify(state)) return this.result(current, []);
+      const structured = executionPatchUsesItems(patch);
+      const empty = { schema: 2, items: Object.fromEntries(EXECUTION_SECTIONS.map((section) => [section, []])) };
+      const items = structured ? applyExecutionItemPatch(current || empty, patch) : applyExecutionTextPatchItems(current || empty, patch);
+      if (current && JSON.stringify(executionItems(current)) === JSON.stringify(items)) return this.result(executionReadModel(current), []);
       const timestamp = new Date().toISOString();
-      const record = { schema: 1, workspace, stage, revision: revision + 1, created_at: current?.created_at || timestamp, updated_at: timestamp, updated_by: actor(this.options), ...state };
+      const record = { schema: 2, workspace, stage, revision: revision + 1, created_at: current?.created_at || timestamp, updated_at: timestamp, updated_by: actor(this.options), items };
       assertExecutionSize(record);
       this.storage.writeStageExecution(workspace, stage, record);
-      return this.result(record, [this.storage.stageExecutionFile(workspace, stage)]);
+      return this.result(executionReadModel(record), [this.storage.stageExecutionFile(workspace, stage)]);
+    });
+  }
+
+  completeCurrentExecution(workspace, stage, sessionId, expectedRevision) {
+    workspace = normalizeWorkspaceId(workspace);
+    stage = normalizeStageId(stage);
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 0) fail(ERROR_CODES.INVALID_ARGUMENT, "expectedRevision must be a non-negative integer");
+    return this.transact(`stage-execution-${workspace}-${stage}`, () => {
+      const stageRecord = this.storage.readStage(workspace, stage);
+      if (!["planned", "in_progress"].includes(stageRecord.data.status)) fail(ERROR_CODES.INVALID_STATE, "Execution state can only change for an actionable stage", { status: stageRecord.data.status });
+      assertActive(this.storage.readEvents(), workspace, stage, sessionId);
+      const current = this.storage.readStageExecution(workspace, stage);
+      const revision = current?.revision || 0;
+      if (revision !== expectedRevision) fail(ERROR_CODES.EXECUTION_REVISION_CONFLICT, "Stage execution state changed since it was read", { expectedRevision, actualRevision: revision });
+      const items = current && executionItems(current);
+      const currentItem = items?.remaining.shift();
+      if (!currentItem) fail(ERROR_CODES.INVALID_STATE, "No current execution item to complete");
+      items.completed.push(currentItem);
+      const nextItems = normalizeExecutionItemState(items, current);
+      const timestamp = new Date().toISOString();
+      const record = { schema: 2, workspace, stage, revision: revision + 1, created_at: current.created_at, updated_at: timestamp, updated_by: actor(this.options), items: nextItems };
+      assertExecutionSize(record);
+      this.storage.writeStageExecution(workspace, stage, record);
+      return this.result(executionReadModel(record), [this.storage.stageExecutionFile(workspace, stage)]);
     });
   }
 
@@ -968,10 +1018,11 @@ export class WorkContext {
       if (!['auto', 'added', 'none'].includes(knowledgeReview)) fail(ERROR_CODES.INVALID_ARGUMENT, "Knowledge review must be 'auto', 'added' or 'none'");
       const knowledgeEntries = this.listKnowledge(workspace).data;
       const execution = this.storage.readStageExecution(workspace, stage);
-      const executionWarnings = execution ? [
-        ...(execution.remaining.length ? [`${execution.remaining.length} remaining item(s)`] : []),
-        ...(execution.blockers.length ? [`${execution.blockers.length} blocker(s) or open question(s)`] : []),
-        ...(execution.verification.length ? [`${execution.verification.length} pending verification item(s)`] : []),
+      const executionData = execution ? executionReadModel(execution) : null;
+      const executionWarnings = executionData ? [
+        ...(executionData.remaining.length ? [`${executionData.remaining.length} remaining item(s)`] : []),
+        ...(executionData.blockers.length ? [`${executionData.blockers.length} blocker(s) or open question(s)`] : []),
+        ...(executionData.verification.length ? [`${executionData.verification.length} pending verification item(s)`] : []),
       ] : [];
       const active = activeSession(events, workspace, stage);
       if (!active || active.session_id !== sessionId) fail(active ? ERROR_CODES.ACTIVE_SESSION_EXISTS : ERROR_CODES.SESSION_NOT_ACTIVE, active ? "Another active session owns this stage" : "Session is not active");
@@ -983,7 +1034,7 @@ export class WorkContext {
       const promptReview = this.listStages(workspace).data.stages
         .filter((item) => Number(item.stage) > Number(stage) && !["completed", "archived"].includes(item.status))
         .map(({ stage: id, title, description, prompt, status }) => ({ stage: id, title, description, prompt: prompt || null, status }));
-      const data = { session_id: sessionId, workspace, stage, state: "closed", status: "completed", next_stage_started: false, knowledge_review: knowledgeReview, knowledge_entries: knowledgeEntries.length, active_knowledge_entries: activeKnowledge(knowledgeEntries).length, prompt_review: promptReview, ...(execution ? { execution_state: execution, execution_warnings: executionWarnings } : {}) };
+      const data = { session_id: sessionId, workspace, stage, state: "closed", status: "completed", next_stage_started: false, knowledge_review: knowledgeReview, knowledge_entries: knowledgeEntries.length, active_knowledge_entries: activeKnowledge(knowledgeEntries).length, prompt_review: promptReview, ...(executionData ? { execution_state: executionData, execution_warnings: executionWarnings } : {}) };
       const incompleteStages = this.listStages(workspace).data.stages.filter((item) => !["completed", "archived"].includes(item.status));
       const next = incompleteStages.length ? null : {
         action: "workspace_finish",
@@ -998,7 +1049,7 @@ export class WorkContext {
   help(command = "") {
     return this.result({
       command,
-      syntax: "/wc [create|list|workspace list|workspace rename|workspace mode|candidate create|candidate capture|candidate preview|candidate show|candidate list|candidate ready|candidate commit|candidate discard|delivery read|delivery explain|delivery doctor|delivery mark|profiles show|profiles setup|profiles reset|workspace finish|workspace reopen|resume|stage add|stage profiles|stage profiles refresh|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage execution read|stage execution replace|stage execution update|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
+      syntax: "/wc [create|list|workspace list|workspace rename|workspace mode|candidate create|candidate capture|candidate preview|candidate show|candidate list|candidate ready|candidate commit|candidate discard|commit all|commit all confirm|delivery read|delivery explain|delivery doctor|delivery mark|profiles show|profiles setup|profiles reset|workspace finish|workspace reopen|resume|stage add|stage profiles|stage profiles refresh|stage reopen|stage restore|stage rename|stage update|stage update-prompt|stage update-result|stage execution read|stage execution replace|stage execution update|stage execution complete-current|stage force-close|stage archive|stage handoff|stage abandon|stage finish|link-issue|unlink-issue|session rename|knowledge list|knowledge add|knowledge update|knowledge supersede|help]",
        note: "execution recommendations combine a vendor-neutral capability with light, standard, or deep depth; Planning agents infer missing values before stage creation, ordinary refresh updates missing/inferred classifications while preserving explicit assignments, and local depth mappings resolve only an advisory model label; profiles setup gathers mode and mappings through questions, off mode suppresses presentation and resolution, and no profile operation changes a model, agent, reviewer, or session; delivery context is workspace-level local operational state; exact Git range inspection runs only for explicit immutable hashes; stage execution state is a bounded stage-local operational checkpoint; associated startup sessions receive the shared-worktree candidate policy; stage finish requires an explicit user lifecycle request unless Planning contains AUTO_STAGE_FINISH: allowed; recovery operations preserve lifecycle history.",
     }, []);
   }

@@ -1,0 +1,166 @@
+{
+  "schema": 2,
+  "workspace": "000027",
+  "stage": "04",
+  "revision": 9,
+  "created_at": "2026-11-23T06:49:10.973Z",
+  "updated_at": "2026-11-27T12:21:11.406Z",
+  "updated_by": "OpenCode",
+  "items": {
+    "scope": [
+      {
+        "id": "legacy-4a706a71aadb1d907fcf4ecc",
+        "text": "Extract shared capability-depth configuration and resolution into opencode-capability-profiles"
+      },
+      {
+        "id": "legacy-8ea5edbe8886643e7fd371ba",
+        "text": "Integrate opencode-work-context and project-agent-relay with the shared resolver"
+      }
+    ],
+    "completed": [
+      {
+        "id": "legacy-6e2fd9137c01f98865800df8",
+        "text": "Initialized the opencode-capability-profiles repository and configured the GitHub remote"
+      },
+      {
+        "id": "legacy-5697fc532a1776162bf2d7c6",
+        "text": "Implemented the TypeScript ESM schema, layered storage, deterministic resolver, atomic configuration operations, CLI, and confirmed legacy import"
+      },
+      {
+        "id": "legacy-6faf7786bff9a7bad5f14ccf",
+        "text": "Documented global and tracked project configuration, setup, reset, precedence, and migration"
+      },
+      {
+        "id": "legacy-f05f265a36fc1b3309231551",
+        "text": "Inspected project-agent-relay through its registered read-only project agent"
+      },
+      {
+        "id": "legacy-714c07591857d2fa661cb73d",
+        "text": "Finalized the shared API against Work Context and Relay consumer contracts"
+      },
+      {
+        "id": "legacy-116f865e5716a496ea78a0be",
+        "text": "Implemented Work Context integration with project-over-global-over-legacy precedence and compatibility tests"
+      },
+      {
+        "id": "0e35573a-e3b4-42e7-a93d-cb042b3eea98",
+        "text": "Hardened migration and configuration writes after independent security review"
+      },
+      {
+        "id": "legacy-e6e71531dab9f9594d342bc6",
+        "text": "Create a reproducible shared-package dependency after explicit commit/push or release authorization"
+      },
+      {
+        "id": "legacy-028c6cf3d93202827b990041",
+        "text": "Integrate project-agent-relay in its own writable project session with explicit runner.model precedence"
+      },
+      {
+        "id": "legacy-7fd77fc6c85b43e71070bcfc",
+        "text": "Run final full checks after consumer dependency manifests and lockfiles are complete"
+      }
+    ],
+    "remaining": [],
+    "decisions": [
+      {
+        "id": "legacy-dd0d1971c8756c10a66ac7bb",
+        "text": "Mapping targets remain opaque advisory labels and never trigger automatic model selection"
+      },
+      {
+        "id": "legacy-10d8b284dbd145b465749f1a",
+        "text": "Resolution precedence is explicit override, project mapping, global mapping, then current-model fallback"
+      },
+      {
+        "id": "legacy-5a97dd7b3ca2400812705609",
+        "text": "Project configuration is tracked by default at .opencode/capability-profiles.json"
+      },
+      {
+        "id": "legacy-ee8f4edc7adcd8d3be637469",
+        "text": "The shared CLI owns interactive setup and confirmed legacy migration"
+      },
+      {
+        "id": "legacy-3f2918af61ff8cdd8498f2dc",
+        "text": "Relay answer, implementation, and transfer profiles keep their existing step budgets and map separately to light, standard, and deep recommendations"
+      },
+      {
+        "id": "legacy-9851e3869b084093e0ad5a83",
+        "text": "Relay runner.model remains an explicit executable override; shared mapping targets remain advisory"
+      },
+      {
+        "id": "c8ad1d18-e0f6-4c64-b40c-170ed18286c6",
+        "text": "TSN workspace 1 stage 76 does not block this extraction; opencode-kit will consume the finished package later for diagnostics without owning its resolver or installer"
+      },
+      {
+        "id": "b6342c85-7739-4738-95d6-205a2ab05269",
+        "text": "The shared package is pinned in consumers through an immutable public HTTPS tarball for commit 799a4756dc645f22d56f3e4f0fa18ec5b9f245b1 until an npm release is explicitly authorized"
+      }
+    ],
+    "blockers": [
+      {
+        "id": "00f038f9-75d8-4b2c-8834-1b09df411bd6",
+        "text": "Relay npm audit reports 9 moderate dependency-tree findings; remediation is outside this extraction and may require separate dependency upgrades"
+      }
+    ],
+    "verification": [
+      {
+        "id": "legacy-8b32101decb5f2b81a2eee21",
+        "text": "Shared package TypeScript check passes"
+      },
+      {
+        "id": "legacy-5deee8537192e7da3748d23b",
+        "text": "Shared package npm pack dry run succeeds"
+      },
+      {
+        "id": "legacy-335496698289c1b979d40334",
+        "text": "Built CLI help executes successfully"
+      },
+      {
+        "id": "legacy-fc8db4be9d34e46aa8f352f7",
+        "text": "Work Context capability profile tests pass: 15 tests"
+      },
+      {
+        "id": "legacy-2cbe03a38f41add2f4e64ba1",
+        "text": "Work Context plugin integration tests pass: 23 tests"
+      },
+      {
+        "id": "legacy-35e05327e3251d8098c1a539",
+        "text": "Work Context language check passes"
+      },
+      {
+        "id": "27a37b7c-5393-422e-97c0-c0472fe7fc9e",
+        "text": "Shared package test suite passes: 11 tests"
+      },
+      {
+        "id": "63314cfd-5cb9-4d8e-acba-792d17c8a753",
+        "text": "Independent deep review found no remaining high-severity issue after remediation"
+      },
+      {
+        "id": "ed1e3efc-b890-4f7c-a91c-663e051666dd",
+        "text": "Clean consumer installation, ESM import, and CLI execution pass from the pinned GitHub commit"
+      },
+      {
+        "id": "a8fdc8be-ebe7-4743-b962-9e1e0ff3d052",
+        "text": "Work Context full suite passes: 350 tests, 2 skipped, 0 failures"
+      },
+      {
+        "id": "0199fd25-1f59-44ce-b4e0-43aef9152247",
+        "text": "Work Context package dry run passes with the shared dependency"
+      },
+      {
+        "id": "e6504643-f1d3-46d5-a7a2-9f81afffe6db",
+        "text": "Relay clean npm ci passes with the immutable HTTPS tarball dependency"
+      },
+      {
+        "id": "369dbc87-d0db-4fdf-b991-27d5da57816c",
+        "text": "Relay format, lint, typecheck, and test checks pass: 43 tests"
+      },
+      {
+        "id": "862c461c-2c64-49a4-acfb-08698c9b058b",
+        "text": "Relay package lock contains no git+ssh URL for opencode-capability-profiles"
+      },
+      {
+        "id": "1e45f18d-2805-4d24-8869-bc2df3b8d511",
+        "text": "Relay git diff check passes"
+      }
+    ]
+  }
+}

@@ -43,6 +43,15 @@ test("delivery doctor does not update session title metadata", async () => {
   } finally { fixture.cleanup(); }
 });
 
+test("server plugin registers both commit-all phases", async () => {
+  const fixture = createFixture();
+  try {
+    const hooks = await serverPlugin(createSessionHost(fixture.root, "commit-all-session"));
+    assert.equal(typeof hooks.tool.work_context_inspect_commit_all.execute, "function");
+    assert.equal(typeof hooks.tool.work_context_commit_all.execute, "function");
+  } finally { fixture.cleanup(); }
+});
+
 test("resume tool exposes the stage prompt to the OpenCode agent", async () => {
   const fixture = createFixture();
   try {
@@ -221,17 +230,31 @@ test("stage execution tools replace, update, read, and return stable revision er
 
     const replaced = JSON.parse((await tools.work_context_replace_stage_execution.execute({
       expectedRevision: 0,
-      state: { scope: ["Ship the feature"], remaining: ["Implement it"] },
+      state: { scope: ["Ship the feature"], remaining: ["Implement it", "Verify it"] },
     }, executeContext)).output);
     assert.equal(replaced.ok, true);
     assert.equal(replaced.data.revision, 1);
 
     const updated = JSON.parse((await tools.work_context_update_stage_execution.execute({
       expectedRevision: 1,
-      add: { completed: ["Implement it"] },
-      remove: { remaining: ["Implement it"] },
+      add: { decisions: ["Keep compatibility"] },
     }, executeContext)).output);
     assert.equal(updated.data.revision, 2);
+
+    const completed = JSON.parse((await tools.work_context_complete_current.execute({
+      expectedRevision: 2,
+    }, executeContext)).output);
+    assert.equal(completed.ok, true);
+    assert.equal(completed.data.current.text, "Verify it");
+    assert.deepEqual(completed.data.completed, ["Implement it"]);
+
+    const edited = JSON.parse((await tools.work_context_update_stage_execution.execute({
+      expectedRevision: 3,
+      edit: { remaining: [{ id: completed.data.current.id, text: "Verify compatibility" }] },
+    }, executeContext)).output);
+    assert.equal(edited.ok, true);
+    assert.equal(edited.data.current.id, completed.data.current.id);
+    assert.equal(edited.data.current.text, "Verify compatibility");
 
     const read = JSON.parse((await tools.work_context_read_stage_execution.execute({}, executeContext)).output);
     assert.deepEqual(read.data.completed, ["Implement it"]);

@@ -151,11 +151,12 @@ Avoid editing configuration by hand:
 /wc profiles reset
 ```
 
-`profiles setup` asks for advisory/off mode and the local model label for each
-depth, then offers to refresh unfinished stages. Profiles are advisory by
-default. Off mode hides and skips resolution while preserving stage metadata.
-The resulting user-local mappings live only in the ignored
-`.work-context/local/capability-profiles.json` file:
+`profiles setup` asks for advisory/off mode, global or project scope, and the
+model label for each depth, then offers to refresh unfinished stages. Profiles
+are advisory by default. Off mode hides and skips resolution while preserving
+stage metadata. Global user mappings live at
+`~/.config/opencode/capability-profiles.json`. Optional project overrides live
+at `.opencode/capability-profiles.json` and are tracked by default:
 
 ```json
 {
@@ -173,10 +174,17 @@ Sol`. Without a mapping, the TUI shows the actual model name for the current
 OpenCode session; other stages show only capability and depth rather than an
 ambiguous `current model` label. Optional `review_profile` metadata neither
 resolves a model nor controls separately configured subagents.
-Targets are bounded opaque labels and never enter tracked data. Invalid entries
-produce bounded warnings. The plugin never changes an active model or agent,
-invokes a reviewer, creates a replacement session, or blocks resume. `init`,
-`activate`, and `sync-command` preserve files below `.work-context/local/`.
+Resolution precedence is explicit invocation override, project mapping, global
+mapping, then current model. Targets are bounded opaque advisory labels and
+never enter tracked work-context data. Invalid entries produce bounded warnings.
+The plugin never changes an active model or agent, invokes a reviewer, creates a
+replacement session, or blocks resume.
+
+Existing `.work-context/local/capability-profiles.json` files remain a temporary
+lowest-precedence compatibility fallback and produce a migration warning. Use
+the shared `opencode-capability-profiles migrate --project` flow to preview
+additions and conflicts and explicitly import legacy values into global config.
+Migration never modifies or deletes the legacy file.
 
 Long-running stages may keep a bounded execution ledger separate from the
 original prompt, workspace knowledge, session summaries, and final result. It
@@ -195,9 +203,15 @@ atomically adds and removes exact normalized items. Mutations require the active
 stage session. A stale revision fails with `EXECUTION_REVISION_CONFLICT` rather
 than overwriting newer work. Each section is limited to 50 items, the complete
 state to 200 items and 32,768 serialized bytes, and each item to 500 characters.
-Update the ledger at meaningful boundaries, not after every edit. Checklist
-state never completes a stage: explicit stage finish reports unfinished ledger
-entries as warnings and preserves the final record.
+The first Remaining item is `Current`; later items are `Queued`. Agents work only
+on Current by default and do not combine Queued work into the same change set
+unless the user explicitly requests it. The read model includes stable item IDs,
+so Current and Queued remain unambiguous even when text is duplicated or revised.
+After completing Current, read the latest revision and use `complete-current` to
+move it to Completed and promote the next Queued item. Update the ledger at
+meaningful boundaries, not after every edit. Checklist state never completes a
+stage: explicit stage finish reports unfinished ledger entries as warnings and
+preserves the final record.
 
 After updating the npm package, refresh the generated slash-command contract
 without touching project configuration or loaders:
@@ -639,6 +653,45 @@ separate those edits by provenance. Use an integration candidate only when the
 combined patch is coherent and verified; otherwise stop and establish a safe
 candidate boundary before publication.
 
+### Repository-local commit all
+
+`commit all` is the explicit fast path for one coherent repository-wide
+integration commit. It is available in both standard and startup workspaces and
+uses the same temporary-index capture, preview verification, Git lock, and
+compare-and-swap publication as an integration candidate. Ordinary candidate
+lifecycle commands remain startup-only.
+
+The flow is deliberately two-phase:
+
+```text
+/wc commit all 000123 stages 02 04 exclude scratch.txt
+/wc commit all confirm 000123 <fingerprint> COMMIT_ALL_CONFIRMED stages 02 04 exclude scratch.txt
+```
+
+Inspection is read-only. It returns the repository root, included and excluded
+paths, unattributed paths, related stage titles, a diff-derived message proposal,
+recent subjects used to match repository message style, a patch summary, and a
+SHA-256 fingerprint. An explicit message on both commands overrides the proposal.
+Selected stages provide traceability only and never assign files or lines. When
+stage evidence is unavailable, the operation keeps paths explicitly unattributed
+instead of inventing provenance.
+
+Publication requires the exact `COMMIT_ALL_CONFIRMED` token and the inspection
+fingerprint. Under the Git lock it repeats inspection with the same message,
+stages, and exclusions. Any changed `HEAD`, patch, selection, attribution, or
+message returns `COMMIT_ALL_STALE_PLAN` without creating a commit. A matching
+active integration candidate is reused only when its exact patch matches;
+otherwise a new candidate is created inside the atomic publication transaction.
+
+The repository boundary is the current Git root. Sibling and external
+repositories are never inspected. Nested repositories, submodules, local
+operational state, suspicious generated paths, probable secrets, and explicitly
+excluded unrelated paths remain outside the patch and are reported. Work in
+another repository must be committed independently there. Active Git operations,
+unsupported binary boundaries, detached `HEAD`, verification failures, and ref
+races stop publication. Hooks and signing remain bypassed because publication
+uses `git commit-tree`.
+
 ### Delivery context
 
 Committing or pushing does not prove that an environment was updated. Delivery is
@@ -768,6 +821,23 @@ and loaded plugin with different protocol majors fail fast. Minor protocol,
 descriptor hash, version, and module-origin drift produce findings with repair
 guidance. The current OpenCode host may report authoritative attestation as
 unavailable; doctor does not guess or repair automatically.
+
+For automation outside a loaded OpenCode runtime, use the standalone JSON doctor:
+
+```sh
+opencode-work-context doctor --json [--project <path>]
+```
+
+`--json` is required and options may be ordered either way. The project defaults
+to the current working directory and must be an existing directory. A valid
+invocation emits exactly one JSON object with `schema: 1`, component and package
+version metadata, aggregate `status`, canonical absolute `project`, the existing
+`diagnostic` envelope, and `complete: true`. It exits `0` only when status is
+`ok`; findings at warning or error severity exit `1`. Invalid arguments or a
+missing project use the CLI error output and do not emit a health envelope. The
+standalone process has no loaded-plugin runtime attestation, so its diagnostic
+truthfully reports that evidence as unavailable rather than claiming the CLI
+package is loaded by OpenCode.
 
 For a pinned local installation, repair with:
 

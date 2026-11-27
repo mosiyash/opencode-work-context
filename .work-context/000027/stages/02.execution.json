@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "workspace": "000027",
+  "stage": "02",
+  "revision": 2,
+  "created_at": "2026-11-22T11:04:33.068Z",
+  "updated_at": "2026-11-22T11:09:41.632Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Implement stable checklist item identities with legacy compatibility",
+    "Expose Current and Queued and add atomic Current completion",
+    "Update public tools, protocol evidence, documentation, and tests"
+  ],
+  "completed": [
+    "Implemented schema 2 stable item storage with schema 1 read compatibility",
+    "Preserved IDs across completion and rewording and supported duplicate text by ID",
+    "Added revision-safe work_context_complete_current tool and export",
+    "Updated command protocol evidence and ADR",
+    "Added focused core and integration coverage",
+    "Passed the full test suite and repository language check",
+    "Review the final diff and report the completed implementation"
+  ],
+  "remaining": [],
+  "decisions": [
+    "Keep compatibility string arrays in reads and add structured items, current, and queued fields",
+    "Do not migrate schema 1 records during read or resume",
+    "Reject ambiguous text-only updates when duplicate text requires item identity"
+  ],
+  "blockers": [],
+  "verification": []
+}

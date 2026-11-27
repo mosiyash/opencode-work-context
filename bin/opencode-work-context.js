@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { defaultConfig } from "../src/storage.js";
+import { doctorDelivery, validateDeliveryDoctorEnvelope } from "../src/delivery-doctor.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageManifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
@@ -81,6 +82,24 @@ const hasSymlinkParent = (file) => {
 };
 
 function parseArgs(args) {
+  if (args[0] === "doctor") {
+    let project;
+    let json = false;
+    for (let index = 1; index < args.length; index += 1) {
+      const arg = args[index];
+      if (arg === "--json") {
+        if (json) return fail("duplicate option: --json");
+        json = true;
+      } else if (arg === "--project") {
+        if (project !== undefined) return fail("duplicate option: --project");
+        project = args[index + 1];
+        if (!project || project.startsWith("--")) return fail("--project requires a path");
+        index += 1;
+      } else return fail(`unknown option: ${arg}`);
+    }
+    if (!json) return fail("doctor requires --json");
+    return { doctor: true, project };
+  }
   if (args[0] === "sync-command") {
     const unknown = args.slice(1).filter((arg) => arg !== "--force");
     if (unknown.length) return fail(`unknown option: ${unknown[0]}`);
@@ -91,10 +110,41 @@ function parseArgs(args) {
     if (unknown.length) return fail(`unknown option: ${unknown[0]}`);
     return { activation: args[0] === "activate", force: args.includes("--force") };
   }
-  if (args[0] !== "init") return fail("usage: opencode-work-context init [--force] | activate [--force] | deactivate [--force] | sync-command");
+  if (args[0] !== "init") return fail("usage: opencode-work-context init [--force] | activate [--force] | deactivate [--force] | sync-command | doctor --json [--project <path>]");
   const unknown = args.slice(1).filter((arg) => arg !== "--force");
   if (unknown.length) return fail(`unknown option: ${unknown[0]}`);
   return { force: args.includes("--force") };
+}
+
+function runDoctor(project) {
+  let root;
+  try {
+    root = fs.realpathSync(path.resolve(project || process.cwd()));
+    if (!fs.statSync(root).isDirectory()) throw new Error("path is not a directory");
+  } catch {
+    fail("doctor project must be an existing directory");
+    return;
+  }
+  try {
+    const diagnostic = validateDeliveryDoctorEnvelope(doctorDelivery(root));
+    const status = diagnostic.findings.some((finding) => finding.severity === "error")
+      ? "error"
+      : diagnostic.findings.some((finding) => finding.severity === "warning")
+        ? "warning"
+        : "ok";
+    console.log(JSON.stringify({
+      schema: 1,
+      component: packageManifest.name,
+      package_version: packageManifest.version,
+      status,
+      project: root,
+      diagnostic,
+      complete: true,
+    }));
+    if (status !== "ok") process.exitCode = 1;
+  } catch {
+    fail("doctor could not inspect project safely");
+  }
 }
 
 function activate(enabled, force) {
@@ -410,7 +460,9 @@ function writeGenerated() {
 }
 
 const options = parseArgs(process.argv.slice(2));
-if (options?.syncCommand) {
+if (options?.doctor) {
+  runDoctor(options.project);
+} else if (options?.syncCommand) {
   const initLock = acquireInitLock();
   if (initLock.failed) process.exitCode = 1;
   else {

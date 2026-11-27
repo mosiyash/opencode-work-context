@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "workspace": "000027",
+  "stage": "05",
+  "revision": 5,
+  "created_at": "2026-11-23T13:27:11.505Z",
+  "updated_at": "2026-11-23T13:50:33.161Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Add a repository-local two-phase commit-all operation on top of integration candidates",
+    "Keep stage attribution traceability-only and support standard and startup workspaces",
+    "Expose the contract through tools, /wc guidance, protocol evidence, documentation, and tests"
+  ],
+  "completed": [
+    "Re-audited the stage requirements, candidate publication path, plugin packaging surfaces, and the incomplete first implementation",
+    "Implement fingerprint-bound inspection and confirmed publication with repository safety checks",
+    "Add focused tests for boundaries, safety, mode behavior, stale plans, candidate reuse, and atomicity",
+    "Synchronize tools, command protocol, wrappers, README, and ADR documentation",
+    "Run focused and full repository verification"
+  ],
+  "remaining": [],
+  "decisions": [
+    "Use a read-only inspection fingerprint and require the confirmed publication call to reproduce it under the Git lock",
+    "Reuse the existing integration candidate capture, preview, temporary-index, and compare-and-swap publication path",
+    "Allow commit-all in both workspace modes while keeping ordinary candidate lifecycle commands startup-only"
+  ],
+  "blockers": [],
+  "verification": [
+    "Focused commit-all suite passed 30 tests",
+    "Full npm test passed 350 tests: 348 passed and 2 expected TUI skips",
+    "Repository language check passed for 382 files",
+    "npm pack dry run included both new standalone commit-all tools",
+    "git diff --check passed and generated /wc command matches its packaged source",
+    "Final independent audit found no blocking findings"
+  ]
+}

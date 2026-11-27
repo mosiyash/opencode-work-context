@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "workspace": "000027",
+  "stage": "03",
+  "revision": 4,
+  "created_at": "2026-11-23T13:56:36.891Z",
+  "updated_at": "2026-11-23T14:00:39.349Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Make sequential execution visible in agent guidance and the read-only checklist UI."
+  ],
+  "completed": [
+    "Inspect the execution API, resume contract, TUI, generated command source, and tests.",
+    "Update resume instructions and checklist rendering to use Current/Queued item identities.",
+    "Synchronize documentation and generated command artifacts.",
+    "Add regression coverage and run validation suites."
+  ],
+  "remaining": [],
+  "decisions": [
+    "Use the execution read model's current, queued, and item IDs; retain text-array fallbacks only for legacy test fixtures."
+  ],
+  "blockers": [],
+  "verification": [
+    "Focused tests: node --test test/stage-execution.test.js test/stages-tui.test.js test/installer.test.js",
+    "Full suite: npm test",
+    "Language check: npm run check:language"
+  ]
+}

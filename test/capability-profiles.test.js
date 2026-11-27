@@ -155,7 +155,9 @@ test("configuration operations write, show, and reset local depth mappings", () 
     const context = WorkContext.open(root);
     context.configureCapabilityProfiles({ mode: "off" });
     const configured = context.configureCapabilityProfiles({ mappings: { light: "Luna", standard: "Terra", deep: "Sol" } });
-    assert.deepEqual(configured.data, { mode: "off", mappings: { light: "Luna", standard: "Terra", deep: "Sol" }, warnings: [] });
+    assert.deepEqual(configured.data.mappings, { light: "Luna", standard: "Terra", deep: "Sol" });
+    assert.deepEqual(configured.data.legacy, { light: "Luna", standard: "Terra", deep: "Sol" });
+    assert.equal(configured.data.warnings[0].code, "LEGACY_CAPABILITY_MAPPING");
     assert.throws(() => context.configureCapabilityProfiles({ mode: "advisory", mappings: { deep: "Sol" } }), (error) => error.code === "INVALID_ARGUMENT");
     assert.equal(loadConfig(root).capability_profiles.mode, "off");
     assert.deepEqual(context.showCapabilityProfiles().data.mappings, { light: "Luna", standard: "Terra", deep: "Sol" });
@@ -180,7 +182,53 @@ test("configuration operations support custom storage roots without writing conf
     assert.equal(loadConfig(root).capability_profiles.mode, "off");
     assert.equal(fs.existsSync(path.join(root, ".work-context", "capability-profiles.json")), false);
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, ".state", "local", "capability-profiles.json"), "utf8")).mappings.standard, "Terra");
+    assert.equal(fs.existsSync(path.join(root, ".opencode", "capability-profiles.json")), false);
   } finally { removeRoot(root); }
+});
+
+test("shared global and project mappings preserve work-context advisory behavior", () => {
+  const root = makeRoot();
+  const home = makeRoot();
+  try {
+    const context = WorkContext.open(root, { capabilityProfilesHome: home });
+    createStage(context, { executionProfile: "architecture", executionDepth: "deep" });
+    context.configureCapabilityProfiles({ mappings: { light: "Luna", deep: "Global Sol" }, scope: "global" });
+    let profiles = context.startSession("900001", "02", { sessionId: "global" }).data.resume.context.capability_profiles;
+    assert.equal(profiles.execution.target, "Global Sol");
+    context.handoff("900001", "02", "global");
+    context.configureCapabilityProfiles({ mappings: { deep: "Project Sol" }, scope: "project" });
+    profiles = context.startSession("900001", "02", { sessionId: "project" }).data.resume.context.capability_profiles;
+    assert.equal(profiles.execution.target, "Project Sol");
+    context.handoff("900001", "02", "project");
+    const shown = context.showCapabilityProfiles().data;
+    assert.deepEqual(shown.global, { light: "Luna", deep: "Global Sol" });
+    assert.deepEqual(shown.project, { deep: "Project Sol" });
+    assert.deepEqual(shown.mappings, { light: "Luna", deep: "Project Sol" });
+    context.resetCapabilityProfiles("RESET_PROFILES", { scope: "project" });
+    profiles = context.startSession("900001", "02", { sessionId: "fallback" }).data.resume.context.capability_profiles;
+    assert.equal(profiles.execution.target, "Global Sol");
+  } finally {
+    removeRoot(root);
+    removeRoot(home);
+  }
+});
+
+test("legacy mappings are a warned fallback below global and project mappings", () => {
+  const root = makeRoot();
+  const home = makeRoot();
+  try {
+    const context = WorkContext.open(root, { capabilityProfilesHome: home });
+    createStage(context, { executionProfile: "implementation", executionDepth: "standard" });
+    fs.writeFileSync(mappingFile(context), JSON.stringify({ schema: 1, mappings: { light: "Legacy Luna", standard: "Legacy Terra", deep: "Legacy Sol" } }));
+    context.configureCapabilityProfiles({ mappings: { standard: "Global Terra", deep: "Global Sol" }, scope: "global" });
+    context.configureCapabilityProfiles({ mappings: { deep: "Project Sol" }, scope: "project" });
+    const shown = context.showCapabilityProfiles().data;
+    assert.deepEqual(shown.mappings, { light: "Legacy Luna", standard: "Global Terra", deep: "Project Sol" });
+    assert.equal(shown.warnings.at(-1).code, "LEGACY_CAPABILITY_MAPPING");
+  } finally {
+    removeRoot(root);
+    removeRoot(home);
+  }
 });
 
 test("off mode preserves classification and omits resume and UI recommendations", () => {

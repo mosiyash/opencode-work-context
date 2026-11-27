@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "workspace": "000027",
+  "stage": "06",
+  "revision": 4,
+  "created_at": "2026-11-24T02:18:36.773Z",
+  "updated_at": "2026-11-24T02:19:52.921Z",
+  "updated_by": "OpenCode",
+  "scope": [
+    "Allow extended sidebar metadata to remain readable in narrow layouts"
+  ],
+  "completed": [
+    "Locate the sidebar metadata renderer and relevant tests",
+    "Enable wrapping for long metadata lines",
+    "Update tests for wrapped metadata",
+    "Run the relevant TUI test suite"
+  ],
+  "remaining": [],
+  "decisions": [
+    "Preserve existing metadata content and line grouping; change only its wrapping behavior"
+  ],
+  "blockers": [],
+  "verification": [
+    "node --test test/stages-tui.test.js: 108 passed, 2 skipped",
+    "npm run test:tui: 110 passed",
+    "npm test: 350 passed, 2 skipped",
+    "git diff --check: passed"
+  ]
+}

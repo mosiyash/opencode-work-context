@@ -262,6 +262,7 @@ test("sync-command refreshes only the generated slash command", () => {
     assert.equal(fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"), fs.readFileSync(path.join(packageRoot, "commands", "wc.md"), "utf8"));
     assert.equal(fs.readFileSync(path.join(root, ".opencode", "commands", "commited.md"), "utf8"), fs.readFileSync(path.join(packageRoot, "commands", "commited.md"), "utf8"));
     assert.match(fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"), new RegExp(WORK_CONTEXT_PROTOCOL_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(fs.readFileSync(path.join(root, ".opencode", "commands", "wc.md"), "utf8"), /work only on Current by default/);
     assert.equal(fs.readFileSync(path.join(root, ".opencode", "sentinel"), "utf8"), "preserve\n");
     assert.equal(fs.readFileSync(path.join(root, ".opencode", "work-context.md"), "utf8"), "Project-specific workflow\n");
     assert.equal(fs.existsSync(path.join(root, "package.json")), false);

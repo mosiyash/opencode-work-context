@@ -1,0 +1,44 @@
+{
+  "schema": 2,
+  "workspace": "000027",
+  "stage": "07",
+  "revision": 4,
+  "created_at": "2026-11-26T16:23:22.238Z",
+  "updated_at": "2026-11-26T16:24:42.628Z",
+  "updated_by": "OpenCode",
+  "items": {
+    "scope": [
+      {
+        "id": "1f7937c4-e61b-4733-9e03-93f98bc2bb08",
+        "text": "Make unread attention visible when a background stage is also reported as active"
+      }
+    ],
+    "completed": [
+      {
+        "id": "3bc50015-baa1-4f85-b425-fdb88a847a43",
+        "text": "Identify that the activity spinner currently masks the attention signal"
+      },
+      {
+        "id": "0a2c9417-4863-4375-a371-968b1c6b50d4",
+        "text": "Give the attention signal display priority over the activity spinner"
+      },
+      {
+        "id": "347a85b8-cf47-44c3-a1fb-a86e5a41c454",
+        "text": "Add a regression test for simultaneous permission attention and activity"
+      },
+      {
+        "id": "0b7c8b9d-30ac-4c77-9e9c-d13e9e21d1a3",
+        "text": "Run the relevant attention and TUI test suites"
+      }
+    ],
+    "remaining": [],
+    "decisions": [
+      {
+        "id": "57187a4a-f113-43db-a530-707766b75eea",
+        "text": "Keep activity tracking unchanged and resolve the conflict in presentation precedence"
+      }
+    ],
+    "blockers": [],
+    "verification": []
+  }
+}

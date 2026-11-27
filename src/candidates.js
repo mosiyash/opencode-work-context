@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { atomicWrite } from "./storage.js";
 import { ERROR_CODES, fail } from "./errors.js";
 import { normalizeStageId, normalizeWorkspaceId } from "./identifiers.js";
-import { capturePatch, capturePaths, commitPatch, previewPatch, repositoryState } from "./git-candidates.js";
+import { capturePatch, capturePaths, commitPatch, inspectCommitAll, previewPatch, repositoryState } from "./git-candidates.js";
 
 const candidatePattern = /^CC-(\d{6})$/;
 const statuses = new Set(["draft", "ready", "discarded", "committed"]);
@@ -52,6 +53,13 @@ export class CandidateStore {
     return workspace;
   }
 
+  assertWorkspace(workspace) {
+    this.context.storage.assertNoSymlinks();
+    workspace = normalizeWorkspaceId(workspace);
+    this.context.storage.readWorkspace(workspace);
+    return workspace;
+  }
+
   metadataFile(id) { return path.join(this.directory, `${id}.json`); }
   patchFile(id) { return path.join(this.directory, `${id}.patch`); }
 
@@ -84,7 +92,7 @@ export class CandidateStore {
   }
 
   create(workspace, title, message = null, options = {}) {
-    workspace = this.assertStartup(workspace);
+    workspace = options.allowStandard ? this.assertWorkspace(workspace) : this.assertStartup(workspace);
     if (!title?.trim()) fail(ERROR_CODES.INVALID_ARGUMENT, "Candidate title is required");
     const strategy = options.strategy ?? "exact";
     if (!strategies.has(strategy)) fail(ERROR_CODES.INVALID_ARGUMENT, "Candidate strategy must be 'exact', 'shared_foundation' or 'integration'");
@@ -168,8 +176,8 @@ export class CandidateStore {
     };
   }
 
-  capture(workspace, id, input) {
-    workspace = this.assertStartup(workspace);
+  capture(workspace, id, input, options = {}) {
+    workspace = options.allowStandard ? this.assertWorkspace(workspace) : this.assertStartup(workspace);
     const data = this.read(id, workspace);
     if (data.status !== "draft") fail(ERROR_CODES.INVALID_STATE, "Only draft candidates can be captured", { status: data.status });
     const hasPaths = Array.isArray(input.paths);
@@ -185,15 +193,15 @@ export class CandidateStore {
     return { ...data, patch: captured.patch };
   }
 
-  preview(workspace, id) {
-    workspace = this.assertStartup(workspace);
+  preview(workspace, id, options = {}) {
+    workspace = options.allowStandard ? this.assertWorkspace(workspace) : this.assertStartup(workspace);
     const data = this.read(id, workspace, true);
     if (!data.patch) fail(ERROR_CODES.INVALID_STATE, "Commit candidate has not captured a patch");
     return { candidate: data, preview: previewPatch(this.context.storage.projectRoot, data.base_head, data.patch) };
   }
 
-  setStatus(workspace, id, status) {
-    workspace = this.assertStartup(workspace);
+  setStatus(workspace, id, status, options = {}) {
+    workspace = options.allowStandard ? this.assertWorkspace(workspace) : this.assertStartup(workspace);
     const data = this.read(id, workspace, true);
     if (status === "ready" && data.status !== "draft") fail(ERROR_CODES.INVALID_STATE, "Only draft candidates can become ready", { status: data.status });
     if (status === "discarded" && data.status === "discarded") return data;
@@ -207,13 +215,14 @@ export class CandidateStore {
   }
 
   commit(workspace, id, message = undefined, options = {}) {
-    workspace = this.assertStartup(workspace);
+    workspace = options.allowStandard ? this.assertWorkspace(workspace) : this.assertStartup(workspace);
     const data = this.read(id, workspace, true);
     if (data.status !== "ready") fail(ERROR_CODES.INVALID_STATE, "Only ready candidates can be committed", { status: data.status });
     if (message !== undefined && (typeof message !== "string" || !message.trim())) fail(ERROR_CODES.INVALID_ARGUMENT, "Commit message must be a non-empty string");
     const commitMessage = message === undefined ? data.message : message.trim();
     let metadata;
     const published = commitPatch(this.context.storage.projectRoot, data.base_head, data.patch, commitMessage, {
+      expectedHead: options.expectedHead,
       beforeUpdateRef: (pending) => {
         const committedAt = new Date().toISOString();
         data.message = commitMessage;
@@ -226,7 +235,105 @@ export class CandidateStore {
         this.write(metadata);
         options.beforeUpdateRef?.(pending);
       },
+      afterUpdateRef: (publication) => options.afterUpdateRef?.({ ...publication, candidate_record: metadata, patch: data.patch }),
     });
     return { ...metadata, branch: published.branch, previous_head: published.previous_head, stale: published.stale };
+  }
+
+  normalizeRelatedStages(workspace, values = []) {
+    if (!Array.isArray(values)) fail(ERROR_CODES.INVALID_ARGUMENT, "Related stages must be an array");
+    const stages = values.map(normalizeStageId);
+    if (new Set(stages).size !== stages.length) fail(ERROR_CODES.INVALID_ARGUMENT, "Related stages must be unique");
+    return stages.map((stage) => {
+      const record = this.context.storage.readStage(workspace, stage);
+      return { stage, title: record.data.title };
+    });
+  }
+
+  generatedMessage(audit, stages) {
+    const paths = audit.included_paths;
+    let subject;
+    let conventionalType = "chore";
+    if (paths.every((item) => /^(?:docs\/|README(?:\.|$)|[^/]+\.md$)/i.test(item))) { subject = "Update documentation"; conventionalType = "docs"; }
+    else if (paths.every((item) => /(?:^|\/)(?:test|tests|__tests__)(?:\/|$)|\.test\.[^/]+$/.test(item))) { subject = "Expand test coverage"; conventionalType = "test"; }
+    else if (paths.some((item) => /candidate|git-candidate/.test(item)) || (stages.length === 1 && /commit[- ]all/i.test(stages[0].title))) { subject = "Add repository-local commit-all flow"; conventionalType = "feat"; }
+    else subject = paths.length === 1 ? `Update ${path.basename(paths[0])}` : "Integrate repository changes";
+    const conventional = audit.recent_subjects.filter((item) => /^[a-z]+(?:\([^)]+\))?!?:\s/.test(item)).length > audit.recent_subjects.length / 2;
+    return conventional ? `${conventionalType}: ${subject[0].toLowerCase()}${subject.slice(1)}` : subject;
+  }
+
+  inspectAll(workspace, options = {}) {
+    workspace = this.assertWorkspace(workspace);
+    if (options.message !== undefined && (typeof options.message !== "string" || !options.message.trim())) fail(ERROR_CODES.INVALID_ARGUMENT, "Commit message must be a non-empty string");
+    const audit = inspectCommitAll(this.context.storage.projectRoot, this.context.storage.personalRoot, { excludePaths: options.excludePaths });
+    if (!audit.included_paths.length) fail(ERROR_CODES.COMMIT_ALL_NO_CHANGES, "No eligible repository changes are available to commit", { excluded_paths: audit.excluded_paths });
+    let relatedStages = options.relatedStages;
+    let attributionBasis = relatedStages === undefined ? "workspace_integration" : "user_selected";
+    if (relatedStages === undefined) {
+      relatedStages = this.projectionRecords(workspace).filter((candidate) => ["draft", "ready"].includes(candidate.status) && candidate.strategy === "integration")
+        .flatMap((candidate) => {
+          try {
+            const patch = this.read(candidate.candidate, workspace, true).patch;
+            return createHash("sha256").update(patch).digest("hex") === audit.patch_fingerprint ? (candidate.related_stages || []) : [];
+          } catch { return []; }
+        });
+      relatedStages = [...new Set(relatedStages)].sort();
+      if (relatedStages.length) attributionBasis = "exact_candidate_relation";
+    }
+    const stages = this.normalizeRelatedStages(workspace, relatedStages).map((stage) => ({ ...stage, evidence: attributionBasis }));
+    const message = options.message?.trim() || this.generatedMessage(audit, stages);
+    const plan = {
+      workspace,
+      base_head: audit.base_head,
+      patch_fingerprint: audit.patch_fingerprint,
+      included_paths: audit.included_paths,
+      excluded_paths: audit.excluded_paths,
+      related_stages: stages.map((item) => item.stage),
+      message,
+    };
+    const fingerprint = createHash("sha256").update(JSON.stringify(plan)).digest("hex");
+    const result = {
+      workspace,
+      repository_root: audit.repository_root,
+      strategy: "integration",
+      fingerprint,
+      base_head: audit.base_head,
+      included_paths: audit.included_paths,
+      excluded_paths: audit.excluded_paths,
+      unattributed_paths: audit.included_paths,
+      contributing_stages: stages,
+      attribution: { basis: attributionBasis, complete: false },
+      message,
+      message_source: options.message === undefined ? "generated" : "user",
+      verification: { patch_fingerprint: audit.patch_fingerprint, stat: audit.stat, recent_subjects: audit.recent_subjects, included_path_count: audit.included_paths.length, excluded_path_count: audit.excluded_paths.length },
+      policy_exclusions: [".work-context/local/**", ".work-context/.locks/**", ".work-context/.transactions/**"],
+    };
+    return options.includePatch ? { ...result, patch: audit.patch } : result;
+  }
+
+  commitAll(workspace, expectedFingerprint, confirmation, options = {}) {
+    if (confirmation !== "COMMIT_ALL_CONFIRMED") fail(ERROR_CODES.COMMIT_ALL_CONFIRMATION_REQUIRED, "Commit all requires the exact COMMIT_ALL_CONFIRMED confirmation");
+    if (typeof expectedFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(expectedFingerprint)) fail(ERROR_CODES.INVALID_ARGUMENT, "Expected fingerprint must be a SHA-256 hash");
+    const inspection = this.inspectAll(workspace, { ...options, includePatch: true });
+    if (inspection.fingerprint !== expectedFingerprint) fail(ERROR_CODES.COMMIT_ALL_STALE_PLAN, "Repository changes no longer match the inspected commit-all plan", { expected_fingerprint: expectedFingerprint, actual_fingerprint: inspection.fingerprint });
+    options.beforeCandidate?.(inspection);
+    if (repositoryState(this.context.storage.projectRoot).head !== inspection.base_head) fail(ERROR_CODES.COMMIT_ALL_STALE_PLAN, "Git HEAD no longer matches the confirmed commit-all plan", { expected_head: inspection.base_head });
+    const patchHash = (value) => createHash("sha256").update(value).digest("hex");
+    const duplicate = this.projectionRecords(workspace).filter((candidate) => ["draft", "ready"].includes(candidate.status)
+      && candidate.strategy === "integration" && candidate.base_head === inspection.base_head
+      && candidate.message === inspection.message && JSON.stringify(candidate.related_stages || []) === JSON.stringify(inspection.contributing_stages.map((item) => item.stage)))
+      .find((candidate) => {
+        try { return patchHash(this.read(candidate.candidate, workspace, true).patch) === inspection.verification.patch_fingerprint; } catch { return false; }
+      });
+    const allowStandard = { allowStandard: true };
+    let candidate = duplicate || this.create(workspace, inspection.message.split("\n", 1)[0], inspection.message, { ...allowStandard, strategy: "integration", relatedStages: inspection.contributing_stages.map((item) => item.stage) });
+    if (candidate.base_head !== inspection.base_head) fail(ERROR_CODES.COMMIT_ALL_STALE_PLAN, "Git HEAD changed while constructing the confirmed commit-all candidate", { expected_head: inspection.base_head, actual_head: candidate.base_head });
+    if (!duplicate) candidate = this.capture(workspace, candidate.candidate, { paths: inspection.included_paths }, allowStandard);
+    const preview = this.preview(workspace, candidate.candidate, allowStandard).preview;
+    if (patchHash(preview.patch) !== inspection.verification.patch_fingerprint) fail(ERROR_CODES.COMMIT_ALL_VERIFICATION_FAILED, "Candidate preview does not match the confirmed commit-all patch");
+    if (candidate.status === "draft") candidate = this.setStatus(workspace, candidate.candidate, "ready", allowStandard);
+    const committed = this.commit(workspace, candidate.candidate, undefined, { ...allowStandard, expectedHead: inspection.base_head, afterUpdateRef: options.afterUpdateRef });
+    const { patch, ...audit } = inspection;
+    return { ...audit, candidate: committed.candidate, candidate_reused: Boolean(duplicate), commit: { sha: committed.commit_hash, branch: committed.branch, previous_head: committed.previous_head } };
   }
 }

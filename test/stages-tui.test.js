@@ -136,6 +136,9 @@ test("stage snapshot includes only the current stage's canonical execution state
     context.addStage("999967", "Later stage");
     const result = readStagesSnapshot({ projectRoot: root, sessionId: "oc-current" });
     assert.deepEqual(result.data.stages[0].execution.remaining, ["Render checklist", "Test output"]);
+    assert.equal(result.data.stages[0].execution.current.text, "Render checklist");
+    assert.deepEqual(result.data.stages[0].execution.queued.map((item) => item.text), ["Test output"]);
+    assert.equal(result.data.stages[0].execution.current.id, result.data.stages[0].execution.items.remaining[0].id);
     assert.equal(result.data.stages[1].execution, undefined);
   } finally { removeRoot(root); }
 });
@@ -373,7 +376,7 @@ test("sidebar renders a compact attention signal before the lifecycle marker", (
   assert.equal(row.props.children[2].props.children[0].props.children, "01. Test: review needed");
 });
 
-test("sidebar loader takes the signal column while preserving lifecycle and unread attention", () => {
+test("sidebar unread permission takes the signal column before the activity loader", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const element = renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
@@ -381,11 +384,23 @@ test("sidebar loader takes the signal column while preserving lifecycle and unre
     currentStage: "01",
   } }, {}, runtime, {
     activityForStage: () => ({ count: 2, items: [] }),
-    attentionForStage: () => ({ count: 2, reason: "question" }),
+    attentionForStage: () => ({ count: 1, reason: "permission" }),
   }, true, undefined, () => "⠙");
   const row = element.props.children()[2];
-  assert.deepEqual(row.props.children.slice(0, 2).map((child) => child.props.children), ["⠙", "[•]"]);
+  assert.equal(row.props.children[0].props.children.type, "b");
+  assert.equal(row.props.children[0].props.children.props.children, "!");
+  assert.equal(row.props.children[1].props.children, "[•]");
   assert.equal(row.props.children[2].props.children[0].props.children, "01. Working");
+
+  const active = renderStagesElement({ ok: true, data: {
+    workspace: { id: "000001", title: "Demo", status: "in_progress" },
+    stages: [{ id: "01", title: "Working", status: "in_progress", current: true, depends_on: [] }],
+    currentStage: "01",
+  } }, {}, runtime, {
+    activityForStage: () => ({ count: 1, items: [] }),
+    attentionForStage: () => null,
+  }, true, undefined, () => "⠙");
+  assert.equal(active.props.children()[2].props.children[0].props.children, "⠙");
 
   const waiting = renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
@@ -635,12 +650,33 @@ test("sidebar details render a concise todo summary only for the current checkli
 
 test("checklist dialog renders current, queued, completed, blockers, and verification safely", () => {
   const execution = {
-    scope: ["Keep this concise"], completed: ["Read snapshot"], remaining: ["Render checklist", "Add tests"], decisions: ["Use canonical state"], blockers: ["Await API"], verification: ["Run tests"],
+    current: { id: "current-id", text: "Render checklist" },
+    queued: [{ id: "queued-id", text: "Add tests" }],
+    items: {
+      scope: [{ id: "scope-id", text: "Keep this concise" }],
+      completed: [{ id: "completed-id", text: "Read snapshot" }],
+      remaining: [{ id: "current-id", text: "Render checklist" }, { id: "queued-id", text: "Add tests" }],
+      decisions: [{ id: "decision-id", text: "Use canonical state" }],
+      blockers: [{ id: "blocker-id", text: "Await API" }],
+      verification: [{ id: "verification-id", text: "Run tests" }],
+    },
   };
   const options = checklistOptions(execution, 30);
   assert.deepEqual(options.map((option) => option.category), ["Checklist", "Current", "Queued", "Completed", "Blockers", "Verification", "Scope", "Decisions"]);
   assert.match(options[1].title, /^\[•\] Render checklist$/);
   assert.match(options[2].title, /^\[ \] Add tests$/);
+  assert.deepEqual(options.slice(1).map((option) => option.value), ["execution-current-id", "execution-queued-id", "execution-completed-id", "execution-blocker-id", "execution-verification-id", "execution-scope-id", "execution-decision-id"]);
+
+  const promoted = checklistOptions({
+    ...execution,
+    current: execution.queued[0],
+    queued: [],
+    items: { ...execution.items, completed: [...execution.items.completed, execution.items.remaining[0]], remaining: [execution.items.remaining[1]] },
+  });
+  assert.equal(promoted[1].title, "[•] Add tests");
+  assert.equal(promoted[1].value, "execution-queued-id");
+  assert.equal(promoted[2].value, "execution-completed-id");
+  assert.equal(promoted[3].value, "execution-current-id");
 
   let dialog;
   const api = {
@@ -656,7 +692,7 @@ test("checklist dialog renders current, queued, completed, blockers, and verific
   assert.equal(openChecklistDialog(api, { ok: true, data: { workspace: { title: "Demo" }, currentStage: "01", stages: [{ id: "01", title: "Build", current: true }] } }), false);
 });
 
-test("sidebar stage metadata stays on one line below its wrapped title", () => {
+test("sidebar stage metadata wraps below its wrapped title", () => {
   const runtime = { jsx: (type, props) => ({ type, props }) };
   const element = renderStagesElement({ ok: true, data: {
     workspace: { id: "000001", title: "Demo", status: "in_progress" },
@@ -671,7 +707,7 @@ test("sidebar stage metadata stays on one line below its wrapped title", () => {
   assert.equal(stageRow.props.children.length, 3);
   assert.equal(content.props.flexDirection, "column");
   assert.equal(content.props.children[0].props.wrapMode, "word");
-  assert.equal(content.props.children[1].props.wrapMode, "none");
+  assert.equal(content.props.children[1].props.wrapMode, "word");
   assert.equal(content.props.children[1].props.children, "Tasks: GL#41 · Deps: 01");
 });
 

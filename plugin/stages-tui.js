@@ -117,7 +117,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
             flexShrink: 0,
             marginRight: 1,
             fg: working || current ? theme?.current?.warning : theme?.current?.textMuted,
-            children: working ? activityFrame() : attentionSignal ? runtime.jsx("b", { children: attentionSignal }) : " ",
+            children: attentionSignal ? runtime.jsx("b", { children: attentionSignal }) : working ? activityFrame() : " ",
           }),
           runtime.jsx("text", { flexShrink: 0, marginRight: 1, fg: current ? theme?.current?.warning : theme?.current?.textMuted, children: statusMarker(stage.status) }),
           runtime.jsx("box", {
@@ -126,7 +126,7 @@ const renderStagesContent = (result, theme, runtime = defaultRuntime, attention,
             flexDirection: "column",
             children: [
               runtime.jsx("text", { wrapMode: "word", fg: current ? theme?.current?.warning : theme?.current?.text, children: `${stage.id}. ${stage.title}` }),
-              metadata && runtime.jsx("text", { wrapMode: "none", fg: theme?.current?.textMuted, children: metadata }),
+              metadata && runtime.jsx("text", { wrapMode: "word", fg: theme?.current?.textMuted, children: metadata }),
             ].filter(Boolean),
           }),
         ],
@@ -375,14 +375,24 @@ export const checklistOptions = (execution, width = 80) => {
   if (!execution) return [{ title: "No checklist is available for the current stage.", value: "empty", disabled: true }];
   const compact = width < 50;
   const truncate = (text) => compact && text.length > Math.max(12, width - 12) ? `${text.slice(0, Math.max(9, width - 15))}...` : text;
+  const structuredItems = (section) => execution.items?.[section] || execution[section] || [];
+  const item = (value, section, index) => typeof value === "string"
+    ? { id: `${section}-${index}`, text: value }
+    : value;
+  const option = (value, section, index, title, category) => {
+    const entry = item(value, section, index);
+    return { title: title(entry.text), value: `execution-${entry.id}`, category };
+  };
   const options = [];
-  if (execution.remaining?.[0]) options.push({ title: `[•] ${truncate(execution.remaining[0])}`, value: "current", category: "Current" });
-  for (const item of execution.remaining?.slice(1) || []) options.push({ title: `[ ] ${truncate(item)}`, value: `queued-${item}`, category: "Queued" });
-  for (const item of execution.completed || []) options.push({ title: `[✓] ${truncate(item)}`, value: `completed-${item}`, category: "Completed" });
-  for (const item of execution.blockers || []) options.push({ title: `[!] ${truncate(item)}`, value: `blocker-${item}`, category: "Blockers" });
-  for (const item of execution.verification || []) options.push({ title: `[ ] ${truncate(item)}`, value: `verification-${item}`, category: "Verification" });
-  if (execution.scope?.length) options.push(...execution.scope.map((item) => ({ title: truncate(item), value: `scope-${item}`, category: "Scope" })));
-  if (execution.decisions?.length) options.push(...execution.decisions.map((item) => ({ title: truncate(item), value: `decision-${item}`, category: "Decisions" })));
+  const current = execution.current || structuredItems("remaining")[0];
+  const queued = execution.queued || structuredItems("remaining").slice(1);
+  if (current) options.push(option(current, "remaining", 0, (text) => `[•] ${truncate(text)}`, "Current"));
+  queued.forEach((entry, index) => options.push(option(entry, "remaining", index + 1, (text) => `[ ] ${truncate(text)}`, "Queued")));
+  structuredItems("completed").forEach((entry, index) => options.push(option(entry, "completed", index, (text) => `[✓] ${truncate(text)}`, "Completed")));
+  structuredItems("blockers").forEach((entry, index) => options.push(option(entry, "blockers", index, (text) => `[!] ${truncate(text)}`, "Blockers")));
+  structuredItems("verification").forEach((entry, index) => options.push(option(entry, "verification", index, (text) => `[ ] ${truncate(text)}`, "Verification")));
+  structuredItems("scope").forEach((entry, index) => options.push(option(entry, "scope", index, truncate, "Scope")));
+  structuredItems("decisions").forEach((entry, index) => options.push(option(entry, "decisions", index, truncate, "Decisions")));
   return options.length ? [{ title: "Close", value: "close", category: "Checklist" }, ...options] : [{ title: "Checklist is empty.", value: "empty", disabled: true }];
 };
 

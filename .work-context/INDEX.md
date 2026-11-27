@@ -26,5 +26,6 @@
 | 000025 | RnD stage todos functional | in_progress | 2026-11-20T05:15:25.575Z |
 | 000022 | Git parallel stages commit strategy | in_progress | 2026-11-16T17:27:14.999Z |
 | 000011 | Fixes | completed | 2026-11-13T04:27:19.414Z |
+| 000027 | Plugin updates | in_progress | 2026-11-27T12:30:43.511Z |
 | 000010 | Fixes for creating a new stage | completed | 2026-11-13T04:27:19.450Z |
 | 000024 | TUI sidebar optimize | completed | 2026-11-20T05:14:44.011Z |

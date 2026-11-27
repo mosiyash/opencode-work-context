@@ -3,7 +3,7 @@ description: Explicit work-context lifecycle commands backed by structured tools
 subtask: false
 ---
 
-<!-- opencode-work-context-protocol: {"schema":1,"major":1,"minor":1,"descriptor_hash":"sha256:d1320820ace2e9a56f35ab279dace8ae2c59cc2c73f03b73f30068adbfd6e734"} -->
+<!-- opencode-work-context-protocol: {"schema":1,"major":1,"minor":3,"descriptor_hash":"sha256:08ec85ffd42546b86bd07ce8f924ddc3f1e671c54211c161751e4af8b91fae32"} -->
 
 Interpret `/wc $ARGUMENTS` as an explicit work-context operation. Use the matching
 `work_context_*` custom tool registered by the installed package plugin with structured arguments. Never edit work-context
@@ -39,6 +39,8 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `candidate ready <workspace> <candidateId>` -> `work_context_ready_candidate`
 - `candidate commit <workspace> <candidateId> ["message"]` -> `work_context_commit_candidate`
 - `candidate discard <workspace> <candidateId>` -> `work_context_discard_candidate`
+- `commit all <workspace> ["message"] [stages <stage>...] [exclude <path>...]` -> `work_context_inspect_commit_all`
+- `commit all confirm <workspace> <fingerprint> COMMIT_ALL_CONFIRMED ["message"] [stages <stage>...] [exclude <path>...]` -> `work_context_commit_all`
 - `delivery read <workspace> [<environment>] [range <from> <to>]` -> `work_context_read_delivery`
 - `delivery explain <workspace> <from> <to> [findings JSON]` -> `work_context_explain_delivery`
 - `delivery doctor` -> `work_context_doctor_delivery`
@@ -49,8 +51,8 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `commited <short-or-full-SHA>` -> `work_context_acknowledge_commit`
 - `stage force-close <workspace> <stage> <sessionId> "reason" FORCE_CLOSE` -> `work_context_force_close_session`
 - `profiles show` -> `work_context_show_capability_profiles`
-- `profiles setup` -> ask the user questions, then `work_context_configure_capability_profiles`
-- `profiles reset` -> ask for confirmation, then `work_context_reset_capability_profiles`
+- `profiles setup` -> ask for global or project scope and mapping values, then `work_context_configure_capability_profiles`
+- `profiles reset` -> ask for global or project scope and confirmation, then `work_context_reset_capability_profiles`
 - `stage add [<workspace>] ...` -> `work_context_add_stage` (optional `prompt`; infer missing execution capability and depth from the complete stage context before calling the tool)
 - `stage profiles [<workspace>] [<stage>] [execution <routine|implementation|architecture|security|review> depth <light|standard|deep>|clear] [review <routine|implementation|architecture|security|review|clear>]` -> `work_context_set_stage_profiles`
 - `stage profiles refresh <workspace> [<stage>] [--include-explicit]` -> inspect current stage context, infer classifications, then `work_context_refresh_stage_profiles`
@@ -63,6 +65,7 @@ Use these exact tool mappings; do not invent shortened tool names:
 - `stage execution read [<workspace>] [<stage>]` -> `work_context_read_stage_execution`
 - `stage execution replace [<workspace>] [<stage>] <expectedRevision> "state JSON"` -> `work_context_replace_stage_execution`
 - `stage execution update [<workspace>] [<stage>] <expectedRevision> "changes JSON"` -> `work_context_update_stage_execution`
+- `stage execution complete-current [<workspace>] [<stage>] <expectedRevision>` -> `work_context_complete_current`
 - `stage archive [<workspace>] [<stage>]` -> `work_context_archive_stage`
 - `stage handoff [<workspace>] [<stage>]` -> `work_context_handoff_stage`
 - `stage abandon [<workspace>] [<stage>]` -> `work_context_abandon_stage`
@@ -86,6 +89,8 @@ Supported syntax:
 - `candidate ready <workspace> <candidateId>`
 - `candidate commit <workspace> <candidateId> ["message"]`
 - `candidate discard <workspace> <candidateId>`
+- `commit all <workspace> ["message"] [stages <stage>...] [exclude <path>...]`
+- `commit all confirm <workspace> <fingerprint> COMMIT_ALL_CONFIRMED ["message"] [stages <stage>...] [exclude <path>...]`
 - `delivery read <workspace> [<environment>] [range <from> <to>]`
 - `delivery explain <workspace> <from> <to> [findings JSON]`
 - `delivery doctor`
@@ -110,6 +115,7 @@ Supported syntax:
 - `stage execution read [<workspace>] [<stage>]`
 - `stage execution replace [<workspace>] [<stage>] <expectedRevision> "state JSON"`
 - `stage execution update [<workspace>] [<stage>] <expectedRevision> "changes JSON"`
+- `stage execution complete-current [<workspace>] [<stage>] <expectedRevision>`
 - `stage archive [<workspace>] [<stage>]`
 - `stage handoff [<workspace>] [<stage>]`
 - `stage abandon [<workspace>] [<stage>]`
@@ -131,20 +137,21 @@ Supported syntax:
 - `stage profiles` makes an explicit assignment; execution capability and depth are set or cleared together, omitted fields remain unchanged, and review remains optional metadata that does not control subagents or resolve a model
 - `stage profiles refresh` re-evaluates actionable missing/inferred stages from their complete current context and applies all computed recommendations in one structured call; skip completed/archived stages and preserve explicit assignments unless `--include-explicit` was requested
 - `capability_profiles.mode` in `.work-context/config.yaml` is `advisory` by default or `off`; off mode preserves metadata but omits profile presentation, resolution, and mapping warnings
-- advisory mappings are local depth-to-model labels, for example `{ "schema": 1, "mappings": { "light": "Luna", "standard": "Terra", "deep": "Sol" } }`; invalid entries are ignored with bounded warnings and missing mappings resolve to `current model`
+- advisory mappings are layered depth-to-model labels: tracked project mappings in `.opencode/capability-profiles.json` override global mappings in `~/.config/opencode/capability-profiles.json`; invalid entries are ignored with bounded warnings and missing mappings resolve to `current model`
 - `profiles setup` must use interactive questions for mode and light/standard/deep labels, apply mode and mappings in separate atomic structured calls, then offer to refresh unfinished stages; `profiles reset` requires explicit confirmation and removes mappings without changing stage metadata or mode
 - expanded stage details show one unlabeled line `<capability> · <depth> · <model>`; review metadata is not displayed as a model recommendation
 - capability recommendations never select a model or agent, create a replacement session, block resume, or persist mapping targets in tracked workspace data
-- stage execution state has `scope`, `completed`, `remaining`, `decisions`, `blockers`, and `verification` string-array sections; `replace` accepts the complete state object, while `update` accepts an object with `add` and/or `remove` section objects
+- stage execution state preserves string-array section compatibility while exposing stable `{ id, text }` identities in `items`; `current` is the first remaining item and `queued` contains later remaining items in order. `replace` accepts strings or structured items, while `update` accepts `add`, `remove`, and `edit` changes; use IDs for duplicate or reworded text
 - read stage execution state first and pass its revision as `expectedRevision`; absent legacy state has revision `0`, and a stale mutation returns `EXECUTION_REVISION_CONFLICT` without changing newer state
 - execution mutations require the active stage session, trim and deduplicate items, reject overlap between `completed` and `remaining`, and enforce bounded item counts, lengths, and serialized size
 - update execution state after meaningful scope changes, decisions, substantial work, blockers, or verification changes and before handoff; do not update it for every trivial edit or tool call
-- after completing a meaningful remaining checklist item, read the latest revision and atomically remove that exact item from `remaining` while adding it to `completed` in one execution update; retain ordering and briefly report the transition in normal output
+- work only on Current by default. Do not combine Queued items into one change set unless the user explicitly asks to batch them
+- after completing a meaningful Current item, read the latest revision and call `stage execution complete-current`; it atomically moves only Current to Completed and promotes the next queued item. Retain ordering and briefly report the transition in normal output
 - `resume` returns `resume.presentation` and `resume.context`; before doing any work, report a concise human-oriented summary in the user's language with the stage title, a plain-language Goal, previous progress when useful, and the immediate next action
 - when the saved prompt contains several clear deliverables, add `In this stage we will` with 2-5 short outcome-oriented bullets derived only from the prompt, previous result, and workspace knowledge; do not invent scope, and omit this block for a small stage
 - do not expose raw workspace/stage/session identifiers, ordinals, `ok` flags, or absent error codes in the user-facing resume summary
 - `resume.context.workspace_knowledge` contains every active durable knowledge entry for the workspace; treat it as established shared context, and do not repeat earlier analysis unless an entry is incomplete, contradicted, or needs verification
-- when stage execution state exists, `resume.context.execution_state` is the current stage-local operational checkpoint; continue from it without rewriting the original prompt, and never copy it automatically into workspace knowledge or unrelated stages
+- when stage execution state exists, `resume.context.execution_state` is the current stage-local operational checkpoint. Its structured `current` and `queued` fields identify the active item and its ordered backlog; continue from it without rewriting the original prompt, and never copy it automatically into workspace knowledge or unrelated stages
 - Planning-stage resume may include `resume.context.delivery_context`, a bounded workspace-level summary of committed candidates and environment checkpoints; it is release coordination context, not stage ownership
 - when the user asks how to deploy from Planning, inspect the exact commit range and the repository's own deployment documentation, scripts, infrastructure, migrations, container definitions, configuration examples, and CI; produce ordered prerequisites, deployment, verification, rollback, and unresolved blockers instead of assuming that push or one generic command is sufficient
 - delivery planning must never persist secret values; mention only required secret or configuration names, ask one focused question when environment or baseline is ambiguous, and never mark delivery merely because commit, push, or CI succeeded
@@ -168,6 +175,10 @@ Supported syntax:
 - `stage restore <workspace> <stage> "reason"` applies only to an archived stage and restores its saved pre-archive status. New archives preserve that status; legacy archives restore to `in_progress`. It records the reason, preserves stage content and results, does not start a session, and requires explicit separate-session `resume` when restored to `planned` or `in_progress`.
 - `workspace reopen <workspace> "reason"` applies only to a completed workspace, changes it to `in_progress`, and records durable recovery history. Cancelled workspaces cannot be reopened.
 - candidate operations require `startup` workflow mode and store metadata and patch payloads only under `.work-context/local/`; create accepts an optional strategy and related stages, which are normalized references for traceability only and never ownership or lifecycle; active candidates explicitly related to the resumed stage appear as bounded metadata in `resume.context.pending_candidates` and in expanded sidebar details; capture requires exactly one explicit list of complete paths or one Git unified patch and never infers stage ownership; commit requires a ready candidate, uses its stored message unless a non-empty override is supplied, serializes Git publication, bypasses hooks and signing, and never uses the ordinary Git index
+- `commit all` is an explicit two-phase repository-local integration operation available in standard and startup workspaces: first call inspection, report its included and excluded paths, traceability, proposed message, verification summary, and fingerprint, then wait for the user's exact `COMMIT_ALL_CONFIRMED` confirmation before calling publication with the same message, stages, exclusions, and fingerprint
+- commit-all inspection is read-only and never treats stages as file ownership; user-selected stages are traceability and message context, paths without defensible attribution remain explicit, `exclude` leaves known unrelated work outside the patch, and an omitted message uses the diff-derived proposal
+- commit-all publication re-inspects under the Git lock and returns `COMMIT_ALL_STALE_PLAN` when HEAD, patch content, exclusions, traceability, or message no longer match the confirmed fingerprint; never infer confirmation from tests, candidate readiness, preview success, or lifecycle state
+- commit-all is bounded to the current Git root and never includes sibling or external repositories, nested repositories, submodules, local operational state, suspicious generated paths, or probable secrets; those exclusions remain visible in the structured result and work in another repository must be committed there independently
 - delivery operations are mode-neutral local operational state and never execute deployment; `delivery read` without a range returns metadata only, exact Git inspection requires both immutable `from` and `to` hashes, and `delivery mark` requires the exact `DELIVERY_CONFIRMED` token only after the user confirms successful delivery to that environment
 - `delivery explain` is strictly read-only, accepts findings as structured JSON data, inspects only the explicit immutable range, and preserves stable errors, contract version, completeness, and omission of recommendations when incomplete
 - `delivery doctor` is strictly read-only, compares generated-command, declared, installed, self-reported, and host-attested or unavailable runtime evidence, and fails fast only when command and loaded-plugin protocol majors differ
