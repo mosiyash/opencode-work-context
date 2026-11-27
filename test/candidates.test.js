@@ -479,3 +479,255 @@ test("structured commit-candidate tool uses the stored candidate message", async
     assert.equal(git(root, ["log", "-1", "--format=%s"]).trim(), "Stored tool message");
   } finally { cleanup(root); }
 });
+
+test("commit all inspects exclusions and commits one verified repository-local integration", () => {
+  const root = makeRepository();
+  try {
+    const context = openStartup(root);
+    context.addStage("999901", "Related stage", { prompt: "Contribute to integration." });
+    git(root, ["add", ".work-context"]);
+    git(root, ["commit", "-qm", "record work context"]);
+    fs.writeFileSync(path.join(root, "app.txt"), "one\nintegrated\nthree\n");
+    fs.writeFileSync(path.join(root, "feature.txt"), "ready\n");
+    fs.writeFileSync(path.join(root, ".env"), "TOKEN=unsafe\n");
+    fs.writeFileSync(path.join(root, "indexed.txt"), "ordinary index\n");
+    git(root, ["add", "indexed.txt"]);
+
+    const inspection = context.inspectCommitAll("999901", { relatedStages: ["02"], excludePaths: ["indexed.txt"] }).data;
+    const indexBefore = git(root, ["ls-files", "--stage"]);
+    assert.deepEqual(inspection.included_paths, ["app.txt", "feature.txt"]);
+    assert.deepEqual(inspection.excluded_paths, [{ path: ".env", reason: "potential_secret" }, { path: "indexed.txt", reason: "user_excluded" }]);
+    assert.deepEqual(inspection.contributing_stages, [{ stage: "02", title: "Related stage", evidence: "user_selected" }]);
+    assert.match(inspection.fingerprint, /^[a-f0-9]{64}$/);
+    assert.equal(inspection.message, "Integrate repository changes");
+    assert.throws(() => context.commitAll("999901", inspection.fingerprint, "confirmed", { relatedStages: ["02"], excludePaths: ["indexed.txt"] }), (error) => error.code === ERROR_CODES.COMMIT_ALL_CONFIRMATION_REQUIRED);
+
+    const committed = context.commitAll("999901", inspection.fingerprint, "COMMIT_ALL_CONFIRMED", { relatedStages: ["02"], excludePaths: ["indexed.txt"] }).data;
+    assert.equal(committed.strategy, "integration");
+    assert.deepEqual(committed.included_paths, ["app.txt", "feature.txt"]);
+    assert.deepEqual(committed.excluded_paths, [{ path: ".env", reason: "potential_secret" }, { path: "indexed.txt", reason: "user_excluded" }]);
+    assert.equal(committed.attribution.basis, "user_selected");
+    assert.match(committed.commit.sha, /^[a-f0-9]{40}$/);
+    assert.equal(git(root, ["show", "HEAD:app.txt"]), "one\nintegrated\nthree\n");
+    assert.equal(git(root, ["show", "HEAD:feature.txt"]), "ready\n");
+    assert.equal(git(root, ["ls-tree", "--name-only", "HEAD", "--", ".env"]), "");
+    assert.equal(git(root, ["ls-files", "--stage"]), indexBefore);
+  } finally { cleanup(root); }
+});
+
+test("commit all excludes nested and external repositories and rejects stale plans", () => {
+  const root = makeRepository();
+  const external = makeRepository();
+  const nested = path.join(root, "nested");
+  try {
+    const context = openStartup(root);
+    git(root, ["add", ".work-context"]);
+    git(root, ["commit", "-qm", "record work context"]);
+    fs.mkdirSync(nested);
+    git(nested, ["init", "-q"]);
+    git(nested, ["config", "user.name", "Nested"]);
+    git(nested, ["config", "user.email", "nested@example.test"]);
+    fs.writeFileSync(path.join(nested, "nested.txt"), "separate\n");
+    git(nested, ["add", "."]);
+    git(nested, ["commit", "-qm", "nested"]);
+    fs.writeFileSync(path.join(nested, "nested.txt"), "changed separately\n");
+    fs.writeFileSync(path.join(external, "app.txt"), "external change\n");
+    fs.writeFileSync(path.join(root, "app.txt"), "one\nroot\nthree\n");
+
+    const inspection = context.inspectCommitAll("999901").data;
+    assert.deepEqual(inspection.included_paths, ["app.txt"]);
+    assert.deepEqual(inspection.excluded_paths, [{ path: "nested", reason: "nested_repository" }]);
+    fs.writeFileSync(path.join(root, "app.txt"), "one\nchanged after inspection\nthree\n");
+    assert.throws(() => context.commitAll("999901", inspection.fingerprint, "COMMIT_ALL_CONFIRMED"), (error) => error.code === ERROR_CODES.COMMIT_ALL_STALE_PLAN);
+    assert.equal(git(external, ["status", "--short"]), " M app.txt\n");
+  } finally { cleanup(root); cleanup(external); }
+});
+
+test("commit all works in standard mode and reuses only an exact integration candidate", () => {
+  const root = makeRepository();
+  try {
+    const context = WorkContext.open(root, { actor: "test" });
+    context.createWorkspace("Standard integration", { workspace: "999904", sessionId: "standard" });
+    git(root, ["add", ".work-context"]);
+    git(root, ["commit", "-qm", "record work context"]);
+    fs.writeFileSync(path.join(root, "app.txt"), "standard mode\n");
+    const inspection = context.inspectCommitAll("999904", { message: "Integrate standard-mode work" }).data;
+
+    const committed = context.commitAll("999904", inspection.fingerprint, "COMMIT_ALL_CONFIRMED", { message: "Integrate standard-mode work" }).data;
+    assert.equal(committed.message_source, "user");
+    assert.equal(git(root, ["log", "-1", "--format=%s"]).trim(), "Integrate standard-mode work");
+    assert.throws(() => context.listCandidates("999904"), (error) => error.code === ERROR_CODES.CANDIDATE_MODE_REQUIRED);
+  } finally { cleanup(root); }
+});
+
+test("commit all reports no eligible changes and reuses an exact startup candidate", () => {
+  const root = makeRepository();
+  try {
+    const context = openStartup(root);
+    git(root, ["add", ".work-context"]);
+    git(root, ["commit", "-qm", "record work context"]);
+    assert.throws(() => context.inspectCommitAll("999901"), (error) => error.code === ERROR_CODES.COMMIT_ALL_NO_CHANGES);
+    fs.writeFileSync(path.join(root, "app.txt"), "candidate reuse\n");
+    const inspection = context.inspectCommitAll("999901").data;
+    const candidate = context.createCandidate("999901", inspection.message, inspection.message, { strategy: "integration" }).data;
+    context.captureCandidate("999901", candidate.candidate, { paths: ["app.txt"] });
+
+    const committed = context.commitAll("999901", inspection.fingerprint, "COMMIT_ALL_CONFIRMED").data;
+    assert.equal(committed.candidate, candidate.candidate);
+    assert.equal(committed.candidate_reused, true);
+  } finally { cleanup(root); }
+});
+
+test("commit all captures renames, deletions, and untracked files while excluding submodules", () => {
+  const root = makeRepository();
+  const source = makeRepository();
+  try {
+    const context = openStartup(root);
+    git(root, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "module"]);
+    git(root, ["add", ".work-context", ".gitmodules", "module"]);
+    git(root, ["commit", "-qm", "record context and submodule"]);
+    fs.renameSync(path.join(root, "app.txt"), path.join(root, "renamed.txt"));
+    fs.rmSync(path.join(root, "delete.txt"));
+    fs.writeFileSync(path.join(root, "new.txt"), "new\n");
+    fs.writeFileSync(path.join(root, "module", "app.txt"), "dirty submodule\n");
+
+    const inspection = context.inspectCommitAll("999901").data;
+    assert.deepEqual(inspection.included_paths, ["app.txt", "delete.txt", "new.txt", "renamed.txt"]);
+    assert.deepEqual(inspection.excluded_paths, [{ path: "module", reason: "submodule" }]);
+    assert.match(inspection.verification.stat, /3 files changed|4 files changed/);
+  } finally { cleanup(root); cleanup(source); }
+});
+
+test("commit all rejects active Git operations, binary boundaries, and probable secret content", () => {
+  const root = makeRepository();
+  try {
+    const context = openStartup(root);
+    git(root, ["add", ".work-context"]);
+    git(root, ["commit", "-qm", "record work context"]);
+    fs.writeFileSync(path.join(root, "config.txt"), "api_key=abcdefghijklmnop\n");
+    fs.writeFileSync(path.join(root, "app.txt"), "safe change\n");
+    const inspected = context.inspectCommitAll("999901").data;
+    assert.deepEqual(inspected.excluded_paths, [{ path: "config.txt", reason: "potential_secret" }]);
+
+    fs.writeFileSync(path.join(root, ".git", "MERGE_HEAD"), "0".repeat(40) + "\n");
+    assert.throws(() => context.inspectCommitAll("999901"), (error) => error.code === ERROR_CODES.COMMIT_ALL_UNSAFE_STATE);
+    fs.rmSync(path.join(root, ".git", "MERGE_HEAD"));
+    fs.rmSync(path.join(root, "config.txt"));
+    fs.writeFileSync(path.join(root, "binary.dat"), Buffer.from([0, 1, 2, 3]));
+    assert.throws(() => context.inspectCommitAll("999901"), (error) => error.code === ERROR_CODES.COMMIT_ALL_INCOHERENT_BOUNDARY);
+  } finally { cleanup(root); }
+});
+
+test("structured commit-all tools and standalone wrappers preserve the two-phase contract", async () => {
+  const root = makeRepository();
+  try {
+    openStartup(root);
+    git(root, ["add", ".work-context"]);
+    git(root, ["commit", "-qm", "record work context"]);
+    fs.writeFileSync(path.join(root, "app.txt"), "structured commit all\n");
+    const toolContext = { directory: root, worktree: root, sessionID: "tool-session", metadata: async () => {} };
+    const inspectTool = (await import("../tools/work_context_inspect_commit_all.js")).default;
+    const commitTool = (await import("../tools/work_context_commit_all.js")).default;
+    assert.equal(inspectTool, tools.work_context_inspect_commit_all);
+    assert.equal(commitTool, tools.work_context_commit_all);
+    const inspection = JSON.parse((await inspectTool.execute({ workspace: "999901" }, toolContext)).output);
+    assert.equal(inspection.ok, true);
+    const rejected = JSON.parse((await commitTool.execute({ workspace: "999901", expectedFingerprint: inspection.data.fingerprint, confirmation: "no" }, toolContext)).output);
+    assert.equal(rejected.error.code, ERROR_CODES.COMMIT_ALL_CONFIRMATION_REQUIRED);
+
+    const committed = JSON.parse((await commitTool.execute({ workspace: "999901", expectedFingerprint: inspection.data.fingerprint, confirmation: "COMMIT_ALL_CONFIRMED" }, toolContext)).output);
+    assert.equal(committed.ok, true);
+    assert.equal(committed.data.commit.sha, git(root, ["rev-parse", "HEAD"]).trim());
+  } finally { cleanup(root); }
+});
+
+test("commit all rejects HEAD races and unresolved index conflicts", () => {
+  const root = makeRepository();
+  try {
+    const context = openStartup(root);
+    git(root, ["add", ".work-context"]);
+    git(root, ["commit", "-qm", "record work context"]);
+    fs.writeFileSync(path.join(root, "app.txt"), "confirmed patch\n");
+    const inspection = context.inspectCommitAll("999901").data;
+    const head = git(root, ["rev-parse", "HEAD"]).trim();
+    const branch = git(root, ["symbolic-ref", "HEAD"]).trim();
+    assert.throws(() => context.commitAll("999901", inspection.fingerprint, "COMMIT_ALL_CONFIRMED", {
+      beforeCandidate: () => {
+        const tree = git(root, ["rev-parse", `${head}^{tree}`]).trim();
+        const raced = git(root, ["commit-tree", tree, "-p", head], { input: "external commit\n" }).trim();
+        git(root, ["update-ref", branch, raced, head]);
+      },
+    }), (error) => error.code === ERROR_CODES.COMMIT_ALL_STALE_PLAN);
+
+    git(root, ["reset", "--soft", head]);
+    const base = git(root, ["rev-parse", "HEAD:app.txt"]).trim();
+    const ours = git(root, ["hash-object", "-w", "--stdin"], { input: "ours\n" }).trim();
+    const theirs = git(root, ["hash-object", "-w", "--stdin"], { input: "theirs\n" }).trim();
+    git(root, ["update-index", "--index-info"], { input: `0 ${"0".repeat(40)}\tapp.txt\n100644 ${base} 1\tapp.txt\n100644 ${ours} 2\tapp.txt\n100644 ${theirs} 3\tapp.txt\n` });
+    assert.throws(() => context.inspectCommitAll("999901"), (error) => error.code === ERROR_CODES.COMMIT_ALL_UNSAFE_STATE);
+  } finally { cleanup(root); }
+});
+
+test("commit all rolls back candidate metadata and the branch after a post-ref failure", () => {
+  const root = makeRepository();
+  try {
+    const context = openStartup(root);
+    git(root, ["add", ".work-context"]);
+    git(root, ["commit", "-qm", "record work context"]);
+    fs.writeFileSync(path.join(root, "app.txt"), "rollback publication\n");
+    const inspection = context.inspectCommitAll("999901").data;
+    const head = git(root, ["rev-parse", "HEAD"]).trim();
+
+    assert.throws(() => context.commitAll("999901", inspection.fingerprint, "COMMIT_ALL_CONFIRMED", {
+      afterUpdateRef: () => { throw new Error("simulated storage failure"); },
+    }), /simulated storage failure/);
+    assert.equal(git(root, ["rev-parse", "HEAD"]).trim(), head);
+    assert.deepEqual(context.listCandidates("999901").data, []);
+    assert.equal(fs.readFileSync(path.join(root, "app.txt"), "utf8"), "rollback publication\n");
+  } finally { cleanup(root); }
+});
+
+test("commit all preserves committed candidate audit when compensation loses a ref race", () => {
+  const root = makeRepository();
+  try {
+    const context = openStartup(root);
+    git(root, ["add", ".work-context"]);
+    git(root, ["commit", "-qm", "record work context"]);
+    fs.writeFileSync(path.join(root, "app.txt"), "audited race\n");
+    const inspection = context.inspectCommitAll("999901").data;
+    let published;
+
+    assert.throws(() => context.commitAll("999901", inspection.fingerprint, "COMMIT_ALL_CONFIRMED", {
+      afterUpdateRef: (publication) => {
+        published = publication;
+        const tree = git(root, ["rev-parse", `${publication.commit}^{tree}`]).trim();
+        const raced = git(root, ["commit-tree", tree, "-p", publication.commit], { input: "external descendant\n" }).trim();
+        git(root, ["update-ref", publication.branch, raced, publication.commit]);
+        throw new Error("simulated post-ref failure");
+      },
+    }), (error) => error.code === ERROR_CODES.CANDIDATE_REF_RACE);
+    const candidates = context.listCandidates("999901").data;
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0].status, "committed");
+    assert.equal(candidates[0].commit_hash, published.commit);
+    assert.equal(git(root, ["merge-base", "--is-ancestor", published.commit, "HEAD"], { stdio: "pipe" }), "");
+  } finally { cleanup(root); }
+});
+
+test("commit all reports changed local operational state as excluded", () => {
+  const root = makeRepository();
+  try {
+    const context = openStartup(root);
+    const localFile = path.join(root, ".work-context", "local", "tracked-state.txt");
+    fs.writeFileSync(localFile, "baseline\n");
+    git(root, ["add", ".work-context"]);
+    git(root, ["add", "-f", ".work-context/local/tracked-state.txt"]);
+    git(root, ["commit", "-qm", "record work context"]);
+    fs.writeFileSync(localFile, "local mutation\n");
+    fs.writeFileSync(path.join(root, "app.txt"), "safe root change\n");
+
+    const inspection = context.inspectCommitAll("999901").data;
+    assert.deepEqual(inspection.excluded_paths, [{ path: ".work-context/local/tracked-state.txt", reason: "local_only" }]);
+    assert.deepEqual(inspection.included_paths, ["app.txt"]);
+  } finally { cleanup(root); }
+});
