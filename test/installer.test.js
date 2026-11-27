@@ -165,14 +165,14 @@ test("activation preserves supported project configuration and project overrides
   } finally { removeRoot(root); }
 });
 
-test("activation migrates work-context entries from the legacy plugins field", () => {
+test("activation migrates the legacy plugins field into canonical plugin entries", () => {
   const root = makeRoot();
   try {
     fs.mkdirSync(path.join(root, ".opencode"));
     fs.writeFileSync(path.join(root, ".opencode", "opencode.json"), JSON.stringify({
       model: "test/model",
-      plugin: ["other-plugin", "opencode-work-context@0.4.15", "-work-context"],
-      plugins: ["legacy-other", "opencode-work-context"],
+      plugin: ["other-plugin", "shared-plugin", "opencode-work-context@0.4.15", "-work-context"],
+      plugins: ["shared-plugin", "legacy-other", "opencode-work-context"],
     }) + "\n");
     fs.writeFileSync(path.join(root, ".opencode", "tui.json"), JSON.stringify({
       $schema: "https://opencode.ai/tui.json",
@@ -181,17 +181,33 @@ test("activation migrates work-context entries from the legacy plugins field", (
 
     assert.equal(runCli(root, ["activate"]).status, 0);
     let config = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"));
-    assert.deepEqual(config.plugin, ["other-plugin", `opencode-work-context@${packageManifest.version}`]);
-    assert.deepEqual(config.plugins, ["legacy-other"]);
+    assert.deepEqual(config.plugin, ["other-plugin", "shared-plugin", "legacy-other", `opencode-work-context@${packageManifest.version}`]);
+    assert.equal(config.plugins, undefined);
     let tui = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "tui.json"), "utf8"));
     assert.deepEqual(tui.plugin, ["other-tui-plugin", `opencode-work-context@${packageManifest.version}`]);
 
     assert.equal(runCli(root, ["deactivate"]).status, 0);
     config = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"));
-    assert.deepEqual(config.plugin, ["other-plugin", "-work-context"]);
-    assert.deepEqual(config.plugins, ["legacy-other"]);
+    assert.deepEqual(config.plugin, ["other-plugin", "shared-plugin", "legacy-other", "-work-context"]);
+    assert.equal(config.plugins, undefined);
     tui = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "tui.json"), "utf8"));
     assert.deepEqual(tui.plugin, ["other-tui-plugin", "-work-context"]);
+  } finally { removeRoot(root); }
+});
+
+test("deactivation directly migrates the legacy plugins field", () => {
+  const root = makeRoot();
+  try {
+    fs.mkdirSync(path.join(root, ".opencode"));
+    fs.writeFileSync(path.join(root, ".opencode", "opencode.json"), JSON.stringify({
+      plugin: ["other-plugin", "shared-plugin"],
+      plugins: ["shared-plugin", "legacy-other", "opencode-work-context"],
+    }) + "\n");
+
+    assert.equal(runCli(root, ["deactivate"]).status, 0);
+    const config = JSON.parse(fs.readFileSync(path.join(root, ".opencode", "opencode.json"), "utf8"));
+    assert.deepEqual(config.plugin, ["other-plugin", "shared-plugin", "legacy-other", "-work-context"]);
+    assert.equal(config.plugins, undefined);
   } finally { removeRoot(root); }
 });
 

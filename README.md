@@ -299,9 +299,9 @@ For an existing JSONC configuration, add the equivalent entry manually:
 }
 ```
 
-Re-running `activate` also migrates work-context entries previously generated
-under the unsupported legacy `plugins` field. Unrelated legacy entries are
-preserved rather than activated or removed implicitly.
+Re-running `activate` or `deactivate` migrates every entry from the unsupported
+legacy `plugins` field into the canonical `plugin` array, preserves entry order,
+removes exact duplicates, and deletes `plugins`.
 
 Update managed activation from one activated project with an exact version:
 

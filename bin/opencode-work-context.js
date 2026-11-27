@@ -197,11 +197,17 @@ function activate(enabled, force) {
     || item.startsWith(`${packageManifest.name}@`)
     || item === "-work-context"
   );
-  config.plugin = [...(config.plugin || []).filter((item) => !isWorkContextEntry(item)), entry];
-  if (config.plugins) {
-    config.plugins = config.plugins.filter((item) => !isWorkContextEntry(item));
-    if (config.plugins.length === 0) delete config.plugins;
-  }
+  const seenPluginEntries = new Set();
+  config.plugin = [...(config.plugin || []), ...(config.plugins || [])]
+    .filter((item) => !isWorkContextEntry(item))
+    .filter((item) => {
+      const key = JSON.stringify(item);
+      if (seenPluginEntries.has(key)) return false;
+      seenPluginEntries.add(key);
+      return true;
+    });
+  config.plugin.push(entry);
+  delete config.plugins;
   managedTuiConfig.plugin = [...(managedTuiConfig.plugin || []).filter((item) => !isWorkContextEntry(item)), entry];
   const files = new Map([
     [configRelative, JSON.stringify(config, null, 2) + "\n"],
