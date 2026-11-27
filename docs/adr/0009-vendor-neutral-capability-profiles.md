@@ -18,12 +18,19 @@ Batch refresh applies agent-computed classifications atomically to missing and
 inferred actionable stages, preserving explicit assignments by default. Resume
 and read-only UI never infer or mutate classifications.
 
-Provider and model targets are not project metadata. A project instance may
-read bounded depth-to-model labels from
-`.work-context/local/capability-profiles.json`.
-This existing personal storage boundary is ignored by tracked projections,
-preserved by installation flows, and isolated per project. Invalid entries are
-ignored with bounded warnings rather than making canonical storage unreadable.
+Provider and model targets are not work-context metadata. The neutral
+`opencode-capability-profiles` package owns bounded depth-to-model labels,
+validation, storage, and resolution. Global user mappings live at
+`~/.config/opencode/capability-profiles.json`; optional tracked project
+overrides live at `.opencode/capability-profiles.json`. Resolution precedence is
+explicit invocation override, project mapping, global mapping, then current
+model. Invalid entries are ignored with bounded warnings rather than making
+canonical storage unreadable.
+
+The former `.work-context/local/capability-profiles.json` path remains a warned,
+lowest-precedence compatibility fallback during the migration window. Import is
+explicit and confirmation-based, and never modifies or deletes the legacy file.
+The fallback is removed only in a documented future breaking release.
 
 Resume returns the execution recommendation in advisory mode. A valid depth
 mapping has source `mapping`; an absent or invalid mapping has source `current`
@@ -35,9 +42,11 @@ depth. The model identity remains host-owned and is never persisted by Work
 Context. Off mode omits recommendations, resolution, and warnings while
 preserving stage metadata.
 
-Question-driven setup/show/reset commands own local mapping changes and project
-mode updates, so users need not edit JSON or YAML. Setup may offer a subsequent
-refresh but never performs it without the user's answer.
+The shared package owns interactive global/project setup and migration so
+consumers do not implement competing writers. Work Context setup/show/reset
+delegates mapping operations to that package while retaining ownership of the
+project advisory/off mode. Setup may offer a subsequent refresh but never
+performs it without the user's answer.
 
 ## Consequences
 

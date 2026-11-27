@@ -1,62 +1,67 @@
-import fs from "node:fs";
 import path from "node:path";
+import {
+  CAPABILITY_DEPTHS,
+  CONFIG_FILE_NAME,
+  assertValidMappings,
+  configureGlobal,
+  configureProject,
+  globalConfigPath,
+  projectConfigPath,
+  readConfigFile,
+  readProfiles,
+  resetConfigFile,
+  resetGlobal,
+  resetProject,
+  resolveDepth,
+  writeConfigFile,
+} from "opencode-capability-profiles";
 
 export const CAPABILITY_PROFILES = Object.freeze(["routine", "implementation", "architecture", "security", "review"]);
-export const CAPABILITY_DEPTHS = Object.freeze(["light", "standard", "deep"]);
+export { CAPABILITY_DEPTHS };
 export const CAPABILITY_CLASSIFICATIONS = Object.freeze(["inferred", "explicit"]);
 export const CAPABILITY_PROFILE_MODES = Object.freeze(["advisory", "off"]);
-export const CAPABILITY_MAPPINGS_FILE = "capability-profiles.json";
-const MAX_MAPPING_BYTES = 16 * 1024;
-const MAX_WARNINGS = 5;
+export const CAPABILITY_MAPPINGS_FILE = CONFIG_FILE_NAME;
 
 export const capabilityProfileMode = (storage) => storage.config.capability_profiles?.mode || "advisory";
 
-const warning = (message) => ({ code: "INVALID_CAPABILITY_MAPPING", message });
-const validTarget = (value) => typeof value === "string"
-  && value.length <= 200
-  && value.trim() === value
-  && value.length > 0
-  && !/[\u0000-\u001f\u007f]/.test(value);
+const legacyWarning = (file) => ({
+  code: "LEGACY_CAPABILITY_MAPPING",
+  message: `Legacy capability mappings detected at ${file}; migrate them to the shared global or project configuration.`,
+  path: file,
+});
 
-export function readCapabilityMappings(storage) {
-  const file = path.join(storage.personalRoot, CAPABILITY_MAPPINGS_FILE);
-  if (!fs.existsSync(file)) return { mappings: {}, warnings: [] };
-  try {
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.size > MAX_MAPPING_BYTES) return { mappings: {}, warnings: [warning(`Ignoring ${CAPABILITY_MAPPINGS_FILE}; expected a regular file no larger than ${MAX_MAPPING_BYTES} bytes.`)] };
-  } catch { return { mappings: {}, warnings: [warning(`Cannot inspect ${CAPABILITY_MAPPINGS_FILE}; continuing without local mappings.`)] }; }
-  let input;
-  try { input = JSON.parse(fs.readFileSync(file, "utf8")); }
-  catch { return { mappings: {}, warnings: [warning(`Invalid ${CAPABILITY_MAPPINGS_FILE}; expected JSON with schema and mappings.`)] }; }
-
-  if (!input || typeof input !== "object" || Array.isArray(input) || input.schema !== 1 || !input.mappings || typeof input.mappings !== "object" || Array.isArray(input.mappings)) {
-    return { mappings: {}, warnings: [warning(`Invalid ${CAPABILITY_MAPPINGS_FILE}; expected { "schema": 1, "mappings": { ... } }.`)] };
-  }
-  const warnings = [];
-  const addWarning = (message) => { if (warnings.length < MAX_WARNINGS) warnings.push(warning(message)); };
-  if (Object.keys(input).some((key) => !["schema", "mappings"].includes(key))) addWarning(`Ignoring unknown top-level keys in ${CAPABILITY_MAPPINGS_FILE}.`);
-  const mappings = {};
-  for (const [depth, target] of Object.entries(input.mappings)) {
-    const safeDepth = depth.replace(/[\u0000-\u001f\u007f]/g, "?").slice(0, 40);
-    if (!CAPABILITY_DEPTHS.includes(depth)) addWarning(`Ignoring unknown capability depth mapping: ${safeDepth}.`);
-    else if (!validTarget(target)) addWarning(`Ignoring invalid target for capability depth mapping: ${depth}.`);
-    else mappings[depth] = target;
-  }
-  return { mappings, warnings };
+export function readCapabilityMappings(storage, options = {}) {
+  const profiles = readProfiles({
+    projectRoot: storage.projectRoot,
+    ...(options.homeDir ? { homeDir: options.homeDir } : {}),
+  });
+  const legacyFile = path.join(storage.personalRoot, CAPABILITY_MAPPINGS_FILE);
+  const legacy = readConfigFile(legacyFile);
+  return {
+    mappings: { ...legacy.mappings, ...profiles.global.mappings, ...(profiles.project?.mappings || {}) },
+    warnings: [
+      ...profiles.warnings,
+      ...legacy.warnings,
+      ...(legacy.exists && legacy.warnings.length === 0 ? [legacyWarning(legacyFile)] : []),
+    ],
+    global: profiles.global,
+    project: profiles.project,
+    legacy,
+  };
 }
 
 export function capabilityRecommendations(storage, stage, localMappings) {
   if (capabilityProfileMode(storage) === "off") return null;
   if (!stage.execution_profile || !stage.execution_depth) return null;
-  const { mappings, warnings } = localMappings || readCapabilityMappings(storage);
-  const target = mappings[stage.execution_depth];
+  const loaded = localMappings || readCapabilityMappings(storage);
+  const resolution = resolveDepth({ depth: stage.execution_depth, projectMappings: loaded.mappings });
   return {
     mode: "advisory",
-    execution: target
-      ? { profile: stage.execution_profile, depth: stage.execution_depth, classification: stage.execution_classification || "explicit", source: "mapping", target }
+    execution: resolution.target
+      ? { profile: stage.execution_profile, depth: stage.execution_depth, classification: stage.execution_classification || "explicit", source: "mapping", target: resolution.target }
       : { profile: stage.execution_profile, depth: stage.execution_depth, classification: stage.execution_classification || "explicit", source: "current", message: "No mapping configured; continuing with the current model." },
     ...(stage.review_profile ? { review: { profile: stage.review_profile } } : {}),
-    ...(warnings.length ? { warnings } : {}),
+    ...(loaded.warnings.length ? { warnings: loaded.warnings } : {}),
   };
 }
 
@@ -73,6 +78,33 @@ export const stageCapabilityProfiles = (storage, stage, localMappings) => {
 };
 
 export function validateCapabilityMappings(mappings) {
-  if (!mappings || typeof mappings !== "object" || Array.isArray(mappings) || Object.keys(mappings).some((key) => !CAPABILITY_DEPTHS.includes(key))) return false;
-  return Object.values(mappings).every(validTarget);
+  try {
+    assertValidMappings(mappings);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function configureCapabilityMappings(storage, mappings, options = {}) {
+  if (options.scope === "global") {
+    configureGlobal(mappings, options.homeDir ? { homeDir: options.homeDir } : {});
+    return globalConfigPath(options.homeDir);
+  }
+  if (options.scope === "project") {
+    configureProject(storage.projectRoot, mappings);
+    return projectConfigPath(storage.projectRoot);
+  }
+  const legacyFile = path.join(storage.personalRoot, CAPABILITY_MAPPINGS_FILE);
+  writeConfigFile(legacyFile, mappings, { mode: 0o600 });
+  return legacyFile;
+}
+
+export function resetCapabilityMappings(storage, options = {}) {
+  if (options.scope === "global") {
+    return { removed: resetGlobal(options.homeDir ? { homeDir: options.homeDir } : {}), file: globalConfigPath(options.homeDir) };
+  }
+  if (options.scope === "project") return { removed: resetProject(storage.projectRoot), file: projectConfigPath(storage.projectRoot) };
+  const legacyFile = path.join(storage.personalRoot, CAPABILITY_MAPPINGS_FILE);
+  return { removed: resetConfigFile(legacyFile), file: legacyFile };
 }
